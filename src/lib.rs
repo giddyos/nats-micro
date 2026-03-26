@@ -18,6 +18,7 @@ pub use consumer::{ConsumerDefinition, ConsumerHandlerFn};
 pub use error::{IntoNatsError, NatsError, NatsErrorResponse};
 pub use extractors::{FromRequest, Json, RequestId, State, SubjectParam};
 pub use handler::{HandlerFn, RequestContext};
+pub use inventory;
 pub use request::NatsRequest;
 pub use response::{IntoNatsResponse, NatsResponse};
 pub use service::{EndpointDefinition, ServiceMetadata};
@@ -28,11 +29,9 @@ pub use nats_micro_macros::{consumer, endpoint, service, service_error, service_
 pub mod __private {
     pub use crate::error::IntoNatsError;
     pub use crate::extractors::FromRequest;
-    pub use crate::handler::{HandlerFuture, RequestContext};
     pub use crate::handler::into_handler_fn;
+    pub use crate::handler::{HandlerFuture, RequestContext};
+    pub use crate::inventory;
+    pub use crate::registry::{ConsumerRegistration, EndpointRegistration, ServiceRegistration};
     pub use crate::response::{IntoNatsResponse, NatsResponse};
-    pub use crate::registry::{
-        register_consumer, register_endpoint, register_service, registered_consumers,
-        registered_endpoints, registered_services,
-    };
 }
