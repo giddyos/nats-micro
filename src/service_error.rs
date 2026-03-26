@@ -1,5 +1,5 @@
 use proc_macro2::TokenStream;
-use quote::{quote, ToTokens};
+use quote::{ToTokens, quote};
 use syn::{Data, DeriveInput, Fields};
 
 use crate::utils::error_stream;
@@ -62,9 +62,9 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
 
     if let Data::Enum(ref mut data_enum) = input.data {
         for variant in data_enum.variants.iter_mut() {
-            variant.attrs.retain(|attr| {
-                !attr.path().is_ident("internal") && !attr.path().is_ident("code")
-            });
+            variant
+                .attrs
+                .retain(|attr| !attr.path().is_ident("internal") && !attr.path().is_ident("code"));
         }
     }
 

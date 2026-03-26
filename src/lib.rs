@@ -1,6 +1,6 @@
-use darling::{ast::NestedMeta, FromMeta};
+use darling::{FromMeta, ast::NestedMeta};
 use proc_macro::TokenStream;
-use syn::{parse_macro_input, DeriveInput, ItemFn, ItemImpl, ItemStruct};
+use syn::{DeriveInput, ItemFn, ItemImpl, ItemStruct, parse_macro_input};
 
 mod consumer;
 mod endpoint;
@@ -9,7 +9,8 @@ mod service_error;
 mod utils;
 
 fn parse_attr_args(attr: TokenStream) -> Result<Vec<NestedMeta>, TokenStream> {
-    NestedMeta::parse_meta_list(attr.into()).map_err(|e| TokenStream::from(darling::Error::from(e).write_errors()))
+    NestedMeta::parse_meta_list(attr.into())
+        .map_err(|e| TokenStream::from(darling::Error::from(e).write_errors()))
 }
 
 #[proc_macro_attribute]
