@@ -28,6 +28,12 @@ pub fn expand_service(args: ServiceArgs, item_struct: ItemStruct) -> TokenStream
                 )
             }
         }
+
+        ::nats_micro::__private::inventory::submit! {
+            ::nats_micro::__private::ServiceRegistration {
+                constructor: #ident::__nats_micro_service_meta,
+            }
+        }
     }
 }
 

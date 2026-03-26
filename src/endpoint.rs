@@ -73,6 +73,12 @@ pub fn expand_endpoint(args: EndpointArgs, func: ItemFn) -> TokenStream {
                 handler: #handler,
             }
         }
+
+        ::nats_micro::__private::inventory::submit! {
+            ::nats_micro::__private::EndpointRegistration {
+                constructor: #def_fn_name,
+            }
+        }
     }
 }
 
@@ -83,8 +89,10 @@ fn build_handler(func: &ItemFn) -> Result<TokenStream, TokenStream> {
 
     for input in &func.sig.inputs {
         let FnArg::Typed(pat_type) = input else {
-            return Err(syn::Error::new_spanned(input, "endpoint handlers cannot take a receiver")
-                .to_compile_error());
+            return Err(
+                syn::Error::new_spanned(input, "endpoint handlers cannot take a receiver")
+                    .to_compile_error(),
+            );
         };
 
         let Pat::Ident(pat_ident) = pat_type.pat.as_ref() else {
