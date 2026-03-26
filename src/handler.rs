@@ -108,4 +108,3 @@ macro_rules! all_the_tuples {
 }
 
 all_the_tuples!(impl_handler);
-

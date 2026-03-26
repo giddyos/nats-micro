@@ -1,5 +1,6 @@
-use std::{str::FromStr, sync::Arc};
+use std::{fmt::Display, str::FromStr, sync::Arc};
 
+use prost::Message;
 use serde::de::DeserializeOwned;
 
 use crate::{
@@ -11,14 +12,31 @@ pub trait FromRequest: Sized + Send + 'static {
     fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse>;
 }
 
+pub trait FromSubjectParam: Sized + Send + 'static {
+    type Err: Display + Send;
+
+    fn from_subject_param(value: &str) -> Result<Self, Self::Err>;
+}
+
 #[derive(Debug, Clone)]
 pub struct Json<T>(pub T);
+
+#[derive(Debug, Clone)]
+pub struct Proto<T>(pub T);
 
 #[derive(Clone)]
 pub struct State<T>(pub Arc<T>);
 
 impl<T> std::ops::Deref for State<T> {
     type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T> std::ops::Deref for Proto<T> {
+    type Target = T;
+
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -66,6 +84,20 @@ where
                 .with_request_id(ctx.request.request_id.clone())
         })?;
         Ok(Json(value))
+    }
+}
+
+impl<T> FromRequest for Proto<T>
+where
+    T: Message + Default + Send + 'static,
+{
+    fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
+        T::decode(ctx.request.payload.clone())
+            .map(Proto)
+            .map_err(|e| {
+                NatsErrorResponse::bad_request("BAD_PROTOBUF", e.to_string())
+                    .with_request_id(ctx.request.request_id.clone())
+            })
     }
 }
 
@@ -133,10 +165,35 @@ where
     }
 }
 
+impl FromSubjectParam for String {
+    type Err = std::convert::Infallible;
+
+    fn from_subject_param(value: &str) -> Result<Self, Self::Err> {
+        Ok(value.to_string())
+    }
+}
+
+macro_rules! impl_from_subject_param_via_from_str {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl FromSubjectParam for $ty {
+                type Err = <$ty as FromStr>::Err;
+
+                fn from_subject_param(value: &str) -> Result<Self, Self::Err> {
+                    value.parse::<$ty>()
+                }
+            }
+        )*
+    };
+}
+
+impl_from_subject_param_via_from_str!(
+    u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize
+);
+
 impl<T> FromRequest for SubjectParam<T>
 where
-    T: FromStr + Send + 'static,
-    <T as FromStr>::Err: std::fmt::Display + Send,
+    T: FromSubjectParam,
 {
     fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
         let param_name = ctx.current_param_name.as_deref().ok_or_else(|| {
@@ -164,7 +221,7 @@ where
                 .with_request_id(ctx.request.request_id.clone())
             })?;
 
-        let parsed = raw.parse::<T>().map_err(|e| {
+        let parsed = T::from_subject_param(&raw).map_err(|e| {
             NatsErrorResponse::bad_request(
                 "SUBJECT_PARAM_INVALID",
                 format!("failed to parse `{param_name}`: {e}"),
@@ -173,5 +230,114 @@ where
         })?;
 
         Ok(SubjectParam(parsed))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use async_nats::HeaderMap;
+    use bytes::Bytes;
+
+    use crate::{handler::RequestContext, request::NatsRequest, state::StateMap};
+
+    #[derive(Clone, PartialEq, Message)]
+    struct ExampleProto {
+        #[prost(string, tag = "1")]
+        name: String,
+        #[prost(uint32, tag = "2")]
+        count: u32,
+    }
+
+    fn request_context(payload: Vec<u8>) -> RequestContext {
+        RequestContext {
+            request: NatsRequest {
+                subject: "proto.example".to_string(),
+                payload: Bytes::from(payload),
+                headers: HeaderMap::new(),
+                reply: None,
+                request_id: "req-proto-1".to_string(),
+            },
+            states: StateMap::new(),
+            user: None,
+            subject_template: None,
+            current_param_name: None,
+        }
+    }
+
+    fn subject_param_context(subject: &str, template: &str, param_name: &str) -> RequestContext {
+        RequestContext {
+            request: NatsRequest {
+                subject: subject.to_string(),
+                payload: Bytes::new(),
+                headers: HeaderMap::new(),
+                reply: None,
+                request_id: "req-subject-1".to_string(),
+            },
+            states: StateMap::new(),
+            user: None,
+            subject_template: Some(template.to_string()),
+            current_param_name: Some(param_name.to_string()),
+        }
+    }
+
+    #[derive(Debug, PartialEq)]
+    struct FlexibleBool(bool);
+
+    impl FromSubjectParam for FlexibleBool {
+        type Err = &'static str;
+
+        fn from_subject_param(value: &str) -> Result<Self, Self::Err> {
+            match value {
+                "1" | "true" => Ok(Self(true)),
+                "0" | "false" => Ok(Self(false)),
+                _ => Err("expected 1, 0, true, or false"),
+            }
+        }
+    }
+
+    #[test]
+    fn prost_messages_decode_before_handler_execution() {
+        let expected = ExampleProto {
+            name: "created".to_string(),
+            count: 7,
+        };
+        let ctx = request_context(expected.encode_to_vec());
+
+        let decoded = Proto::<ExampleProto>::from_request(&ctx).expect("protobuf payload decodes");
+
+        assert_eq!(decoded.0, expected);
+    }
+
+    #[test]
+    fn invalid_protobuf_payloads_return_bad_request() {
+        let ctx = request_context(vec![0xff, 0xff, 0xff]);
+
+        let error =
+            Proto::<ExampleProto>::from_request(&ctx).expect_err("invalid payload should fail");
+
+        assert_eq!(error.code, 400);
+        assert_eq!(error.error, "BAD_PROTOBUF");
+        assert_eq!(error.request_id, "req-proto-1");
+    }
+
+    #[test]
+    fn subject_params_use_default_integer_parsers() {
+        let ctx = subject_param_context("users.42.profile", "users.{user_id}.profile", "user_id");
+
+        let parsed = SubjectParam::<u32>::from_request(&ctx).expect("integer subject param parses");
+
+        assert_eq!(parsed.0, 42);
+    }
+
+    #[test]
+    fn subject_params_support_custom_parsers() {
+        let ctx = subject_param_context("flags.1", "flags.{enabled}", "enabled");
+
+        let parsed = SubjectParam::<FlexibleBool>::from_request(&ctx)
+            .expect("custom subject param parser should be used");
+
+        assert_eq!(parsed.0, FlexibleBool(true));
     }
 }

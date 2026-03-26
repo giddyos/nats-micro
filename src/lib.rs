@@ -16,7 +16,7 @@ pub use app::NatsApp;
 pub use auth::{Auth, AuthConfig, AuthError};
 pub use consumer::{ConsumerDefinition, ConsumerHandlerFn};
 pub use error::{IntoNatsError, NatsError, NatsErrorResponse};
-pub use extractors::{FromRequest, Json, RequestId, State, SubjectParam};
+pub use extractors::{FromRequest, FromSubjectParam, Json, Proto, RequestId, State, SubjectParam};
 pub use handler::{HandlerFn, RequestContext};
 pub use inventory;
 pub use request::NatsRequest;
