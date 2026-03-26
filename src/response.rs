@@ -67,7 +67,6 @@ where
     T: Serialize,
 {
     fn into_response(self, request_id: String) -> Result<NatsResponse, NatsErrorResponse> {
-        NatsResponse::json(&self.0)
-            .map_err(|e| e.with_request_id(request_id))
+        NatsResponse::json(&self.0).map_err(|e| e.with_request_id(request_id))
     }
 }

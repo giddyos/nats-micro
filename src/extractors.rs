@@ -3,10 +3,7 @@ use std::{str::FromStr, sync::Arc};
 use serde::de::DeserializeOwned;
 
 use crate::{
-    auth::Auth,
-    error::NatsErrorResponse,
-    handler::RequestContext,
-    request::NatsRequest,
+    auth::Auth, error::NatsErrorResponse, handler::RequestContext, request::NatsRequest,
     utils::extract_subject_param,
 };
 
@@ -77,16 +74,13 @@ where
     T: Send + Sync + 'static,
 {
     fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
-        ctx.states
-            .get::<T>()
-            .map(State)
-            .ok_or_else(|| {
-                NatsErrorResponse::internal(
-                    "STATE_NOT_FOUND",
-                    format!("state `{}` was not registered", std::any::type_name::<T>()),
-                )
-                .with_request_id(ctx.request.request_id.clone())
-            })
+        ctx.states.get::<T>().map(State).ok_or_else(|| {
+            NatsErrorResponse::internal(
+                "STATE_NOT_FOUND",
+                format!("state `{}` was not registered", std::any::type_name::<T>()),
+            )
+            .with_request_id(ctx.request.request_id.clone())
+        })
     }
 }
 
@@ -161,15 +155,14 @@ where
             .with_request_id(ctx.request.request_id.clone())
         })?;
 
-        let raw = extract_subject_param(template, &ctx.request.subject, param_name).ok_or_else(
-            || {
+        let raw =
+            extract_subject_param(template, &ctx.request.subject, param_name).ok_or_else(|| {
                 NatsErrorResponse::bad_request(
                     "SUBJECT_PARAM_MISSING",
                     format!("subject parameter `{param_name}` was not present"),
                 )
                 .with_request_id(ctx.request.request_id.clone())
-            },
-        )?;
+            })?;
 
         let parsed = raw.parse::<T>().map_err(|e| {
             NatsErrorResponse::bad_request(

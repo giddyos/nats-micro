@@ -1,5 +1,5 @@
 use anyhow::Result;
-use async_nats::jetstream::{self, consumer::push, AckKind};
+use async_nats::jetstream::{self, AckKind, consumer::push};
 use async_nats::service::ServiceExt;
 use futures::StreamExt;
 use tracing::{error, info};
@@ -104,7 +104,9 @@ impl NatsApp {
         self.endpoints.extend(registry_endpoints);
         self.consumers.extend(registry_consumers);
 
-        let service_meta = self.service_meta.take()
+        let service_meta = self
+            .service_meta
+            .take()
             .or_else(|| registry_services.into_iter().next())
             .unwrap_or_else(|| {
                 ServiceMetadata::new(
@@ -136,7 +138,9 @@ impl NatsApp {
             let app = self.clone();
 
             let group = service.group(endpoint_def.group.clone());
-            let mut ep = group.endpoint(endpoint_def.subject.clone()).await
+            let mut ep = group
+                .endpoint(endpoint_def.subject.clone())
+                .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
 
             tokio::spawn(async move {
@@ -203,10 +207,12 @@ impl NatsApp {
             let stream = jetstream
                 .get_stream(consumer_def.stream.clone())
                 .await
-                .map_err(|e| anyhow::anyhow!(
-                    "failed to get JetStream stream `{}`: {e}",
-                    consumer_def.stream
-                ))?;
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "failed to get JetStream stream `{}`: {e}",
+                        consumer_def.stream
+                    )
+                })?;
 
             let deliver_subject = self.client.new_inbox();
             let durable = consumer_def.durable.clone();
@@ -222,19 +228,20 @@ impl NatsApp {
                     },
                 )
                 .await
-                .map_err(|e| anyhow::anyhow!(
-                    "failed to create JetStream consumer `{}` on stream `{}`: {e}",
-                    durable,
-                    consumer_def.stream
-                ))?;
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "failed to create JetStream consumer `{}` on stream `{}`: {e}",
+                        durable,
+                        consumer_def.stream
+                    )
+                })?;
 
-            let mut messages = consumer
-                .messages()
-                .await
-                .map_err(|e| anyhow::anyhow!(
+            let mut messages = consumer.messages().await.map_err(|e| {
+                anyhow::anyhow!(
                     "failed to subscribe JetStream consumer `{}` messages: {e}",
                     durable
-                ))?;
+                )
+            })?;
 
             let app = self.clone();
             tokio::spawn(async move {

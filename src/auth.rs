@@ -62,8 +62,7 @@ impl crate::error::IntoNatsError for AuthError {
                     .with_request_id(request_id)
             }
             AuthError::Forbidden => {
-                NatsErrorResponse::forbidden("FORBIDDEN", "forbidden")
-                    .with_request_id(request_id)
+                NatsErrorResponse::forbidden("FORBIDDEN", "forbidden").with_request_id(request_id)
             }
             AuthError::Other(msg) => {
                 NatsErrorResponse::unauthorized("UNAUTHORIZED", msg).with_request_id(request_id)

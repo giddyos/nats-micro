@@ -4,9 +4,9 @@ use crate::{
     auth::BoxAuthUser,
     error::{IntoNatsError, NatsErrorResponse},
     extractors::FromRequest,
+    request::NatsRequest,
     response::{IntoNatsResponse, NatsResponse},
     state::StateMap,
-    request::NatsRequest,
 };
 
 pub type HandlerFuture =
@@ -58,152 +58,54 @@ where
     HandlerFn::new(move |ctx| Handler::call(&handler, ctx))
 }
 
-// Handler impl: 0 args
-impl<F, Fut, Res, Err> Handler<()> for F
-where
-    F: Fn() -> Fut + Clone + Send + Sync + 'static,
-    Fut: Future<Output = Result<Res, Err>> + Send + 'static,
-    Res: IntoNatsResponse + Send,
-    Err: IntoNatsError + Send,
-{
-    fn call(&self, ctx: RequestContext) -> HandlerFuture {
-        let f = self.clone();
-        let request_id = ctx.request.request_id.clone();
-        Box::pin(async move {
-            let res = f()
-                .await
-                .map_err(|e| e.into_nats_error(request_id.clone()))?;
-            res.into_response(request_id)
-        })
-    }
+macro_rules! impl_handler {
+    ([$($ty:ident),*]) => {
+        #[allow(non_snake_case)] // T1, T2... used as variable bindings
+        impl<F, Fut, Res, Err, $($ty,)*> Handler<($($ty,)*)> for F
+        where
+            F: Fn($($ty),*) -> Fut + Clone + Send + Sync + 'static,
+            Fut: Future<Output = Result<Res, Err>> + Send + 'static,
+            Res: IntoNatsResponse + Send,
+            Err: IntoNatsError + Send,
+            $($ty: FromRequest,)*
+        {
+            fn call(&self, ctx: RequestContext) -> HandlerFuture {
+                let request_id = ctx.request.request_id.clone();
+                $(
+                    let $ty = match $ty::from_request(&ctx) {
+                        Ok(v) => v,
+                        Err(e) => return Box::pin(async move { Err(e) }),
+                    };
+                )*
+                let f = self.clone();
+                Box::pin(async move {
+                    let res = f($($ty),*)
+                        .await
+                        .map_err(|e| e.into_nats_error(request_id.clone()))?;
+                    res.into_response(request_id)
+                })
+            }
+        }
+    };
 }
 
-// Handler impl: 1 arg
-impl<F, Fut, Res, Err, A1> Handler<(A1,)> for F
-where
-    F: Fn(A1) -> Fut + Clone + Send + Sync + 'static,
-    Fut: Future<Output = Result<Res, Err>> + Send + 'static,
-    Res: IntoNatsResponse + Send,
-    Err: IntoNatsError + Send,
-    A1: FromRequest,
-{
-    fn call(&self, ctx: RequestContext) -> HandlerFuture {
-        let request_id = ctx.request.request_id.clone();
-        let a1 = match A1::from_request(&ctx) {
-            Ok(v) => v,
-            Err(e) => return Box::pin(async move { Err(e) }),
-        };
-        let f = self.clone();
-        Box::pin(async move {
-            let res = f(a1)
-                .await
-                .map_err(|e| e.into_nats_error(request_id.clone()))?;
-            res.into_response(request_id)
-        })
-    }
+macro_rules! all_the_tuples {
+    ($name:ident) => {
+        $name!([]);
+        $name!([T1]);
+        $name!([T1, T2]);
+        $name!([T1, T2, T3]);
+        $name!([T1, T2, T3, T4]);
+        $name!([T1, T2, T3, T4, T5]);
+        $name!([T1, T2, T3, T4, T5, T6]);
+        $name!([T1, T2, T3, T4, T5, T6, T7]);
+        $name!([T1, T2, T3, T4, T5, T6, T7, T8]);
+        $name!([T1, T2, T3, T4, T5, T6, T7, T8, T9]);
+        $name!([T1, T2, T3, T4, T5, T6, T7, T8, T9, T10]);
+        $name!([T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11]);
+        $name!([T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12]);
+    };
 }
 
-// Handler impl: 2 args
-impl<F, Fut, Res, Err, A1, A2> Handler<(A1, A2)> for F
-where
-    F: Fn(A1, A2) -> Fut + Clone + Send + Sync + 'static,
-    Fut: Future<Output = Result<Res, Err>> + Send + 'static,
-    Res: IntoNatsResponse + Send,
-    Err: IntoNatsError + Send,
-    A1: FromRequest,
-    A2: FromRequest,
-{
-    fn call(&self, ctx: RequestContext) -> HandlerFuture {
-        let request_id = ctx.request.request_id.clone();
-        let a1 = match A1::from_request(&ctx) {
-            Ok(v) => v,
-            Err(e) => return Box::pin(async move { Err(e) }),
-        };
-        let a2 = match A2::from_request(&ctx) {
-            Ok(v) => v,
-            Err(e) => return Box::pin(async move { Err(e) }),
-        };
-        let f = self.clone();
-        Box::pin(async move {
-            let res = f(a1, a2)
-                .await
-                .map_err(|e| e.into_nats_error(request_id.clone()))?;
-            res.into_response(request_id)
-        })
-    }
-}
+all_the_tuples!(impl_handler);
 
-// Handler impl: 3 args
-impl<F, Fut, Res, Err, A1, A2, A3> Handler<(A1, A2, A3)> for F
-where
-    F: Fn(A1, A2, A3) -> Fut + Clone + Send + Sync + 'static,
-    Fut: Future<Output = Result<Res, Err>> + Send + 'static,
-    Res: IntoNatsResponse + Send,
-    Err: IntoNatsError + Send,
-    A1: FromRequest,
-    A2: FromRequest,
-    A3: FromRequest,
-{
-    fn call(&self, ctx: RequestContext) -> HandlerFuture {
-        let request_id = ctx.request.request_id.clone();
-        let a1 = match A1::from_request(&ctx) {
-            Ok(v) => v,
-            Err(e) => return Box::pin(async move { Err(e) }),
-        };
-        let a2 = match A2::from_request(&ctx) {
-            Ok(v) => v,
-            Err(e) => return Box::pin(async move { Err(e) }),
-        };
-        let a3 = match A3::from_request(&ctx) {
-            Ok(v) => v,
-            Err(e) => return Box::pin(async move { Err(e) }),
-        };
-        let f = self.clone();
-        Box::pin(async move {
-            let res = f(a1, a2, a3)
-                .await
-                .map_err(|e| e.into_nats_error(request_id.clone()))?;
-            res.into_response(request_id)
-        })
-    }
-}
-
-// Handler impl: 4 args
-impl<F, Fut, Res, Err, A1, A2, A3, A4> Handler<(A1, A2, A3, A4)> for F
-where
-    F: Fn(A1, A2, A3, A4) -> Fut + Clone + Send + Sync + 'static,
-    Fut: Future<Output = Result<Res, Err>> + Send + 'static,
-    Res: IntoNatsResponse + Send,
-    Err: IntoNatsError + Send,
-    A1: FromRequest,
-    A2: FromRequest,
-    A3: FromRequest,
-    A4: FromRequest,
-{
-    fn call(&self, ctx: RequestContext) -> HandlerFuture {
-        let request_id = ctx.request.request_id.clone();
-        let a1 = match A1::from_request(&ctx) {
-            Ok(v) => v,
-            Err(e) => return Box::pin(async move { Err(e) }),
-        };
-        let a2 = match A2::from_request(&ctx) {
-            Ok(v) => v,
-            Err(e) => return Box::pin(async move { Err(e) }),
-        };
-        let a3 = match A3::from_request(&ctx) {
-            Ok(v) => v,
-            Err(e) => return Box::pin(async move { Err(e) }),
-        };
-        let a4 = match A4::from_request(&ctx) {
-            Ok(v) => v,
-            Err(e) => return Box::pin(async move { Err(e) }),
-        };
-        let f = self.clone();
-        Box::pin(async move {
-            let res = f(a1, a2, a3, a4)
-                .await
-                .map_err(|e| e.into_nats_error(request_id.clone()))?;
-            res.into_response(request_id)
-        })
-    }
-}
