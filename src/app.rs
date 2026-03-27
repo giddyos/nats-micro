@@ -2,16 +2,16 @@ use anyhow::Result;
 use async_nats::jetstream::{self, AckKind, consumer::push};
 use async_nats::service::ServiceExt;
 use futures::StreamExt;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::{
     auth::AuthConfig,
     consumer::ConsumerDefinition,
     error::IntoNatsError,
     handler::RequestContext,
-    registry::{registered_consumers, registered_endpoints, registered_services},
     request::NatsRequest,
-    service::{EndpointDefinition, ServiceMetadata},
+    service::NatsService,
+    service::ServiceDefinition,
     state::StateMap,
     utils::{ensure_request_id, has_auth_headers},
 };
@@ -21,12 +21,7 @@ pub struct NatsApp {
     client: async_nats::Client,
     state: StateMap,
     auth: Option<AuthConfig>,
-    fallback_name: String,
-    fallback_version: String,
-    fallback_description: String,
-    endpoints: Vec<EndpointDefinition>,
-    consumers: Vec<ConsumerDefinition>,
-    service_meta: Option<ServiceMetadata>,
+    service_defs: Vec<ServiceDefinition>,
 }
 
 impl NatsApp {
@@ -35,28 +30,8 @@ impl NatsApp {
             client,
             state: StateMap::new(),
             auth: None,
-            fallback_name: "app".to_string(),
-            fallback_version: "0.1.0".to_string(),
-            fallback_description: String::new(),
-            endpoints: Vec::new(),
-            consumers: Vec::new(),
-            service_meta: None,
+            service_defs: Vec::new(),
         }
-    }
-
-    pub fn service_name(mut self, name: impl Into<String>) -> Self {
-        self.fallback_name = name.into();
-        self
-    }
-
-    pub fn service_version(mut self, version: impl Into<String>) -> Self {
-        self.fallback_version = version.into();
-        self
-    }
-
-    pub fn service_description(mut self, description: impl Into<String>) -> Self {
-        self.fallback_description = description.into();
-        self
     }
 
     pub fn state<T>(mut self, value: T) -> Self
@@ -77,76 +52,119 @@ impl NatsApp {
         self
     }
 
-    pub fn endpoint(mut self, def: EndpointDefinition) -> Self {
-        self.endpoints.push(def);
+    pub fn service<S: NatsService>(mut self) -> Self {
+        self.service_defs.push(S::definition());
         self
     }
 
-    pub fn consumer_def(mut self, def: ConsumerDefinition) -> Self {
-        self.consumers.push(def);
-        self
-    }
-
-    pub fn consumer(self, def: ConsumerDefinition) -> Self {
-        self.consumer_def(def)
-    }
-
-    pub fn service_metadata(mut self, meta: ServiceMetadata) -> Self {
-        self.service_meta = Some(meta);
+    pub fn service_def(mut self, def: ServiceDefinition) -> Self {
+        self.service_defs.push(def);
         self
     }
 
     pub async fn run(mut self) -> Result<()> {
-        let registry_services = registered_services();
-        let registry_endpoints = registered_endpoints();
-        let registry_consumers = registered_consumers();
+        if self.service_defs.is_empty() {
+            anyhow::bail!("NatsApp requires at least one explicit service via .service(...) or .service_def(...)");
+        }
 
-        self.endpoints.extend(registry_endpoints);
-        self.consumers.extend(registry_consumers);
+        let mut live_services = Vec::new();
+        let total_services = self.service_defs.len();
 
-        let service_meta = self
-            .service_meta
-            .take()
-            .or_else(|| registry_services.into_iter().next())
-            .unwrap_or_else(|| {
-                ServiceMetadata::new(
-                    self.fallback_name.clone(),
-                    self.fallback_version.clone(),
-                    self.fallback_description.clone(),
-                )
-            });
+        info!(service_count = total_services, "starting nats application");
+
+        for svc_def in std::mem::take(&mut self.service_defs) {
+            info!(
+                service = %svc_def.metadata.name,
+                version = %svc_def.metadata.version,
+                endpoint_count = svc_def.endpoints.len(),
+                consumer_count = svc_def.consumers.len(),
+                "spawning service"
+            );
+            let svc = self.spawn_service(svc_def).await?;
+            live_services.push(svc);
+        }
+
+        info!(service_count = live_services.len(), "all services are running");
+        tokio::signal::ctrl_c().await?;
+        drop(live_services);
+        Ok(())
+    }
+
+    async fn spawn_service(
+        &self,
+        svc_def: ServiceDefinition,
+    ) -> Result<async_nats::service::Service> {
+        let service_name = svc_def.metadata.name.clone();
+        let service_version = svc_def.metadata.version.clone();
+        let service_description = svc_def.metadata.description.clone();
 
         let service = self
             .client
             .service_builder()
-            .description(service_meta.description.clone())
-            .start(service_meta.name.clone(), service_meta.version.clone())
+            .description(service_description)
+            .start(service_name.clone(), service_version.clone())
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
         info!(
-            service = %service_meta.name,
-            version = %service_meta.version,
+            service = %service_name,
+            version = %service_version,
             "nats-micro service started"
         );
 
-        self.spawn_consumers().await?;
+        self.spawn_consumers_for(&service_name, &svc_def.consumers).await?;
 
-        let endpoints = std::mem::take(&mut self.endpoints);
-
-        for endpoint_def in endpoints {
+        for endpoint_def in svc_def.endpoints {
             let app = self.clone();
+            let endpoint_service_name = service_name.clone();
+            let endpoint_group = endpoint_def.group.clone();
+            let endpoint_subject = endpoint_def.subject.clone();
+            let endpoint_full_subject = endpoint_def.full_subject();
+            let queue_group = endpoint_def.queue_group.clone();
 
-            let group = service.group(endpoint_def.group.clone());
-            let mut ep = group
-                .endpoint(endpoint_def.subject.clone())
-                .await
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            debug!(
+                service = %endpoint_service_name,
+                group = %endpoint_group,
+                subject = %endpoint_subject,
+                full_subject = %endpoint_full_subject,
+                queue_group = ?queue_group,
+                auth_required = endpoint_def.auth_required,
+                "registering endpoint"
+            );
+
+            let mut ep = if endpoint_group.is_empty() {
+                service
+                    .endpoint(endpoint_subject.clone())
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
+            } else {
+                service
+                    .group(endpoint_group.clone())
+                    .endpoint(endpoint_subject.clone())
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
+            };
+
+            info!(
+                service = %endpoint_service_name,
+                group = %endpoint_group,
+                subject = %endpoint_subject,
+                full_subject = %endpoint_full_subject,
+                "endpoint registered"
+            );
 
             tokio::spawn(async move {
                 while let Some(raw_req) = ep.next().await {
                     let headers = raw_req.message.headers.clone().unwrap_or_default();
                     let request_id = ensure_request_id(&headers);
+
+                    debug!(
+                        service = %endpoint_service_name,
+                        group = %endpoint_group,
+                        subject = %raw_req.message.subject,
+                        request_id = %request_id,
+                        "received endpoint request"
+                    );
 
                     let req = NatsRequest {
                         subject: raw_req.message.subject.to_string(),
@@ -155,10 +173,18 @@ impl NatsApp {
                         reply: raw_req.message.reply.as_ref().map(|s| s.to_string()),
                         request_id: request_id.clone(),
                     };
+                    let request_subject = req.subject.clone();
 
                     let user = match app.resolve_user(&req, endpoint_def.auth_required).await {
                         Ok(user) => user,
                         Err(err) => {
+                            debug!(
+                                service = %endpoint_service_name,
+                                group = %endpoint_group,
+                                subject = %request_subject,
+                                request_id = %request_id,
+                                "request authentication failed"
+                            );
                             let err = err.into_nats_error(request_id.clone());
                             let payload = serde_json::to_vec(&err).unwrap_or_default();
                             let _ = raw_req.respond(Ok(payload.into())).await;
@@ -177,33 +203,67 @@ impl NatsApp {
                     let response = match endpoint_def.handler.call(ctx).await {
                         Ok(res) => res,
                         Err(err) => {
+                            error!(
+                                service = %endpoint_service_name,
+                                group = %endpoint_group,
+                                subject = %request_subject,
+                                request_id = %request_id,
+                                error = %err,
+                                "endpoint handler failed"
+                            );
                             let payload = serde_json::to_vec(&err).unwrap_or_default();
                             let _ = raw_req.respond(Ok(payload.into())).await;
                             continue;
                         }
                     };
 
+                    debug!(
+                        service = %endpoint_service_name,
+                        group = %endpoint_group,
+                        subject = %request_subject,
+                        request_id = %request_id,
+                        "sending endpoint response"
+                    );
+
                     if let Err(err) = raw_req.respond(Ok(response.payload)).await {
-                        error!(error = %err, request_id = %request_id, "failed to respond");
+                        error!(
+                            service = %endpoint_service_name,
+                            group = %endpoint_group,
+                            subject = %request_subject,
+                            request_id = %request_id,
+                            error = %err,
+                            "failed to respond"
+                        );
                     }
                 }
             });
         }
 
-        tokio::signal::ctrl_c().await?;
-        Ok(())
+        Ok(service)
     }
 
-    async fn spawn_consumers(&self) -> Result<()> {
-        let consumers = self.consumers.clone();
-
+    async fn spawn_consumers_for(
+        &self,
+        service_name: &str,
+        consumers: &[ConsumerDefinition],
+    ) -> Result<()> {
         if consumers.is_empty() {
+            debug!(service = %service_name, "service has no consumers to spawn");
             return Ok(());
         }
 
         let jetstream = jetstream::new(self.client.clone());
 
         for consumer_def in consumers {
+            debug!(
+                service = %service_name,
+                stream = %consumer_def.stream,
+                durable = %consumer_def.durable,
+                filter_subject = %consumer_def.filter_subject,
+                ack_on_success = consumer_def.ack_on_success,
+                "initializing consumer"
+            );
+
             let stream = jetstream
                 .get_stream(consumer_def.stream.clone())
                 .await
@@ -244,18 +304,32 @@ impl NatsApp {
             })?;
 
             let app = self.clone();
+            let consumer_def = consumer_def.clone();
+            let service_name = service_name.to_string();
             tokio::spawn(async move {
                 while let Some(message) = messages.next().await {
                     let message = match message {
                         Ok(message) => message,
                         Err(err) => {
-                            error!(error = %err, consumer = %durable, "failed to receive consumer message");
+                            error!(
+                                service = %service_name,
+                                consumer = %durable,
+                                error = %err,
+                                "failed to receive consumer message"
+                            );
                             continue;
                         }
                     };
 
                     let headers = message.headers.clone().unwrap_or_default();
                     let request_id = ensure_request_id(&headers);
+                    debug!(
+                        service = %service_name,
+                        consumer = %durable,
+                        subject = %message.subject,
+                        request_id = %request_id,
+                        "received consumer message"
+                    );
                     let req = NatsRequest {
                         subject: message.subject.to_string(),
                         payload: message.payload.clone(),
@@ -268,6 +342,7 @@ impl NatsApp {
                         Ok(user) => user,
                         Err(err) => {
                             error!(
+                                service = %service_name,
                                 error = %err,
                                 consumer = %durable,
                                 request_id = %request_id,
@@ -288,8 +363,15 @@ impl NatsApp {
 
                     match consumer_def.handler.call(ctx).await {
                         Ok(_) if consumer_def.ack_on_success => {
+                            debug!(
+                                service = %service_name,
+                                consumer = %durable,
+                                request_id = %request_id,
+                                "acking consumer message"
+                            );
                             if let Err(err) = message.ack().await {
                                 error!(
+                                    service = %service_name,
                                     error = %err,
                                     consumer = %durable,
                                     request_id = %request_id,
@@ -300,10 +382,17 @@ impl NatsApp {
                         Ok(_) => {}
                         Err(err) => {
                             error!(
+                                service = %service_name,
                                 error = %err,
                                 consumer = %durable,
                                 request_id = %request_id,
                                 "consumer handler failed"
+                            );
+                            debug!(
+                                service = %service_name,
+                                consumer = %durable,
+                                request_id = %request_id,
+                                "nacking consumer message"
                             );
                             let _ = message.ack_with(AckKind::Nak(None)).await;
                         }

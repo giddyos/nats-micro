@@ -1,40 +1,13 @@
-use crate::{
-    consumer::ConsumerDefinition,
-    service::{EndpointDefinition, ServiceMetadata},
-};
+use crate::service::ServiceDefinition;
 
 pub struct ServiceRegistration {
-    pub constructor: fn() -> ServiceMetadata,
-}
-
-pub struct EndpointRegistration {
-    pub constructor: fn() -> EndpointDefinition,
-}
-
-pub struct ConsumerRegistration {
-    pub constructor: fn() -> ConsumerDefinition,
+    pub constructor: fn() -> ServiceDefinition,
 }
 
 inventory::collect!(ServiceRegistration);
-inventory::collect!(EndpointRegistration);
-inventory::collect!(ConsumerRegistration);
 
-pub fn registered_services() -> Vec<ServiceMetadata> {
+pub fn registered_services() -> Vec<ServiceDefinition> {
     inventory::iter::<ServiceRegistration>
-        .into_iter()
-        .map(|registration| (registration.constructor)())
-        .collect()
-}
-
-pub fn registered_endpoints() -> Vec<EndpointDefinition> {
-    inventory::iter::<EndpointRegistration>
-        .into_iter()
-        .map(|registration| (registration.constructor)())
-        .collect()
-}
-
-pub fn registered_consumers() -> Vec<ConsumerDefinition> {
-    inventory::iter::<ConsumerRegistration>
         .into_iter()
         .map(|registration| (registration.constructor)())
         .collect()

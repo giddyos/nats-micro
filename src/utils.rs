@@ -8,7 +8,7 @@ pub fn ensure_request_id(headers: &HeaderMap) -> String {
     if let Some(v) = headers.get("X-Request-Id") {
         return v.as_str().to_string();
     }
-    Uuid::new_v4().to_string()
+    Uuid::now_v7().to_string()
 }
 
 pub fn split_subject(subject: &str) -> Vec<&str> {

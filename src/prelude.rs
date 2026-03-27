@@ -8,4 +8,7 @@ pub use crate::extractors::{
 pub use crate::handler::HandlerFn;
 pub use crate::request::NatsRequest;
 pub use crate::response::{IntoNatsResponse, NatsResponse};
-pub use crate::service::{EndpointDefinition, ServiceMetadata};
+pub use crate::service::{
+    ConsumerInfo, EndpointDefinition, EndpointInfo, NatsService, ParamInfo, ServiceDefinition,
+    ServiceMetadata,
+};

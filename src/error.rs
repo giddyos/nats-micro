@@ -81,7 +81,12 @@ impl IntoNatsError for NatsErrorResponse {
 
 impl IntoNatsError for anyhow::Error {
     fn into_nats_error(self, request_id: String) -> NatsErrorResponse {
+        // Preserve a safe, truncated error message in `details` to aid debugging
+        // while avoiding leaking large or sensitive payloads.
+        let msg = self.to_string();
+        let trunc = if msg.len() > 200 { &msg[..200] } else { &msg };
         NatsErrorResponse::internal("INTERNAL_ERROR", "an internal error occurred")
+            .with_details(Value::String(trunc.to_string()))
             .with_request_id(request_id)
     }
 }
@@ -104,6 +109,26 @@ impl IntoNatsError for AppError {
             AppError::Transport(msg) => {
                 NatsErrorResponse::internal("TRANSPORT_ERROR", msg).with_request_id(request_id)
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::anyhow;
+
+    #[test]
+    fn anyhow_into_nats_error_includes_truncated_details() {
+        let err = anyhow!("something went wrong: secret=very-sensitive-data");
+        let resp = err.into_nats_error("req-123".to_string());
+        assert_eq!(resp.code, 500);
+        assert_eq!(resp.error, "INTERNAL_ERROR");
+        assert_eq!(resp.request_id, "req-123");
+        assert!(resp.details.is_some());
+        if let Some(Value::String(s)) = resp.details {
+            assert!(s.contains("something went wrong"));
+            assert!(s.len() <= 200);
         }
     }
 }
