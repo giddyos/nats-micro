@@ -1,31 +1,31 @@
 error: endpoint subject template requires handler argument `a: SubjectParam<...>` or `_a: SubjectParam<...>`
- --> tests/ui/endpoint_missing_params.rs:4:10
+ --> tests/ui/endpoint_missing_params.rs:9:14
   |
-4 | async fn missing_params(_state: State<()>) -> Result<(), NatsErrorResponse> {
-  |          ^^^^^^^^^^^^^^
+9 |     async fn missing_params(_state: State<()>) -> Result<(), NatsErrorResponse> {
+  |              ^^^^^^^^^^^^^^
 
 error: endpoint subject template requires handler argument `b: SubjectParam<...>` or `_b: SubjectParam<...>`
- --> tests/ui/endpoint_missing_params.rs:4:10
+ --> tests/ui/endpoint_missing_params.rs:9:14
   |
-4 | async fn missing_params(_state: State<()>) -> Result<(), NatsErrorResponse> {
-  |          ^^^^^^^^^^^^^^
+9 |     async fn missing_params(_state: State<()>) -> Result<(), NatsErrorResponse> {
+  |              ^^^^^^^^^^^^^^
 
 error: endpoint subject template requires handler argument `c: SubjectParam<...>` or `_c: SubjectParam<...>`
- --> tests/ui/endpoint_missing_params.rs:4:10
+ --> tests/ui/endpoint_missing_params.rs:9:14
   |
-4 | async fn missing_params(_state: State<()>) -> Result<(), NatsErrorResponse> {
-  |          ^^^^^^^^^^^^^^
+9 |     async fn missing_params(_state: State<()>) -> Result<(), NatsErrorResponse> {
+  |              ^^^^^^^^^^^^^^
 
 error: endpoint subject template requires handler argument `d: SubjectParam<...>` or `_d: SubjectParam<...>`
- --> tests/ui/endpoint_missing_params.rs:4:10
+ --> tests/ui/endpoint_missing_params.rs:9:14
   |
-4 | async fn missing_params(_state: State<()>) -> Result<(), NatsErrorResponse> {
-  |          ^^^^^^^^^^^^^^
+9 |     async fn missing_params(_state: State<()>) -> Result<(), NatsErrorResponse> {
+  |              ^^^^^^^^^^^^^^
 
 warning: unused imports: `NatsErrorResponse` and `State`
  --> tests/ui/endpoint_missing_params.rs:1:18
   |
-1 | use nats_micro::{NatsErrorResponse, State, endpoint};
+1 | use nats_micro::{NatsErrorResponse, State, service, service_handlers};
   |                  ^^^^^^^^^^^^^^^^^  ^^^^^
   |
   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

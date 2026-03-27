@@ -1,0 +1,5 @@
+error: #[consumer] may only be used on methods inside a #[service_handlers] impl block
+ --> tests/ui/consumer_loose_function.rs:4:10
+  |
+4 | async fn loose_consumer() -> Result<(), NatsErrorResponse> {
+  |          ^^^^^^^^^^^^^^

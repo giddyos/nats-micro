@@ -1,4 +1,6 @@
-use nats_micro::{FromSubjectParam, NatsErrorResponse, SubjectParam, endpoint};
+use nats_micro::{
+    FromSubjectParam, NatsErrorResponse, SubjectParam, service, service_handlers,
+};
 
 struct BoolFromDigits(bool);
 
@@ -14,9 +16,17 @@ impl FromSubjectParam for BoolFromDigits {
     }
 }
 
-#[endpoint(subject = "test.{enabled}.profile", group = "test")]
-async fn custom_param(_enabled: SubjectParam<BoolFromDigits>) -> Result<(), NatsErrorResponse> {
-    Ok(())
+#[service(name = "custom-param")]
+struct CustomParamService;
+
+#[service_handlers]
+impl CustomParamService {
+    #[endpoint(subject = "test.{enabled}.profile", group = "test")]
+    async fn custom_param(
+        _enabled: SubjectParam<BoolFromDigits>,
+    ) -> Result<(), NatsErrorResponse> {
+        Ok(())
+    }
 }
 
 fn main() {}

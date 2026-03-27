@@ -1,13 +1,13 @@
 error: subject parameter `b` is not declared in endpoint subject template
- --> tests/ui/endpoint_extra_param.rs:6:5
-  |
-6 |     _b: SubjectParam<String>,
-  |     ^^
+  --> tests/ui/endpoint_extra_param.rs:11:9
+   |
+11 |         _b: SubjectParam<String>,
+   |         ^^
 
 warning: unused imports: `NatsErrorResponse` and `SubjectParam`
  --> tests/ui/endpoint_extra_param.rs:1:18
   |
-1 | use nats_micro::{NatsErrorResponse, SubjectParam, endpoint};
+1 | use nats_micro::{NatsErrorResponse, SubjectParam, service, service_handlers};
   |                  ^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^
   |
   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
