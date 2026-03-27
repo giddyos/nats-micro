@@ -56,7 +56,7 @@ pub(crate) fn build_handler_body(
         };
 
         extractors.push(quote! {
-            let #ident: #ty = match <#ty as ::nats_micro::__private::FromRequest>::from_request(#ctx_expr) {
+            let #ident: #ty = match <#ty as ::nats_micro::__macros::FromRequest>::from_request(#ctx_expr) {
                 Ok(value) => value,
                 Err(err) => return Err(err),
             };
@@ -65,14 +65,14 @@ pub(crate) fn build_handler_body(
     }
 
     Ok(quote! {
-        ::nats_micro::HandlerFn::new(move |ctx: ::nats_micro::__private::RequestContext| {
+        ::nats_micro::HandlerFn::new(move |ctx: ::nats_micro::__macros::RequestContext| {
             ::std::boxed::Box::pin(async move {
                 let __request_id = ctx.request.request_id.clone();
                 #(#extractors)*
                 let response = #fn_path(#(#args),*)
                     .await
-                    .map_err(|err| ::nats_micro::__private::IntoNatsError::into_nats_error(err, __request_id.clone()))?;
-                ::nats_micro::__private::IntoNatsResponse::into_response(response, __request_id)
+                    .map_err(|err| ::nats_micro::__macros::IntoNatsError::into_nats_error(err, __request_id.clone()))?;
+                ::nats_micro::__macros::IntoNatsResponse::into_response(response, __request_id)
             })
         })
     })
@@ -101,7 +101,7 @@ pub(crate) fn extract_param_info(sig: &Signature) -> Result<Vec<TokenStream>, To
         let is_sp = is_subject_param(ty);
 
         params.push(quote! {
-            ::nats_micro::__private::ParamInfo {
+            ::nats_micro::__macros::ParamInfo {
                 name: #name.to_string(),
                 type_name: #type_name.to_string(),
                 is_subject_param: #is_sp,

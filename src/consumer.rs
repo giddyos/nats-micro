@@ -1,14 +1,23 @@
 use darling::FromMeta;
 use proc_macro2::TokenStream;
-use syn::ItemFn;
+use syn::{Expr, ItemFn};
+
+#[derive(Debug, Clone)]
+pub(crate) struct ConsumerConfigExpr(pub Expr);
+
+impl FromMeta for ConsumerConfigExpr {
+    fn from_expr(value: &Expr) -> darling::Result<Self> {
+        Ok(Self(value.clone()))
+    }
+}
 
 #[derive(Debug, FromMeta)]
 pub(crate) struct ConsumerArgs {
     pub stream: Option<String>,
     pub durable: Option<String>,
-    pub filter_subject: Option<String>,
     #[darling(default)]
-    pub ack_on_success: bool,
+    pub auth: bool,
+    pub config: Option<ConsumerConfigExpr>,
 }
 
 pub fn expand_consumer(args: ConsumerArgs, func: ItemFn) -> TokenStream {

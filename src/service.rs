@@ -110,9 +110,9 @@ pub fn expand_service_handlers(item_impl: ItemImpl) -> TokenStream {
             #(#consumer_accessor_fns)*
         }
 
-        impl ::nats_micro::__private::NatsService for #struct_ident {
-            fn definition() -> ::nats_micro::__private::ServiceDefinition {
-                ::nats_micro::__private::ServiceDefinition {
+        impl ::nats_micro::__macros::NatsService for #struct_ident {
+            fn definition() -> ::nats_micro::__macros::ServiceDefinition {
+                ::nats_micro::__macros::ServiceDefinition {
                     metadata: #struct_ident::__nats_micro_service_meta(),
                     endpoints: vec![#(#endpoint_def_calls),*],
                     consumers: vec![#(#consumer_def_calls),*],
@@ -122,9 +122,9 @@ pub fn expand_service_handlers(item_impl: ItemImpl) -> TokenStream {
             }
         }
 
-        ::nats_micro::__private::inventory::submit! {
-            ::nats_micro::__private::ServiceRegistration {
-                constructor: <#struct_ident as ::nats_micro::__private::NatsService>::definition,
+        ::nats_micro::__macros::inventory::submit! {
+            ::nats_micro::__macros::ServiceRegistration {
+                constructor: <#struct_ident as ::nats_micro::__macros::NatsService>::definition,
             }
         }
     }
@@ -203,7 +203,7 @@ fn process_endpoint_method(
         },
         def_call: quote! { Self::#def_method_name() },
         info_expr: quote! {
-            ::nats_micro::__private::EndpointInfo {
+            ::nats_micro::__macros::EndpointInfo {
                 fn_name: #fn_name_str.to_string(),
                 subject_template: #subject.to_string(),
                 subject_pattern: #nats_subject.to_string(),
@@ -225,8 +225,18 @@ fn process_consumer_method(
     let fn_name = &method.sig.ident;
     let stream = args.stream.as_deref().unwrap_or("DEFAULT");
     let durable = args.durable.unwrap_or_else(|| fn_name.to_string());
-    let filter_subject = args.filter_subject.as_deref().unwrap_or(">");
-    let ack_on_success = args.ack_on_success;
+    let auth_required = args.auth;
+
+    let config_tokens = match args.config {
+        Some(config) => {
+            let expr = config.0;
+            quote! {{
+                let __config: ::nats_micro::__macros::ConsumerConfig = (#expr);
+                __config
+            }}
+        }
+        None => quote! { ::nats_micro::__macros::ConsumerConfig::default() },
+    };
 
     let fn_path = quote! { #struct_ident::#fn_name };
     let handler = build_handler_body(&fn_path, &method.sig)?;
@@ -243,8 +253,8 @@ fn process_consumer_method(
                 ::nats_micro::ConsumerDefinition {
                     stream: #stream.to_string(),
                     durable: #durable.to_string(),
-                    filter_subject: #filter_subject.to_string(),
-                    ack_on_success: #ack_on_success,
+                    auth_required: #auth_required,
+                    config: #config_tokens,
                     handler: #handler,
                 }
             }
@@ -256,12 +266,11 @@ fn process_consumer_method(
         },
         def_call: quote! { Self::#def_method_name() },
         info_expr: quote! {
-            ::nats_micro::__private::ConsumerInfo {
+            ::nats_micro::__macros::ConsumerInfo {
                 fn_name: #fn_name_str.to_string(),
                 stream: #stream.to_string(),
                 durable: #durable.to_string(),
-                filter_subject: #filter_subject.to_string(),
-                ack_on_success: #ack_on_success,
+                auth_required: #auth_required,
                 params: vec![#(#param_infos),*],
             }
         },
