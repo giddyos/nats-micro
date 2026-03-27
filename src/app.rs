@@ -1,5 +1,5 @@
 use anyhow::Result;
-use async_nats::jetstream::{self, AckKind, consumer::push};
+use async_nats::jetstream::{self, AckKind};
 use async_nats::service::ServiceExt;
 use futures::StreamExt;
 use tracing::{debug, error, info};
@@ -64,7 +64,9 @@ impl NatsApp {
 
     pub async fn run(mut self) -> Result<()> {
         if self.service_defs.is_empty() {
-            anyhow::bail!("NatsApp requires at least one explicit service via .service(...) or .service_def(...)");
+            anyhow::bail!(
+                "NatsApp requires at least one explicit service via .service(...) or .service_def(...)"
+            );
         }
 
         let mut live_services = Vec::new();
@@ -84,7 +86,10 @@ impl NatsApp {
             live_services.push(svc);
         }
 
-        info!(service_count = live_services.len(), "all services are running");
+        info!(
+            service_count = live_services.len(),
+            "all services are running"
+        );
         tokio::signal::ctrl_c().await?;
         drop(live_services);
         Ok(())
@@ -112,7 +117,8 @@ impl NatsApp {
             "nats-micro service started"
         );
 
-        self.spawn_consumers_for(&service_name, &svc_def.consumers).await?;
+        self.spawn_consumers_for(&service_name, &svc_def.consumers)
+            .await?;
 
         for endpoint_def in svc_def.endpoints {
             let app = self.clone();
@@ -259,8 +265,7 @@ impl NatsApp {
                 service = %service_name,
                 stream = %consumer_def.stream,
                 durable = %consumer_def.durable,
-                filter_subject = %consumer_def.filter_subject,
-                ack_on_success = consumer_def.ack_on_success,
+                auth_required = consumer_def.auth_required,
                 "initializing consumer"
             );
 
@@ -274,19 +279,14 @@ impl NatsApp {
                     )
                 })?;
 
-            let deliver_subject = self.client.new_inbox();
             let durable = consumer_def.durable.clone();
+
+            let deliver_subject = self.client.new_inbox();
+            let mut consumer_config = consumer_def.config.clone();
+            consumer_config.deliver_subject = deliver_subject;
+            consumer_config.durable_name = Some(durable.clone());
             let consumer = stream
-                .get_or_create_consumer(
-                    &durable,
-                    push::Config {
-                        durable_name: Some(durable.clone()),
-                        deliver_subject,
-                        filter_subject: consumer_def.filter_subject.clone(),
-                        ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
-                        ..Default::default()
-                    },
-                )
+                .get_or_create_consumer(&durable, consumer_config)
                 .await
                 .map_err(|e| {
                     anyhow::anyhow!(
@@ -338,7 +338,7 @@ impl NatsApp {
                         request_id: request_id.clone(),
                     };
 
-                    let user = match app.resolve_user(&req, false).await {
+                    let user = match app.resolve_user(&req, consumer_def.auth_required).await {
                         Ok(user) => user,
                         Err(err) => {
                             error!(
@@ -362,7 +362,7 @@ impl NatsApp {
                     };
 
                     match consumer_def.handler.call(ctx).await {
-                        Ok(_) if consumer_def.ack_on_success => {
+                        Ok(_) => {
                             debug!(
                                 service = %service_name,
                                 consumer = %durable,
@@ -379,7 +379,6 @@ impl NatsApp {
                                 );
                             }
                         }
-                        Ok(_) => {}
                         Err(err) => {
                             error!(
                                 service = %service_name,

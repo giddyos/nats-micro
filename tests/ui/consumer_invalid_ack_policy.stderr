@@ -1,0 +1,13 @@
+error: ack_policy must be one of None, All, or Explicit
+ --> tests/ui/consumer_invalid_ack_policy.rs:8:100
+  |
+8 |     #[consumer(stream = "EVENTS", durable = "invalid-consumer", filter_subject = "events.invalid", ack_policy = Bogus)]
+  |                                                                                                    ^^^^^^^^^^
+
+warning: unused imports: `NatsErrorResponse` and `consumer`
+ --> tests/ui/consumer_invalid_ack_policy.rs:1:18
+  |
+1 | use nats_micro::{NatsErrorResponse, consumer, service, service_handlers};
+  |                  ^^^^^^^^^^^^^^^^^  ^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

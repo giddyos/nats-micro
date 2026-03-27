@@ -1,5 +1,6 @@
 use std::{fmt::Display, str::FromStr, sync::Arc};
 
+use bytes::Bytes;
 use prost::Message;
 use serde::de::DeserializeOwned;
 
@@ -16,6 +17,26 @@ pub trait FromSubjectParam: Sized + Send + 'static {
     type Err: Display + Send;
 
     fn from_subject_param(value: &str) -> Result<Self, Self::Err>;
+}
+
+pub trait FromPayload: Sized + Send + 'static {
+    fn from_payload(payload: &[u8], request_id: &str) -> Result<Self, NatsErrorResponse>;
+}
+
+#[derive(Debug, Clone)]
+pub struct Payload<T>(pub T);
+
+impl<T> std::ops::Deref for Payload<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T: FromPayload> FromRequest for Payload<T> {
+    fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
+        T::from_payload(&ctx.request.payload, &ctx.request.request_id).map(Payload)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +119,52 @@ where
                 NatsErrorResponse::bad_request("BAD_PROTOBUF", e.to_string())
                     .with_request_id(ctx.request.request_id.clone())
             })
+    }
+}
+
+impl<T> FromPayload for Json<T>
+where
+    T: DeserializeOwned + Send + 'static,
+{
+    fn from_payload(payload: &[u8], request_id: &str) -> Result<Self, NatsErrorResponse> {
+        let value = serde_json::from_slice::<T>(payload).map_err(|e| {
+            NatsErrorResponse::bad_request("BAD_JSON", e.to_string())
+                .with_request_id(request_id.to_string())
+        })?;
+        Ok(Json(value))
+    }
+}
+
+impl<T> FromPayload for Proto<T>
+where
+    T: Message + Default + Send + 'static,
+{
+    fn from_payload(payload: &[u8], request_id: &str) -> Result<Self, NatsErrorResponse> {
+        T::decode(payload).map(Proto).map_err(|e| {
+            NatsErrorResponse::bad_request("BAD_PROTOBUF", e.to_string())
+                .with_request_id(request_id.to_string())
+        })
+    }
+}
+
+impl FromPayload for Bytes {
+    fn from_payload(payload: &[u8], _request_id: &str) -> Result<Self, NatsErrorResponse> {
+        Ok(Bytes::copy_from_slice(payload))
+    }
+}
+
+impl FromPayload for Vec<u8> {
+    fn from_payload(payload: &[u8], _request_id: &str) -> Result<Self, NatsErrorResponse> {
+        Ok(payload.to_vec())
+    }
+}
+
+impl FromPayload for String {
+    fn from_payload(payload: &[u8], request_id: &str) -> Result<Self, NatsErrorResponse> {
+        String::from_utf8(payload.to_vec()).map_err(|e| {
+            NatsErrorResponse::bad_request("BAD_UTF8", e.to_string())
+                .with_request_id(request_id.to_string())
+        })
     }
 }
 

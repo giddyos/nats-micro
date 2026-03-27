@@ -69,8 +69,7 @@ pub struct ConsumerInfo {
     pub fn_name: String,
     pub stream: String,
     pub durable: String,
-    pub filter_subject: String,
-    pub ack_on_success: bool,
+    pub auth_required: bool,
     pub params: Vec<ParamInfo>,
 }
 

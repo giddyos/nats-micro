@@ -32,7 +32,15 @@ impl ServiceB {
         Ok("echo".to_string())
     }
 
-    #[consumer(stream = "EVENTS", durable = "svc-b-con", filter_subject = "events.b", ack_on_success = true)]
+    #[consumer(
+        stream = "EVENTS",
+        durable = "svc-b-con",
+        config = nats_micro::ConsumerConfig {
+            ack_wait: std::time::Duration::from_secs(30),
+            max_deliver: 5,
+            ..Default::default()
+        }
+    )]
     async fn handle_event(payload: Json<serde_json::Value>) -> Result<(), NatsErrorResponse> {
         let _ = payload;
         Ok(())
@@ -55,5 +63,5 @@ fn main() {
     let con = &def_b.consumer_info[0];
     assert_eq!(con.fn_name, "handle_event");
     assert_eq!(con.stream, "EVENTS");
-    assert!(con.ack_on_success);
+    assert!(!con.auth_required);
 }

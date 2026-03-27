@@ -1,24 +1,27 @@
-pub mod app;
-pub mod auth;
-pub mod consumer;
-pub mod error;
-pub mod extractors;
-pub mod handler;
-pub mod prelude;
-pub mod registry;
-pub mod request;
-pub mod response;
-pub mod service;
-pub mod state;
-pub mod utils;
+mod app;
+mod auth;
+mod consumer;
+mod error;
+mod extractors;
+mod handler;
+mod prelude;
+mod registry;
+mod request;
+mod response;
+mod service;
+mod state;
+mod utils;
 
 pub use app::NatsApp;
+pub use async_nats::jetstream::consumer::push::Config as ConsumerConfig;
 pub use auth::{Auth, AuthConfig, AuthError};
 pub use consumer::{ConsumerDefinition, ConsumerHandlerFn};
 pub use error::{IntoNatsError, NatsError, NatsErrorResponse};
-pub use extractors::{FromRequest, FromSubjectParam, Json, Proto, RequestId, State, SubjectParam};
+pub use extractors::{
+    FromPayload, FromRequest, FromSubjectParam, Json, Payload, Proto, RequestId, State,
+    SubjectParam,
+};
 pub use handler::{HandlerFn, RequestContext};
-pub use inventory;
 pub use request::NatsRequest;
 pub use response::{IntoNatsResponse, NatsResponse};
 pub use service::{
@@ -27,17 +30,20 @@ pub use service::{
 };
 pub use state::StateMap;
 
-pub use nats_micro_macros::{consumer, endpoint, service, service_error, service_handlers};
+pub use bytes::Bytes;
+pub use nats_micro_macros::{service, service_error, service_handlers};
 
-pub mod __private {
+#[doc(hidden)]
+pub mod __macros {
     pub use crate::error::IntoNatsError;
     pub use crate::extractors::FromRequest;
     pub use crate::handler::into_handler_fn;
     pub use crate::handler::{HandlerFuture, RequestContext};
-    pub use crate::inventory;
     pub use crate::registry::ServiceRegistration;
     pub use crate::response::{IntoNatsResponse, NatsResponse};
     pub use crate::service::{
         ConsumerInfo, EndpointInfo, NatsService, ParamInfo, ServiceDefinition,
     };
+    pub use async_nats::jetstream::consumer::push::Config as ConsumerConfig;
+    pub use inventory;
 }
