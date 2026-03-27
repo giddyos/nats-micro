@@ -61,8 +61,14 @@ pub fn expand_service_handlers(item_impl: ItemImpl) -> TokenStream {
             continue;
         };
 
-        let ep_idx = method.attrs.iter().position(|a| a.path().is_ident("endpoint"));
-        let con_idx = method.attrs.iter().position(|a| a.path().is_ident("consumer"));
+        let ep_idx = method
+            .attrs
+            .iter()
+            .position(|a| a.path().is_ident("endpoint"));
+        let con_idx = method
+            .attrs
+            .iter()
+            .position(|a| a.path().is_ident("consumer"));
 
         if let Some(idx) = ep_idx {
             let attr = &method.attrs[idx];
