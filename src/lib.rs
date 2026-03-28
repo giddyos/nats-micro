@@ -1,6 +1,12 @@
 mod app;
 mod auth;
 mod consumer;
+#[cfg(feature = "encryption")]
+mod encrypted;
+#[cfg(feature = "encryption")]
+mod encrypted_headers;
+#[cfg(feature = "encryption")]
+pub mod encryption;
 mod error;
 mod extractors;
 mod handler;
@@ -29,6 +35,15 @@ pub use service::{
     ServiceMetadata,
 };
 pub use state::StateMap;
+
+#[cfg(feature = "encryption")]
+pub use encrypted::Encrypted;
+#[cfg(feature = "encryption")]
+pub use encrypted_headers::{
+    EncryptedHeadersBuilder, decrypt_headers as encrypted_headers_decrypt,
+};
+#[cfg(feature = "encryption")]
+pub use encryption::{EncryptionError, EphemeralContext, ServiceKeyPair, ServiceRecipient};
 
 pub use bytes::Bytes;
 pub use nats_micro_macros::{service, service_error, service_handlers};

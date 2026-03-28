@@ -124,6 +124,7 @@ mod tests {
         let resp = err.into_nats_error("req-123".to_string());
         assert_eq!(resp.code, 500);
         assert_eq!(resp.error, "INTERNAL_ERROR");
+        assert_eq!(resp.message, "an internal error occurred");
         assert_eq!(resp.request_id, "req-123");
         assert!(resp.details.is_some());
         if let Some(Value::String(s)) = resp.details {

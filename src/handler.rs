@@ -30,16 +30,48 @@ impl HandlerFn {
     }
 }
 
-#[derive(Clone)]
 pub struct RequestContext {
     pub request: NatsRequest,
     pub states: StateMap,
     pub user: Option<BoxAuthUser>,
     pub subject_template: Option<String>,
     pub current_param_name: Option<String>,
+    #[cfg(feature = "encryption")]
+    pub(crate) ephemeral_pub: Option<[u8; 32]>,
+}
+
+impl Clone for RequestContext {
+    fn clone(&self) -> Self {
+        Self {
+            request: self.request.clone(),
+            states: self.states.clone(),
+            user: self.user.clone(),
+            subject_template: self.subject_template.clone(),
+            current_param_name: self.current_param_name.clone(),
+            #[cfg(feature = "encryption")]
+            ephemeral_pub: self.ephemeral_pub,
+        }
+    }
 }
 
 impl RequestContext {
+    pub fn new(
+        request: NatsRequest,
+        states: StateMap,
+        user: Option<BoxAuthUser>,
+        subject_template: Option<String>,
+    ) -> Self {
+        Self {
+            request,
+            states,
+            user,
+            subject_template,
+            current_param_name: None,
+            #[cfg(feature = "encryption")]
+            ephemeral_pub: None,
+        }
+    }
+
     pub fn with_param_name(&self, name: impl Into<String>) -> Self {
         let mut next = self.clone();
         next.current_param_name = Some(name.into());
@@ -60,7 +92,7 @@ where
 
 macro_rules! impl_handler {
     ([$($ty:ident),*]) => {
-        #[allow(non_snake_case)] // T1, T2... used as variable bindings
+        #[allow(non_snake_case)]
         impl<F, Fut, Res, Err, $($ty,)*> Handler<($($ty,)*)> for F
         where
             F: Fn($($ty),*) -> Fut + Clone + Send + Sync + 'static,
@@ -82,7 +114,7 @@ macro_rules! impl_handler {
                     let res = f($($ty),*)
                         .await
                         .map_err(|e| e.into_nats_error(request_id.clone()))?;
-                    res.into_response(request_id)
+                    res.into_response(&ctx)
                 })
             }
         }

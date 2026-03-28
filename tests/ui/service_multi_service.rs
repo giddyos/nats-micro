@@ -41,7 +41,7 @@ impl ServiceB {
             ..Default::default()
         }
     )]
-    async fn handle_event(payload: Json<serde_json::Value>) -> Result<(), NatsErrorResponse> {
+    async fn handle_event(payload: nats_micro::Payload<Json<serde_json::Value>>) -> Result<(), NatsErrorResponse> {
         let _ = payload;
         Ok(())
     }
