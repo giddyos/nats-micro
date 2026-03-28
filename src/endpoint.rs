@@ -72,7 +72,7 @@ pub(crate) fn build_handler_body(
                 let response = #fn_path(#(#args),*)
                     .await
                     .map_err(|err| ::nats_micro::__macros::IntoNatsError::into_nats_error(err, __request_id.clone()))?;
-                ::nats_micro::__macros::IntoNatsResponse::into_response(response, __request_id)
+                ::nats_micro::__macros::IntoNatsResponse::into_response(response, &ctx)
             })
         })
     })
