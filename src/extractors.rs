@@ -5,7 +5,10 @@ use prost::Message;
 use serde::de::DeserializeOwned;
 
 use crate::{
-    auth::Auth, error::NatsErrorResponse, handler::RequestContext, request::NatsRequest,
+    auth::Auth,
+    error::NatsErrorResponse,
+    handler::RequestContext,
+    request::{Header, Headers, NatsRequest},
     utils::extract_subject_param,
 };
 
@@ -104,6 +107,12 @@ impl std::ops::Deref for Subject {
 impl FromRequest for NatsRequest {
     fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
         Ok(ctx.request.clone())
+    }
+}
+
+impl FromRequest for Headers {
+    fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
+        Ok(ctx.request.headers.clone())
     }
 }
 

@@ -1,7 +1,8 @@
-use async_nats::HeaderMap;
 use uuid::Uuid;
 
-pub fn ensure_request_id(headers: &HeaderMap) -> String {
+use crate::request::Headers;
+
+pub fn ensure_request_id(headers: &Headers) -> String {
     if let Some(v) = headers.get("x-request-id") {
         return v.as_str().to_string();
     }
@@ -37,9 +38,6 @@ pub fn extract_subject_param(subject_template: &str, subject: &str, name: &str) 
     None
 }
 
-pub fn has_auth_headers(headers: &HeaderMap) -> bool {
-    headers.get("authorization").is_some()
-        || headers.get("Authorization").is_some()
-        || headers.get("x-api-key").is_some()
-        || headers.get("X-Api-Key").is_some()
+pub fn has_auth_headers(headers: &Headers) -> bool {
+    headers.get("authorization").is_some() || headers.get("x-api-key").is_some()
 }

@@ -24,6 +24,12 @@ pub struct NatsApp {
     service_defs: Vec<ServiceDefinition>,
 }
 
+pub(crate) struct PreparedRequest {
+    pub(crate) request: NatsRequest,
+    #[cfg(feature = "encryption")]
+    pub(crate) ephemeral_pub: Option<[u8; 32]>,
+}
+
 impl NatsApp {
     pub fn new(client: async_nats::Client) -> Self {
         Self {
@@ -104,17 +110,17 @@ impl NatsApp {
     fn prepare_request_for_dispatch(
         &self,
         req: NatsRequest,
-    ) -> Result<(NatsRequest, Option<[u8; 32]>), NatsErrorResponse> {
+    ) -> Result<PreparedRequest, NatsErrorResponse> {
         Self::prepare_request_for_dispatch_with_state(&self.state, req)
     }
 
     pub(crate) fn prepare_request_for_dispatch_with_state(
         state: &StateMap,
         mut req: NatsRequest,
-    ) -> Result<(NatsRequest, Option<[u8; 32]>), NatsErrorResponse> {
+    ) -> Result<PreparedRequest, NatsErrorResponse> {
         #[cfg(not(feature = "encryption"))]
         {
-            return Ok((req, None));
+            return Ok(PreparedRequest { request: req });
         }
 
         #[cfg(feature = "encryption")]
@@ -185,30 +191,31 @@ impl NatsApp {
                     std::collections::HashMap::new()
                 };
 
-                let mut clean_headers = async_nats::HeaderMap::new();
-                for (name, values) in req.headers.iter() {
-                    let name_ref: &str = name.as_ref();
-                    if name_ref.eq_ignore_ascii_case(ENCRYPTED_HEADERS_NAME)
-                        || name_ref.eq_ignore_ascii_case(RESPONSE_PUB_KEY_NAME)
-                        || name_ref.eq_ignore_ascii_case(SIGNATURE_HEADER_NAME)
+                let mut clean_headers = crate::request::Headers::new();
+                for header in req.headers.iter() {
+                    if header.key.eq_ignore_ascii_case(ENCRYPTED_HEADERS_NAME)
+                        || header.key.eq_ignore_ascii_case(RESPONSE_PUB_KEY_NAME)
+                        || header.key.eq_ignore_ascii_case(SIGNATURE_HEADER_NAME)
                     {
                         continue;
                     }
-                    for value in values {
-                        clean_headers.append(name_ref, value.as_str());
-                    }
+                    clean_headers.append(header.key.clone(), header.value.clone());
                 }
                 req.headers = clean_headers;
 
                 for (key, value) in decrypted_headers {
-                    if let Ok(header_value) = value.parse::<async_nats::HeaderValue>() {
-                        req.headers.insert(key.as_str(), header_value);
-                    }
+                    req.headers.insert_encrypted(key, value);
                 }
 
-                Ok((req, response_pub_key))
+                Ok(PreparedRequest {
+                    request: req,
+                    ephemeral_pub: response_pub_key,
+                })
             } else {
-                Ok((req, None))
+                Ok(PreparedRequest {
+                    request: req,
+                    ephemeral_pub: None,
+                })
             }
         }
     }
@@ -273,7 +280,7 @@ impl NatsApp {
 
             tokio::spawn(async move {
                 while let Some(raw_req) = ep.next().await {
-                    let headers = raw_req.message.headers.clone().unwrap_or_default();
+                    let headers: crate::Headers = raw_req.message.headers.clone().unwrap_or_default().into();
                     let request_id = ensure_request_id(&headers);
 
                     debug!(
@@ -291,7 +298,7 @@ impl NatsApp {
                         reply: raw_req.message.reply.as_ref().map(|s| s.to_string()),
                         request_id: request_id.clone(),
                     };
-                    let (req, ephemeral_pub) = match app.prepare_request_for_dispatch(req) {
+                    let prepared = match app.prepare_request_for_dispatch(req) {
                         Ok(prepared) => prepared,
                         Err(err) => {
                             debug!(
@@ -306,6 +313,7 @@ impl NatsApp {
                             continue;
                         }
                     };
+                    let req = prepared.request;
                     let request_subject = req.subject.clone();
 
                     let user = match app.resolve_user(&req, endpoint_def.auth_required).await {
@@ -326,15 +334,16 @@ impl NatsApp {
                         }
                     };
 
-                    let ctx = RequestContext {
-                        request: req,
-                        states: app.state.clone(),
+                    let mut ctx = RequestContext::new(
+                        req,
+                        app.state.clone(),
                         user,
-                        subject_template: endpoint_def.subject_template.clone(),
-                        current_param_name: None,
-                        #[cfg(feature = "encryption")]
-                        ephemeral_pub,
-                    };
+                        endpoint_def.subject_template.clone(),
+                    );
+                    #[cfg(feature = "encryption")]
+                    {
+                        ctx = ctx.__with_ephemeral_pub(prepared.ephemeral_pub);
+                    }
 
                     let response = match endpoint_def.handler.call(ctx).await {
                         Ok(res) => res,
@@ -451,7 +460,7 @@ impl NatsApp {
                         }
                     };
 
-                    let headers = message.headers.clone().unwrap_or_default();
+                    let headers: crate::Headers = message.headers.clone().unwrap_or_default().into();
                     let request_id = ensure_request_id(&headers);
                     debug!(
                         service = %service_name,
@@ -467,7 +476,7 @@ impl NatsApp {
                         reply: message.reply.clone().map(|s| s.to_string()),
                         request_id: request_id.clone(),
                     };
-                    let (req, ephemeral_pub) = match app.prepare_request_for_dispatch(req) {
+                    let prepared = match app.prepare_request_for_dispatch(req) {
                         Ok(prepared) => prepared,
                         Err(err) => {
                             error!(
@@ -481,6 +490,7 @@ impl NatsApp {
                             continue;
                         }
                     };
+                    let req = prepared.request;
 
                     let user = match app.resolve_user(&req, consumer_def.auth_required).await {
                         Ok(user) => user,
@@ -497,15 +507,11 @@ impl NatsApp {
                         }
                     };
 
-                    let ctx = RequestContext {
-                        request: req,
-                        states: app.state.clone(),
-                        user,
-                        subject_template: None,
-                        current_param_name: None,
-                        #[cfg(feature = "encryption")]
-                        ephemeral_pub,
-                    };
+                    let mut ctx = RequestContext::new(req, app.state.clone(), user, None);
+                    #[cfg(feature = "encryption")]
+                    {
+                        ctx = ctx.__with_ephemeral_pub(prepared.ephemeral_pub);
+                    }
 
                     match consumer_def.handler.call(ctx).await {
                         Ok(_) => {

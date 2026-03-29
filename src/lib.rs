@@ -32,11 +32,11 @@ pub use error::{
     NatsErrorResponse, ServiceErrorMatch,
 };
 pub use extractors::{
-    FromPayload, FromRequest, FromSubjectParam, Json, Payload, Proto, RequestId, State, Subject,
-    SubjectParam,
+    FromPayload, FromRequest, FromSubjectParam, Json, Payload, Proto, RequestId, State,
+    Subject, SubjectParam,
 };
 pub use handler::{HandlerFn, RequestContext};
-pub use request::NatsRequest;
+pub use request::{Header, Headers, NatsRequest};
 pub use response::{IntoNatsResponse, NatsResponse};
 pub use service::{
     ConsumerInfo, EndpointDefinition, EndpointInfo, NatsService, ParamInfo, PayloadEncoding,
@@ -67,7 +67,8 @@ pub mod __test_support {
         state: &crate::StateMap,
         req: crate::NatsRequest,
     ) -> Result<(crate::NatsRequest, Option<[u8; 32]>), crate::NatsErrorResponse> {
-        crate::app::NatsApp::prepare_request_for_dispatch_with_state(state, req)
+        let prepared = crate::app::NatsApp::prepare_request_for_dispatch_with_state(state, req)?;
+        Ok((prepared.request, prepared.ephemeral_pub))
     }
 }
 

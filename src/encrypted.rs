@@ -50,22 +50,8 @@ impl<T: FromPayload> FromPayload for Encrypted<T> {
                 .with_request_id(ctx.request.request_id.clone())
             })?;
 
-        let recovered_headers =
-            decrypt_headers(&ctx.request.headers, &shared_key).map_err(|error| {
-                NatsErrorResponse::bad_request(
-                    "DECRYPT_FAILED",
-                    format!("header decryption failed: {error}"),
-                )
-                .with_request_id(ctx.request.request_id.clone())
-            })?;
-
         let mut patched = ctx.clone();
         patched.request.payload = plaintext.into();
-        for (k, v) in recovered_headers {
-            if let Ok(val) = v.parse::<async_nats::HeaderValue>() {
-                patched.request.headers.insert(k.as_str(), val);
-            }
-        }
 
         T::from_payload(&patched).map(Encrypted)
     }
