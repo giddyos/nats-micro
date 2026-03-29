@@ -209,6 +209,10 @@ impl ServiceRecipient {
         }
     }
 
+    pub fn to_bytes(&self) -> [u8; 32] {
+        *self.public_key.as_bytes()
+    }
+
     pub fn with_client(mut self, client: async_nats::Client) -> Self {
         self.client = Some(client);
         self

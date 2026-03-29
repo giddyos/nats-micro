@@ -258,13 +258,17 @@ impl NatsApp {
 
             let mut ep = if endpoint_group.is_empty() {
                 service
-                    .endpoint(endpoint_subject.clone())
+                    .endpoint_builder()
+                    .name(endpoint_def.fn_name)
+                    .add(endpoint_subject.clone())
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}"))?
             } else {
                 service
                     .group(endpoint_group.clone())
-                    .endpoint(endpoint_subject.clone())
+                    .endpoint_builder()
+                    .name(endpoint_def.fn_name)
+                    .add(endpoint_subject.clone())
                     .await
                     .map_err(|e| anyhow::anyhow!("{e}"))?
             };

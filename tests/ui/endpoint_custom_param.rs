@@ -4,6 +4,12 @@ use nats_micro::{
 
 struct BoolFromDigits(bool);
 
+impl std::fmt::Display for BoolFromDigits {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", if self.0 { "1" } else { "0" })
+    }
+}
+
 impl FromSubjectParam for BoolFromDigits {
     type Err = &'static str;
 

@@ -1,5 +1,9 @@
+#![allow(unused)]
+
 mod app;
 mod auth;
+#[cfg(feature = "client")]
+mod client;
 mod consumer;
 #[cfg(feature = "encryption")]
 mod encrypted;
@@ -19,6 +23,7 @@ mod state;
 mod utils;
 
 pub use app::NatsApp;
+pub use async_nats;
 pub use async_nats::jetstream::consumer::push::Config as ConsumerConfig;
 pub use auth::{Auth, AuthConfig, AuthError};
 pub use consumer::{ConsumerDefinition, ConsumerHandlerFn};
@@ -31,10 +36,13 @@ pub use handler::{HandlerFn, RequestContext};
 pub use request::NatsRequest;
 pub use response::{IntoNatsResponse, NatsResponse};
 pub use service::{
-    ConsumerInfo, EndpointDefinition, EndpointInfo, NatsService, ParamInfo, ServiceDefinition,
-    ServiceMetadata,
+    ConsumerInfo, EndpointDefinition, EndpointInfo, NatsService, ParamInfo, PayloadEncoding,
+    PayloadMeta, ResponseEncoding, ResponseMeta, ServiceDefinition, ServiceMetadata,
 };
 pub use state::StateMap;
+
+#[cfg(feature = "client")]
+pub use client::ClientCallOptions;
 
 #[cfg(feature = "encryption")]
 pub use encrypted::Encrypted;
@@ -69,8 +77,75 @@ pub mod __macros {
     pub use crate::registry::ServiceRegistration;
     pub use crate::response::{IntoNatsResponse, NatsResponse};
     pub use crate::service::{
-        ConsumerInfo, EndpointInfo, NatsService, ParamInfo, ServiceDefinition,
+        ConsumerInfo, EndpointInfo, NatsService, ParamInfo, PayloadEncoding, PayloadMeta,
+        ResponseEncoding, ResponseMeta, ServiceDefinition,
     };
     pub use async_nats::jetstream::consumer::push::Config as ConsumerConfig;
     pub use inventory;
+
+    pub fn deserialize_response<T: ::serde::de::DeserializeOwned>(
+        payload: &[u8],
+    ) -> Result<T, crate::NatsErrorResponse> {
+        if let Ok(err) = ::serde_json::from_slice::<crate::NatsErrorResponse>(payload) {
+            if err.code >= 400 {
+                return Err(err);
+            }
+        }
+        ::serde_json::from_slice(payload).map_err(|e| {
+            crate::NatsErrorResponse::internal("DESERIALIZATION_ERROR", e.to_string())
+        })
+    }
+
+    pub fn deserialize_proto_response<T: ::prost::Message + Default>(
+        payload: &[u8],
+    ) -> Result<T, crate::NatsErrorResponse> {
+        if let Ok(err) = ::serde_json::from_slice::<crate::NatsErrorResponse>(payload) {
+            if err.code >= 400 {
+                return Err(err);
+            }
+        }
+        T::decode(payload).map_err(|e| {
+            crate::NatsErrorResponse::internal("DESERIALIZATION_ERROR", e.to_string())
+        })
+    }
+
+    pub fn raw_response_to_string(payload: &[u8]) -> Result<String, crate::NatsErrorResponse> {
+        if let Ok(err) = ::serde_json::from_slice::<crate::NatsErrorResponse>(payload) {
+            if err.code >= 400 {
+                return Err(err);
+            }
+        }
+        String::from_utf8(payload.to_vec()).map_err(|e| {
+            crate::NatsErrorResponse::internal("DESERIALIZATION_ERROR", e.to_string())
+        })
+    }
+
+    pub fn raw_response_to_bytes(payload: &[u8]) -> Result<Vec<u8>, crate::NatsErrorResponse> {
+        if let Ok(err) = ::serde_json::from_slice::<crate::NatsErrorResponse>(payload) {
+            if err.code >= 400 {
+                return Err(err);
+            }
+        }
+        Ok(payload.to_vec())
+    }
+
+    pub fn serialize_serde_payload<T: ::serde::Serialize>(
+        payload: &T,
+    ) -> Result<::bytes::Bytes, crate::NatsErrorResponse> {
+        ::serde_json::to_vec(payload)
+            .map(::bytes::Bytes::from)
+            .map_err(|e| {
+                crate::NatsErrorResponse::internal("SERIALIZATION_ERROR", e.to_string())
+            })
+    }
+
+    pub fn serialize_proto_payload<T: ::prost::Message>(
+        payload: &T,
+    ) -> Result<::bytes::Bytes, crate::NatsErrorResponse> {
+        let mut buf = Vec::new();
+        payload.encode(&mut buf).map_err(|e| {
+            crate::NatsErrorResponse::internal("SERIALIZATION_ERROR", e.to_string())
+        })?;
+        Ok(::bytes::Bytes::from(buf))
+    }
 }

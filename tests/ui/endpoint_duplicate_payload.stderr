@@ -1,0 +1,13 @@
+error: handlers may have at most one `Payload<T>` parameter
+  --> tests/ui/endpoint_duplicate_payload.rs:25:17
+   |
+25 |         second: Payload<Json<Second>>,
+   |                 ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused imports: `Json`, `NatsErrorResponse`, and `Payload`
+ --> tests/ui/endpoint_duplicate_payload.rs:2:5
+  |
+2 |     Json, NatsErrorResponse, Payload,
+  |     ^^^^  ^^^^^^^^^^^^^^^^^  ^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

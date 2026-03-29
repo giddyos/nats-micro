@@ -4,7 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["encryption"]
+default = ["encryption", "client"]
+client = ["nats-micro-macros/client"]
 encryption = [
     "dep:x25519-dalek",
     "dep:chacha20poly1305",

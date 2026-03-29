@@ -2,9 +2,9 @@ use nats_micro::{
     Json, NatsErrorResponse, NatsService, RequestId,
     service, service_handlers,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct Pong {
     message: String,
 }

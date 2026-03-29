@@ -1,23 +1,23 @@
 use crate::{
-    encrypted_headers::decrypt_headers,
+    encrypted_headers::{RESPONSE_PUB_KEY_NAME, decrypt_headers},
     encryption::ServiceKeyPair,
     error::NatsErrorResponse,
-    extractors::FromRequest,
+    extractors::FromPayload,
     handler::RequestContext,
     response::{IntoNatsResponse, NatsResponse},
 };
 
 pub struct Encrypted<T>(pub T);
 
-impl<T: FromRequest> FromRequest for Encrypted<T> {
-    fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
+impl<T: FromPayload> FromPayload for Encrypted<T> {
+    fn from_payload(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
         let keypair = ctx.states.get::<ServiceKeyPair>().ok_or_else(|| {
             NatsErrorResponse::internal("NO_ENCRYPTION_KEY", "no encryption key registered")
                 .with_request_id(ctx.request.request_id.clone())
         })?;
 
         let expected_eph_pub = ctx.ephemeral_pub.ok_or_else(|| {
-            NatsErrorResponse::bad_request("DECRYPT_FAILED", "payload decryption failed")
+            NatsErrorResponse::bad_request("DECRYPT_FAILED", format!("this endpoint only accepts encrypted requests with the ephemeral public key present in header '{}'", RESPONSE_PUB_KEY_NAME))
                 .with_request_id(ctx.request.request_id.clone())
         })?;
 
@@ -61,7 +61,7 @@ impl<T: FromRequest> FromRequest for Encrypted<T> {
             }
         }
 
-        T::from_request(&patched).map(Encrypted)
+        T::from_payload(&patched).map(Encrypted)
     }
 }
 

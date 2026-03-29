@@ -27,6 +27,7 @@ pub struct EndpointDefinition {
     pub service_name: String,
     pub service_version: String,
     pub service_description: String,
+    pub fn_name: String,
     pub group: String,
     pub subject: String,
     pub subject_template: Option<String>,
@@ -53,6 +54,37 @@ pub struct ParamInfo {
     pub is_subject_param: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PayloadEncoding {
+    Json,
+    Proto,
+    Serde,
+    Raw,
+}
+
+#[derive(Debug, Clone)]
+pub struct PayloadMeta {
+    pub encoding: PayloadEncoding,
+    pub encrypted: bool,
+    pub inner_type: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResponseEncoding {
+    Json,
+    Proto,
+    Serde,
+    Raw,
+    Unit,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResponseMeta {
+    pub encoding: ResponseEncoding,
+    pub encrypted: bool,
+    pub inner_type: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct EndpointInfo {
     pub fn_name: String,
@@ -62,6 +94,8 @@ pub struct EndpointInfo {
     pub queue_group: Option<String>,
     pub auth_required: bool,
     pub params: Vec<ParamInfo>,
+    pub payload_meta: Option<PayloadMeta>,
+    pub response_meta: ResponseMeta,
 }
 
 #[derive(Debug, Clone)]
