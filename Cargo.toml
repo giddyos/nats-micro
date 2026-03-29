@@ -7,7 +7,8 @@ edition = "2024"
 proc-macro = true
 
 [features]
-client = []
+macros_client_feature = []
+macros_encryption_feature = []
 
 [dependencies]
 darling = "0.23"

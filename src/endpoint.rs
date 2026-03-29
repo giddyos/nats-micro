@@ -375,10 +375,7 @@ pub(crate) fn extract_single_generic_arg(ty: &Type) -> Option<&Type> {
 }
 
 fn is_raw_type(ty: &Type) -> bool {
-    matches!(
-        last_segment_ident(ty).as_deref(),
-        Some("Bytes" | "String")
-    ) || is_vec_u8(ty)
+    matches!(last_segment_ident(ty).as_deref(), Some("Bytes" | "String")) || is_vec_u8(ty)
 }
 
 fn is_vec_u8(ty: &Type) -> bool {
@@ -393,65 +390,61 @@ fn is_vec_u8(ty: &Type) -> bool {
         return false;
     };
     if let Some(GenericArgument::Type(Type::Path(inner))) = arguments.args.first() {
-        inner
-            .path
-            .segments
-            .last()
-            .map_or(false, |s| s.ident == "u8")
+        inner.path.segments.last().is_some_and(|s| s.ident == "u8")
     } else {
         false
     }
 }
 
 fn is_str_ref(ty: &Type) -> bool {
-    if let Type::Reference(r) = ty {
-        if let Type::Path(p) = &*r.elem {
-            return p.path.is_ident("str");
-        }
+    if let Type::Reference(r) = ty
+        && let Type::Path(p) = &*r.elem
+    {
+        return p.path.is_ident("str");
     }
     false
 }
 
 fn classify_payload_inner(ty: &Type) -> PayloadMeta {
     let ident = last_segment_ident(ty);
-    if ident.as_deref() == Some("Encrypted") {
-        if let Some(inner) = extract_single_generic_arg(ty) {
-            let inner_ident = last_segment_ident(inner);
-            match inner_ident.as_deref() {
-                Some("Json") => {
-                    let json_inner = extract_single_generic_arg(inner)
-                        .cloned()
-                        .unwrap_or_else(|| inner.clone());
-                    return PayloadMeta {
-                        encoding: PayloadEncoding::Json,
-                        encrypted: true,
-                        inner_type: json_inner,
-                    };
-                }
-                Some("Proto") => {
-                    let proto_inner = extract_single_generic_arg(inner)
-                        .cloned()
-                        .unwrap_or_else(|| inner.clone());
-                    return PayloadMeta {
-                        encoding: PayloadEncoding::Proto,
-                        encrypted: true,
-                        inner_type: proto_inner,
-                    };
-                }
-                _ if is_raw_type(inner) => {
-                    return PayloadMeta {
-                        encoding: PayloadEncoding::Raw,
-                        encrypted: true,
-                        inner_type: inner.clone(),
-                    };
-                }
-                _ => {
-                    return PayloadMeta {
-                        encoding: PayloadEncoding::Serde,
-                        encrypted: true,
-                        inner_type: inner.clone(),
-                    };
-                }
+    if ident.as_deref() == Some("Encrypted")
+        && let Some(inner) = extract_single_generic_arg(ty)
+    {
+        let inner_ident = last_segment_ident(inner);
+        match inner_ident.as_deref() {
+            Some("Json") => {
+                let json_inner = extract_single_generic_arg(inner)
+                    .cloned()
+                    .unwrap_or_else(|| inner.clone());
+                return PayloadMeta {
+                    encoding: PayloadEncoding::Json,
+                    encrypted: true,
+                    inner_type: json_inner,
+                };
+            }
+            Some("Proto") => {
+                let proto_inner = extract_single_generic_arg(inner)
+                    .cloned()
+                    .unwrap_or_else(|| inner.clone());
+                return PayloadMeta {
+                    encoding: PayloadEncoding::Proto,
+                    encrypted: true,
+                    inner_type: proto_inner,
+                };
+            }
+            _ if is_raw_type(inner) => {
+                return PayloadMeta {
+                    encoding: PayloadEncoding::Raw,
+                    encrypted: true,
+                    inner_type: inner.clone(),
+                };
+            }
+            _ => {
+                return PayloadMeta {
+                    encoding: PayloadEncoding::Serde,
+                    encrypted: true,
+                    inner_type: inner.clone(),
+                };
             }
         }
     }
@@ -493,40 +486,40 @@ fn classify_payload_inner(ty: &Type) -> PayloadMeta {
 fn classify_response_type(ty: &Type) -> ResponseMeta {
     let ident = last_segment_ident(ty);
 
-    if ident.as_deref() == Some("Encrypted") {
-        if let Some(inner) = extract_single_generic_arg(ty) {
-            let inner_ident = last_segment_ident(inner);
-            match inner_ident.as_deref() {
-                Some("Json") => {
-                    let json_inner = extract_single_generic_arg(inner).cloned();
-                    return ResponseMeta {
-                        encoding: ResponseEncoding::Json,
-                        encrypted: true,
-                        inner_type: json_inner,
-                    };
-                }
-                Some("Proto") => {
-                    let proto_inner = extract_single_generic_arg(inner).cloned();
-                    return ResponseMeta {
-                        encoding: ResponseEncoding::Proto,
-                        encrypted: true,
-                        inner_type: proto_inner,
-                    };
-                }
-                _ if is_raw_type(inner) => {
-                    return ResponseMeta {
-                        encoding: ResponseEncoding::Raw,
-                        encrypted: true,
-                        inner_type: Some(inner.clone()),
-                    };
-                }
-                _ => {
-                    return ResponseMeta {
-                        encoding: ResponseEncoding::Serde,
-                        encrypted: true,
-                        inner_type: Some(inner.clone()),
-                    };
-                }
+    if ident.as_deref() == Some("Encrypted")
+        && let Some(inner) = extract_single_generic_arg(ty)
+    {
+        let inner_ident = last_segment_ident(inner);
+        match inner_ident.as_deref() {
+            Some("Json") => {
+                let json_inner = extract_single_generic_arg(inner).cloned();
+                return ResponseMeta {
+                    encoding: ResponseEncoding::Json,
+                    encrypted: true,
+                    inner_type: json_inner,
+                };
+            }
+            Some("Proto") => {
+                let proto_inner = extract_single_generic_arg(inner).cloned();
+                return ResponseMeta {
+                    encoding: ResponseEncoding::Proto,
+                    encrypted: true,
+                    inner_type: proto_inner,
+                };
+            }
+            _ if is_raw_type(inner) => {
+                return ResponseMeta {
+                    encoding: ResponseEncoding::Raw,
+                    encrypted: true,
+                    inner_type: Some(inner.clone()),
+                };
+            }
+            _ => {
+                return ResponseMeta {
+                    encoding: ResponseEncoding::Serde,
+                    encrypted: true,
+                    inner_type: Some(inner.clone()),
+                };
             }
         }
     }
@@ -604,14 +597,14 @@ pub(crate) fn classify_return_type(sig: &Signature) -> ResponseMeta {
     let ty = return_type.as_ref();
 
     if let Type::Reference(ref_type) = ty {
-        if let Type::Path(inner_path) = &*ref_type.elem {
-            if inner_path.path.is_ident("str") {
-                return ResponseMeta {
-                    encoding: ResponseEncoding::Raw,
-                    encrypted: false,
-                    inner_type: Some(ty.clone()),
-                };
-            }
+        if let Type::Path(inner_path) = &*ref_type.elem
+            && inner_path.path.is_ident("str")
+        {
+            return ResponseMeta {
+                encoding: ResponseEncoding::Raw,
+                encrypted: false,
+                inner_type: Some(ty.clone()),
+            };
         }
         return ResponseMeta {
             encoding: ResponseEncoding::Serde,
@@ -629,21 +622,20 @@ pub(crate) fn classify_return_type(sig: &Signature) -> ResponseMeta {
     };
 
     let segment = type_path.path.segments.last().unwrap();
-    if segment.ident == "Result" {
-        if let PathArguments::AngleBracketed(arguments) = &segment.arguments {
-            if let Some(GenericArgument::Type(ok_type)) = arguments.args.first() {
-                if let Type::Tuple(tuple) = ok_type {
-                    if tuple.elems.is_empty() {
-                        return ResponseMeta {
-                            encoding: ResponseEncoding::Unit,
-                            encrypted: false,
-                            inner_type: None,
-                        };
-                    }
-                }
-                return classify_response_type(ok_type);
-            }
+    if segment.ident == "Result"
+        && let PathArguments::AngleBracketed(arguments) = &segment.arguments
+        && let Some(GenericArgument::Type(ok_type)) = arguments.args.first()
+    {
+        if let Type::Tuple(tuple) = ok_type
+            && tuple.elems.is_empty()
+        {
+            return ResponseMeta {
+                encoding: ResponseEncoding::Unit,
+                encrypted: false,
+                inner_type: None,
+            };
         }
+        return classify_response_type(ok_type);
     }
 
     classify_response_type(ty)
