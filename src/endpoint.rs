@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use darling::FromMeta;
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{FnArg, GenericArgument, ItemFn, Pat, PathArguments, Signature, Type};
+use syn::{FnArg, GenericArgument, ItemFn, Pat, PathArguments, ReturnType, Signature, Type};
 
 #[derive(Debug, FromMeta)]
 pub(crate) struct EndpointArgs {
@@ -306,4 +306,397 @@ fn combine_error(target: &mut Option<syn::Error>, error: syn::Error) {
 struct SubjectParamBinding {
     template_name: String,
     span: proc_macro2::Span,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum PayloadEncoding {
+    Json,
+    Proto,
+    Serde,
+    Raw,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PayloadMeta {
+    pub encoding: PayloadEncoding,
+    pub encrypted: bool,
+    pub inner_type: Type,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum ResponseEncoding {
+    Json,
+    Proto,
+    Serde,
+    Raw,
+    Unit,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct ResponseMeta {
+    pub encoding: ResponseEncoding,
+    pub encrypted: bool,
+    pub inner_type: Option<Type>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SubjectParamMeta {
+    pub name: String,
+    pub inner_type: Type,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct EndpointClientMeta {
+    pub subject_params: Vec<SubjectParamMeta>,
+    pub payload: Option<PayloadMeta>,
+    pub response: ResponseMeta,
+}
+
+pub(crate) fn last_segment_ident(ty: &Type) -> Option<String> {
+    if let Type::Path(type_path) = ty {
+        type_path.path.segments.last().map(|s| s.ident.to_string())
+    } else {
+        None
+    }
+}
+
+pub(crate) fn extract_single_generic_arg(ty: &Type) -> Option<&Type> {
+    let Type::Path(type_path) = ty else {
+        return None;
+    };
+    let segment = type_path.path.segments.last()?;
+    let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
+        return None;
+    };
+    match arguments.args.first()? {
+        GenericArgument::Type(inner) => Some(inner),
+        _ => None,
+    }
+}
+
+fn is_raw_type(ty: &Type) -> bool {
+    matches!(
+        last_segment_ident(ty).as_deref(),
+        Some("Bytes" | "String")
+    ) || is_vec_u8(ty)
+}
+
+fn is_vec_u8(ty: &Type) -> bool {
+    let Type::Path(type_path) = ty else {
+        return false;
+    };
+    let segment = type_path.path.segments.last().unwrap();
+    if segment.ident != "Vec" {
+        return false;
+    }
+    let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
+        return false;
+    };
+    if let Some(GenericArgument::Type(Type::Path(inner))) = arguments.args.first() {
+        inner
+            .path
+            .segments
+            .last()
+            .map_or(false, |s| s.ident == "u8")
+    } else {
+        false
+    }
+}
+
+fn is_str_ref(ty: &Type) -> bool {
+    if let Type::Reference(r) = ty {
+        if let Type::Path(p) = &*r.elem {
+            return p.path.is_ident("str");
+        }
+    }
+    false
+}
+
+fn classify_payload_inner(ty: &Type) -> PayloadMeta {
+    let ident = last_segment_ident(ty);
+    if ident.as_deref() == Some("Encrypted") {
+        if let Some(inner) = extract_single_generic_arg(ty) {
+            let inner_ident = last_segment_ident(inner);
+            match inner_ident.as_deref() {
+                Some("Json") => {
+                    let json_inner = extract_single_generic_arg(inner)
+                        .cloned()
+                        .unwrap_or_else(|| inner.clone());
+                    return PayloadMeta {
+                        encoding: PayloadEncoding::Json,
+                        encrypted: true,
+                        inner_type: json_inner,
+                    };
+                }
+                Some("Proto") => {
+                    let proto_inner = extract_single_generic_arg(inner)
+                        .cloned()
+                        .unwrap_or_else(|| inner.clone());
+                    return PayloadMeta {
+                        encoding: PayloadEncoding::Proto,
+                        encrypted: true,
+                        inner_type: proto_inner,
+                    };
+                }
+                _ if is_raw_type(inner) => {
+                    return PayloadMeta {
+                        encoding: PayloadEncoding::Raw,
+                        encrypted: true,
+                        inner_type: inner.clone(),
+                    };
+                }
+                _ => {
+                    return PayloadMeta {
+                        encoding: PayloadEncoding::Serde,
+                        encrypted: true,
+                        inner_type: inner.clone(),
+                    };
+                }
+            }
+        }
+    }
+
+    match ident.as_deref() {
+        Some("Json") => {
+            let json_inner = extract_single_generic_arg(ty)
+                .cloned()
+                .unwrap_or_else(|| ty.clone());
+            PayloadMeta {
+                encoding: PayloadEncoding::Json,
+                encrypted: false,
+                inner_type: json_inner,
+            }
+        }
+        Some("Proto") => {
+            let proto_inner = extract_single_generic_arg(ty)
+                .cloned()
+                .unwrap_or_else(|| ty.clone());
+            PayloadMeta {
+                encoding: PayloadEncoding::Proto,
+                encrypted: false,
+                inner_type: proto_inner,
+            }
+        }
+        _ if is_raw_type(ty) => PayloadMeta {
+            encoding: PayloadEncoding::Raw,
+            encrypted: false,
+            inner_type: ty.clone(),
+        },
+        _ => PayloadMeta {
+            encoding: PayloadEncoding::Serde,
+            encrypted: false,
+            inner_type: ty.clone(),
+        },
+    }
+}
+
+fn classify_response_type(ty: &Type) -> ResponseMeta {
+    let ident = last_segment_ident(ty);
+
+    if ident.as_deref() == Some("Encrypted") {
+        if let Some(inner) = extract_single_generic_arg(ty) {
+            let inner_ident = last_segment_ident(inner);
+            match inner_ident.as_deref() {
+                Some("Json") => {
+                    let json_inner = extract_single_generic_arg(inner).cloned();
+                    return ResponseMeta {
+                        encoding: ResponseEncoding::Json,
+                        encrypted: true,
+                        inner_type: json_inner,
+                    };
+                }
+                Some("Proto") => {
+                    let proto_inner = extract_single_generic_arg(inner).cloned();
+                    return ResponseMeta {
+                        encoding: ResponseEncoding::Proto,
+                        encrypted: true,
+                        inner_type: proto_inner,
+                    };
+                }
+                _ if is_raw_type(inner) => {
+                    return ResponseMeta {
+                        encoding: ResponseEncoding::Raw,
+                        encrypted: true,
+                        inner_type: Some(inner.clone()),
+                    };
+                }
+                _ => {
+                    return ResponseMeta {
+                        encoding: ResponseEncoding::Serde,
+                        encrypted: true,
+                        inner_type: Some(inner.clone()),
+                    };
+                }
+            }
+        }
+    }
+
+    match ident.as_deref() {
+        Some("Json") => ResponseMeta {
+            encoding: ResponseEncoding::Json,
+            encrypted: false,
+            inner_type: extract_single_generic_arg(ty).cloned(),
+        },
+        Some("Proto") => ResponseMeta {
+            encoding: ResponseEncoding::Proto,
+            encrypted: false,
+            inner_type: extract_single_generic_arg(ty).cloned(),
+        },
+        Some("String") => ResponseMeta {
+            encoding: ResponseEncoding::Raw,
+            encrypted: false,
+            inner_type: Some(ty.clone()),
+        },
+        Some("Bytes") => ResponseMeta {
+            encoding: ResponseEncoding::Raw,
+            encrypted: false,
+            inner_type: Some(ty.clone()),
+        },
+        _ if is_vec_u8(ty) => ResponseMeta {
+            encoding: ResponseEncoding::Raw,
+            encrypted: false,
+            inner_type: Some(ty.clone()),
+        },
+        _ if is_str_ref(ty) => ResponseMeta {
+            encoding: ResponseEncoding::Raw,
+            encrypted: false,
+            inner_type: Some(ty.clone()),
+        },
+        _ => ResponseMeta {
+            encoding: ResponseEncoding::Serde,
+            encrypted: false,
+            inner_type: Some(ty.clone()),
+        },
+    }
+}
+
+fn is_server_only_type(ty: &Type) -> bool {
+    matches!(
+        last_segment_ident(ty).as_deref(),
+        Some("State" | "Auth" | "RequestId" | "Subject" | "NatsRequest")
+    ) || is_option_auth(ty)
+}
+
+fn is_option_auth(ty: &Type) -> bool {
+    let Type::Path(type_path) = ty else {
+        return false;
+    };
+    let segment = type_path.path.segments.last().unwrap();
+    if segment.ident != "Option" {
+        return false;
+    }
+    if let Some(inner) = extract_single_generic_arg(ty) {
+        last_segment_ident(inner).as_deref() == Some("Auth")
+    } else {
+        false
+    }
+}
+
+pub(crate) fn classify_return_type(sig: &Signature) -> ResponseMeta {
+    let ReturnType::Type(_, return_type) = &sig.output else {
+        return ResponseMeta {
+            encoding: ResponseEncoding::Unit,
+            encrypted: false,
+            inner_type: None,
+        };
+    };
+
+    let ty = return_type.as_ref();
+
+    if let Type::Reference(ref_type) = ty {
+        if let Type::Path(inner_path) = &*ref_type.elem {
+            if inner_path.path.is_ident("str") {
+                return ResponseMeta {
+                    encoding: ResponseEncoding::Raw,
+                    encrypted: false,
+                    inner_type: Some(ty.clone()),
+                };
+            }
+        }
+        return ResponseMeta {
+            encoding: ResponseEncoding::Serde,
+            encrypted: false,
+            inner_type: Some(ty.clone()),
+        };
+    }
+
+    let Type::Path(type_path) = ty else {
+        return ResponseMeta {
+            encoding: ResponseEncoding::Unit,
+            encrypted: false,
+            inner_type: None,
+        };
+    };
+
+    let segment = type_path.path.segments.last().unwrap();
+    if segment.ident == "Result" {
+        if let PathArguments::AngleBracketed(arguments) = &segment.arguments {
+            if let Some(GenericArgument::Type(ok_type)) = arguments.args.first() {
+                if let Type::Tuple(tuple) = ok_type {
+                    if tuple.elems.is_empty() {
+                        return ResponseMeta {
+                            encoding: ResponseEncoding::Unit,
+                            encrypted: false,
+                            inner_type: None,
+                        };
+                    }
+                }
+                return classify_response_type(ok_type);
+            }
+        }
+    }
+
+    classify_response_type(ty)
+}
+
+pub(crate) fn extract_client_meta(sig: &Signature) -> Result<EndpointClientMeta, TokenStream> {
+    let mut subject_params = Vec::new();
+    let mut payload = None;
+    let mut payload_count = 0;
+
+    for input in &sig.inputs {
+        let FnArg::Typed(pat_type) = input else {
+            continue;
+        };
+        let Pat::Ident(pat_ident) = pat_type.pat.as_ref() else {
+            continue;
+        };
+        let ty = &*pat_type.ty;
+        let name = pat_ident.ident.to_string();
+
+        if let Some(inner) = subject_param_inner_type(ty) {
+            subject_params.push(SubjectParamMeta {
+                name: subject_param_template_name(&name).to_string(),
+                inner_type: inner.clone(),
+            });
+            continue;
+        }
+
+        if last_segment_ident(ty).as_deref() == Some("Payload") {
+            payload_count += 1;
+            if payload_count > 1 {
+                return Err(syn::Error::new_spanned(
+                    &pat_type.ty,
+                    "handlers may have at most one `Payload<T>` parameter",
+                )
+                .to_compile_error());
+            }
+            if let Some(inner) = extract_single_generic_arg(ty) {
+                payload = Some(classify_payload_inner(inner));
+            }
+            continue;
+        }
+
+        if is_server_only_type(ty) {
+            continue;
+        }
+    }
+
+    let response = classify_return_type(sig);
+
+    Ok(EndpointClientMeta {
+        subject_params,
+        payload,
+        response,
+    })
 }
