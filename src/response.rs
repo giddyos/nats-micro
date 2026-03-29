@@ -3,6 +3,8 @@ use serde::Serialize;
 
 use crate::{Proto, error::NatsErrorResponse, extractors::Json, handler::RequestContext};
 
+pub const X_SUCCESS_HEADER: &str = "x-success";
+
 #[derive(Debug, Clone)]
 pub struct NatsResponse {
     pub payload: Bytes,

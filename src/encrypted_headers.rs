@@ -26,7 +26,9 @@ impl HeaderLookup for async_nats::HeaderMap {
     }
 }
 
-pub(crate) fn decode_response_pub_key<H: HeaderLookup>(headers: &H) -> Result<Option<[u8; 32]>, EncryptionError> {
+pub(crate) fn decode_response_pub_key<H: HeaderLookup>(
+    headers: &H,
+) -> Result<Option<[u8; 32]>, EncryptionError> {
     let Some(value) = headers.get_str(RESPONSE_PUB_KEY_NAME) else {
         return Ok(None);
     };
@@ -46,12 +48,9 @@ fn decode_header_blob<H: HeaderLookup>(headers: &H) -> Result<Option<Vec<u8>>, E
         return Ok(None);
     };
 
-    STANDARD
-        .decode(value.as_bytes())
-        .map(Some)
-        .map_err(|_| {
-            EncryptionError::decrypt_failed("decoding x-encrypted-headers header from base64")
-        })
+    STANDARD.decode(value.as_bytes()).map(Some).map_err(|_| {
+        EncryptionError::decrypt_failed("decoding x-encrypted-headers header from base64")
+    })
 }
 
 pub fn decrypt_headers<H: HeaderLookup>(

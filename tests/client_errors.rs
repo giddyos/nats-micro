@@ -1,4 +1,5 @@
 use nats_micro::{
+    __test_support::success_headers,
     ClientError, ClientTransportError, FromNatsErrorResponse, IntoNatsError, NatsErrorResponse,
     ServiceErrorMatch, ServiceKeyPair, ServiceRecipient, service_error,
 };
@@ -40,17 +41,37 @@ fn service_error_round_trips_from_nats_error_response() {
 
 #[test]
 fn proto_deserializer_maps_service_error_payloads() {
+    let headers = success_headers(false);
     let payload =
         serde_json::to_vec(&ClientTestError::EmptyNumbers.into_nats_error("req-proto".to_string()))
             .expect("serialize error response");
 
     let result = nats_micro::__macros::deserialize_proto_response::<ProtoResponse, ClientTestError>(
+        Some(&headers),
         &payload,
     );
 
     assert!(matches!(
         result,
         Err(ClientError::Service(ClientTestError::EmptyNumbers))
+    ));
+}
+
+#[test]
+fn success_header_disables_error_payload_guessing() {
+    let headers = success_headers(true);
+    let payload =
+        serde_json::to_vec(&ClientTestError::EmptyNumbers.into_nats_error("req-guess".to_string()))
+            .expect("serialize error response");
+
+    let result = nats_micro::__macros::deserialize_proto_response::<ProtoResponse, ClientTestError>(
+        Some(&headers),
+        &payload,
+    );
+
+    assert!(matches!(
+        result,
+        Err(ClientError::Transport(ClientTransportError::Deserialize(_)))
     ));
 }
 
@@ -90,6 +111,7 @@ fn structured_service_errors_without_details_stay_untyped() {
 #[cfg(feature = "encryption")]
 #[test]
 fn encrypted_response_falls_back_to_plain_service_error_payloads() {
+    let headers = success_headers(false);
     let keypair = ServiceKeyPair::generate();
     let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
     let built = recipient
@@ -103,8 +125,17 @@ fn encrypted_response_falls_back_to_plain_service_error_payloads() {
     )
     .expect("serialize error response");
 
-    let result =
-        nats_micro::__macros::decrypt_client_response::<ClientTestError>(&built.context, &payload);
+    let decrypted = nats_micro::__macros::decrypt_client_response::<ClientTestError>(
+        Some(&headers),
+        &built.context,
+        &payload,
+    )
+    .expect("x-success=false should bypass response decryption");
+
+    let result = nats_micro::__macros::deserialize_proto_response::<ProtoResponse, ClientTestError>(
+        Some(&headers),
+        &decrypted,
+    );
 
     assert!(matches!(
         result,
@@ -115,6 +146,7 @@ fn encrypted_response_falls_back_to_plain_service_error_payloads() {
 #[test]
 fn invalid_proto_payload_is_reported_as_transport_error() {
     let result = nats_micro::__macros::deserialize_proto_response::<ProtoResponse, NatsErrorResponse>(
+        None,
         b"not-protobuf-and-not-json-error",
     );
 

@@ -19,7 +19,7 @@ encryption = [
 ]
 
 [dependencies]
-async-nats = { version = "0.46", features = ["service", "jetstream"] }
+async-nats = { git = "https://github.com/giddyos/nats.rs.git", features = ["service", "jetstream"] }
 inventory = "0.3"
 nats-micro-macros = { path = "../nats-micro-macros" }
 

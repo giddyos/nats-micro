@@ -50,9 +50,15 @@ impl Headers {
         self.insert_with_encryption(key, value, true);
     }
 
-    fn insert_with_encryption(&mut self, key: impl Into<String>, value: impl Into<String>, was_encrypted: bool) {
+    fn insert_with_encryption(
+        &mut self,
+        key: impl Into<String>,
+        value: impl Into<String>,
+        was_encrypted: bool,
+    ) {
         let key = key.into();
-        self.0.retain(|header| !header.key.eq_ignore_ascii_case(&key));
+        self.0
+            .retain(|header| !header.key.eq_ignore_ascii_case(&key));
         self.0.push(Header {
             key,
             value: value.into(),
@@ -61,7 +67,12 @@ impl Headers {
         });
     }
 
-    fn append_with_encryption(&mut self, key: impl Into<String>, value: impl Into<String>, was_encrypted: bool) {
+    fn append_with_encryption(
+        &mut self,
+        key: impl Into<String>,
+        value: impl Into<String>,
+        was_encrypted: bool,
+    ) {
         self.0.push(Header {
             key: key.into(),
             value: value.into(),

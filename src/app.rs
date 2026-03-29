@@ -1,6 +1,7 @@
 use anyhow::Result;
 use async_nats::jetstream::{self, AckKind};
 use async_nats::service::{ServiceExt, endpoint};
+use bytes::Bytes;
 use futures::StreamExt;
 use tracing::{debug, error, info};
 
@@ -28,6 +29,33 @@ pub(crate) struct PreparedRequest {
     pub(crate) request: NatsRequest,
     #[cfg(feature = "encryption")]
     pub(crate) ephemeral_pub: Option<[u8; 32]>,
+}
+
+pub fn success_headers(success: bool) -> async_nats::HeaderMap {
+    let mut headers = async_nats::HeaderMap::new();
+    headers.insert(
+        crate::response::X_SUCCESS_HEADER,
+        if success { "true" } else { "false" },
+    );
+    headers
+}
+
+async fn respond_payload(
+    raw_req: &async_nats::service::Request,
+    success: bool,
+    payload: impl Into<Bytes>,
+) -> Result<(), async_nats::PublishError> {
+    raw_req
+        .respond_with_headers(Ok(payload.into()), success_headers(success))
+        .await
+}
+
+async fn respond_error(
+    raw_req: &async_nats::service::Request,
+    err: &NatsErrorResponse,
+) -> Result<(), async_nats::PublishError> {
+    let payload = serde_json::to_vec(err).unwrap_or_default();
+    respond_payload(raw_req, false, payload).await
 }
 
 impl NatsApp {
@@ -280,7 +308,8 @@ impl NatsApp {
 
             tokio::spawn(async move {
                 while let Some(raw_req) = ep.next().await {
-                    let headers: crate::Headers = raw_req.message.headers.clone().unwrap_or_default().into();
+                    let headers: crate::Headers =
+                        raw_req.message.headers.clone().unwrap_or_default().into();
                     let request_id = ensure_request_id(&headers);
 
                     debug!(
@@ -308,8 +337,7 @@ impl NatsApp {
                                 request_id = %request_id,
                                 "request decryption failed"
                             );
-                            let payload = serde_json::to_vec(&err).unwrap_or_default();
-                            let _ = raw_req.respond(Ok(payload.into())).await;
+                            let _ = respond_error(&raw_req, &err).await;
                             continue;
                         }
                     };
@@ -327,9 +355,8 @@ impl NatsApp {
                                 "request authentication failed"
                             );
                             let err = err.into_nats_error(request_id.clone());
-                            let payload = serde_json::to_vec(&err).unwrap_or_default();
 
-                            let _ = raw_req.respond(Ok(payload.into())).await;
+                            let _ = respond_error(&raw_req, &err).await;
                             continue;
                         }
                     };
@@ -356,8 +383,7 @@ impl NatsApp {
                                 error = %err,
                                 "endpoint handler failed"
                             );
-                            let payload = serde_json::to_vec(&err).unwrap_or_default();
-                            let _ = raw_req.respond(Ok(payload.into())).await;
+                            let _ = respond_error(&raw_req, &err).await;
                             continue;
                         }
                     };
@@ -370,7 +396,7 @@ impl NatsApp {
                         "sending endpoint response"
                     );
 
-                    if let Err(err) = raw_req.respond(Ok(response.payload)).await {
+                    if let Err(err) = respond_payload(&raw_req, true, response.payload).await {
                         error!(
                             service = %endpoint_service_name,
                             group = %endpoint_group,
@@ -460,7 +486,8 @@ impl NatsApp {
                         }
                     };
 
-                    let headers: crate::Headers = message.headers.clone().unwrap_or_default().into();
+                    let headers: crate::Headers =
+                        message.headers.clone().unwrap_or_default().into();
                     let request_id = ensure_request_id(&headers);
                     debug!(
                         service = %service_name,
