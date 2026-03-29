@@ -10,6 +10,7 @@ fn macro_ui_validation() {
     tests.pass("tests/ui/endpoint_custom_param.rs");
     tests.pass("tests/ui/service_handlers_basic.rs");
     tests.pass("tests/ui/service_multi_service.rs");
+    tests.pass("tests/ui/service_subject_prefix.rs");
     tests.pass("tests/ui/service_client_metadata.rs");
     tests.pass("tests/ui/service_client_generation.rs");
 }

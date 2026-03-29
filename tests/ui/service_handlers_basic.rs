@@ -42,13 +42,14 @@ fn main() {
     let def = GreeterService::definition();
     assert_eq!(def.metadata.name, "greeter");
     assert_eq!(def.metadata.version, "1.0.0");
+    assert_eq!(def.metadata.subject_prefix, None);
     assert_eq!(def.endpoints.len(), 3);
     assert_eq!(def.endpoint_info.len(), 3);
     assert_eq!(def.consumers.len(), 0);
 
     let status_endpoint = GreeterService::status_endpoint();
     assert_eq!(status_endpoint.group, "");
-    assert_eq!(status_endpoint.full_subject(), "greeter.status");
+    assert_eq!(status_endpoint.full_subject(), "status");
 
     let greet_info = def
         .endpoint_info
@@ -61,7 +62,7 @@ fn main() {
     assert!(greet_info.params[0].is_subject_param);
 
     let greet_endpoint = GreeterService::greet_endpoint();
-    assert_eq!(greet_endpoint.full_subject(), "greeter.hello.greet.*");
+    assert_eq!(greet_endpoint.full_subject(), "hello.greet.*");
 
     let _ = GreeterService::status_endpoint();
     let _ = GreeterService::greet_endpoint();

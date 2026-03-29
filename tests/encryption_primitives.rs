@@ -93,14 +93,55 @@ fn wrong_key_fails_decryption() {
     let (encrypted, _) = recipient.encrypt(b"secret").unwrap();
 
     let result = keypair2.decrypt(&encrypted);
-    assert!(result.is_err());
+    let error = result.expect_err("wrong key should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("decrypting request payload body")
+    );
 }
 
 #[test]
 fn truncated_ciphertext_fails() {
     let keypair = ServiceKeyPair::generate();
     let result = keypair.decrypt(&[0u8; 10]);
-    assert!(matches!(result, Err(EncryptionError::TooShort)));
+    assert!(matches!(result, Err(EncryptionError::TooShort { .. })));
+}
+
+#[test]
+fn invalid_encrypted_headers_report_context() {
+    let mut headers = HeaderMap::new();
+    headers.insert("x-encrypted-headers", "not-base64");
+
+    let error = encrypted_headers_decrypt(&headers, &[0u8; 32]).expect_err("invalid header blob");
+    assert!(
+        error
+            .to_string()
+            .contains("decoding x-encrypted-headers header from base64")
+    );
+}
+
+#[test]
+fn tampered_response_reports_response_decrypt_context() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+    let eph_ctx = recipient.begin();
+    let eph_pub = eph_ctx.ephemeral_pub_bytes();
+
+    let mut encrypted_response = keypair
+        .encrypt_response(b"response data", &eph_pub)
+        .unwrap();
+    let last = encrypted_response.len() - 1;
+    encrypted_response[last] ^= 0xFF;
+
+    let error = eph_ctx
+        .decrypt_response(&encrypted_response)
+        .expect_err("tampered response should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("decrypting response payload body")
+    );
 }
 
 #[test]

@@ -53,12 +53,14 @@ fn main() {
 
     assert_eq!(def_a.metadata.name, "svc_a");
     assert_eq!(def_b.metadata.name, "svc_b");
+    assert_eq!(def_a.metadata.subject_prefix, None);
+    assert_eq!(def_b.metadata.subject_prefix, None);
     assert_eq!(def_a.endpoints.len(), 1);
     assert_eq!(def_b.endpoints.len(), 1);
     assert_eq!(def_b.consumers.len(), 1);
 
-    assert_eq!(def_a.endpoints[0].full_subject(), "svc_a.a.ping");
-    assert_eq!(def_b.endpoints[0].full_subject(), "svc_b.b.echo");
+    assert_eq!(def_a.endpoints[0].full_subject(), "a.ping");
+    assert_eq!(def_b.endpoints[0].full_subject(), "b.echo");
 
     let con = &def_b.consumer_info[0];
     assert_eq!(con.fn_name, "handle_event");
