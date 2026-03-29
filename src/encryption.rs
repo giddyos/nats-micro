@@ -26,12 +26,16 @@ const MIN_RESPONSE_ENVELOPE: usize = NONCE_LEN + TAG_LEN;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EncryptionError {
-    #[error("decryption failed")]
-    DecryptFailed,
-    #[error("ciphertext too short")]
-    TooShort,
-    #[error("encryption failed")]
-    EncryptFailed,
+    #[error("{context}: decryption failed")]
+    DecryptFailed { context: &'static str },
+    #[error("{context}: ciphertext too short (expected at least {expected} bytes, got {actual})")]
+    TooShort {
+        context: &'static str,
+        expected: usize,
+        actual: usize,
+    },
+    #[error("{context}: encryption failed")]
+    EncryptFailed { context: &'static str },
     #[error("invalid signature")]
     SignatureInvalid,
     #[error("no NATS client configured on ServiceRecipient")]
@@ -40,6 +44,24 @@ pub enum EncryptionError {
     PublishFailed(String),
     #[error("NATS request failed: {0}")]
     RequestFailed(String),
+}
+
+impl EncryptionError {
+    pub(crate) fn decrypt_failed(context: &'static str) -> Self {
+        Self::DecryptFailed { context }
+    }
+
+    pub(crate) fn too_short(context: &'static str, expected: usize, actual: usize) -> Self {
+        Self::TooShort {
+            context,
+            expected,
+            actual,
+        }
+    }
+
+    pub(crate) fn encrypt_failed(context: &'static str) -> Self {
+        Self::EncryptFailed { context }
+    }
 }
 
 fn derive_key(dh_output: &[u8]) -> Zeroizing<[u8; 32]> {
@@ -98,13 +120,14 @@ fn encrypt_aead(
     let mut nonce_bytes = [0u8; NONCE_LEN];
     rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut nonce_bytes);
     let nonce = XNonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher
-        .encrypt(nonce, plaintext)
-        .map_err(|_| EncryptionError::EncryptFailed)?;
+    let ciphertext = cipher.encrypt(nonce, plaintext).map_err(|_| {
+        EncryptionError::encrypt_failed("encrypting payload with XChaCha20Poly1305")
+    })?;
     Ok((ciphertext, nonce_bytes))
 }
 
 fn decrypt_aead(
+    context: &'static str,
     key: &[u8; 32],
     nonce: &[u8; NONCE_LEN],
     ciphertext: &[u8],
@@ -113,7 +136,7 @@ fn decrypt_aead(
     let nonce = XNonce::from_slice(nonce);
     cipher
         .decrypt(nonce, ciphertext)
-        .map_err(|_| EncryptionError::DecryptFailed)
+        .map_err(|_| EncryptionError::decrypt_failed(context))
 }
 
 pub struct ServiceKeyPair {
@@ -146,16 +169,25 @@ impl ServiceKeyPair {
 
     pub fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>, EncryptionError> {
         if data.len() < MIN_REQUEST_ENVELOPE {
-            return Err(EncryptionError::TooShort);
+            return Err(EncryptionError::too_short(
+                "reading encrypted request envelope",
+                MIN_REQUEST_ENVELOPE,
+                data.len(),
+            ));
         }
-        let eph_pub_bytes: [u8; 32] = data[..EPH_PUB_LEN]
-            .try_into()
-            .map_err(|_| EncryptionError::DecryptFailed)?;
+        let eph_pub_bytes: [u8; 32] = data[..EPH_PUB_LEN].try_into().map_err(|_| {
+            EncryptionError::decrypt_failed("reading ephemeral public key from request payload")
+        })?;
         let key = self.derive_shared_key(&eph_pub_bytes);
         let nonce: [u8; NONCE_LEN] = data[EPH_PUB_LEN..EPH_PUB_LEN + NONCE_LEN]
             .try_into()
-            .map_err(|_| EncryptionError::DecryptFailed)?;
-        decrypt_aead(&key, &nonce, &data[EPH_PUB_LEN + NONCE_LEN..])
+            .map_err(|_| EncryptionError::decrypt_failed("reading request nonce"))?;
+        decrypt_aead(
+            "decrypting request payload body",
+            &key,
+            &nonce,
+            &data[EPH_PUB_LEN + NONCE_LEN..],
+        )
     }
 
     pub fn encrypt_response(
@@ -176,12 +208,21 @@ impl ServiceKeyPair {
         data: &[u8],
     ) -> Result<Vec<u8>, EncryptionError> {
         if data.len() < MIN_REQUEST_ENVELOPE {
-            return Err(EncryptionError::TooShort);
+            return Err(EncryptionError::too_short(
+                "reading shared-key request envelope",
+                MIN_REQUEST_ENVELOPE,
+                data.len(),
+            ));
         }
         let nonce: [u8; NONCE_LEN] = data[EPH_PUB_LEN..EPH_PUB_LEN + NONCE_LEN]
             .try_into()
-            .map_err(|_| EncryptionError::DecryptFailed)?;
-        decrypt_aead(key, &nonce, &data[EPH_PUB_LEN + NONCE_LEN..])
+            .map_err(|_| EncryptionError::decrypt_failed("reading shared-key request nonce"))?;
+        decrypt_aead(
+            "decrypting shared-key request payload body",
+            key,
+            &nonce,
+            &data[EPH_PUB_LEN + NONCE_LEN..],
+        )
     }
 
     pub fn encrypt_response_with_shared_key(
@@ -196,9 +237,16 @@ impl ServiceKeyPair {
     }
 }
 
+#[derive(Clone)]
 pub struct ServiceRecipient {
     public_key: PublicKey,
     client: Option<async_nats::Client>,
+}
+
+impl From<[u8; 32]> for ServiceRecipient {
+    fn from(bytes: [u8; 32]) -> Self {
+        Self::from_bytes(bytes)
+    }
 }
 
 impl ServiceRecipient {
@@ -316,7 +364,9 @@ impl RequestBuilder {
                 .iter()
                 .map(|(k, v)| (k.as_str(), v.as_str()))
                 .collect();
-            let json = serde_json::to_vec(&map).map_err(|_| EncryptionError::EncryptFailed)?;
+            let json = serde_json::to_vec(&map).map_err(|_| {
+                EncryptionError::encrypt_failed("serializing encrypted headers as JSON")
+            })?;
             let encrypted = self.ctx.encrypt(&json)?;
             let encoded = STANDARD.encode(&encrypted);
             headers.insert(ENCRYPTED_HEADERS_NAME, encoded.as_str());
@@ -399,12 +449,21 @@ impl EphemeralContext {
 
     pub fn decrypt_response(&self, data: &[u8]) -> Result<Vec<u8>, EncryptionError> {
         if data.len() < MIN_RESPONSE_ENVELOPE {
-            return Err(EncryptionError::TooShort);
+            return Err(EncryptionError::too_short(
+                "reading encrypted response envelope",
+                MIN_RESPONSE_ENVELOPE,
+                data.len(),
+            ));
         }
         let nonce: [u8; NONCE_LEN] = data[..NONCE_LEN]
             .try_into()
-            .map_err(|_| EncryptionError::DecryptFailed)?;
-        decrypt_aead(&self.shared_secret, &nonce, &data[NONCE_LEN..])
+            .map_err(|_| EncryptionError::decrypt_failed("reading response nonce"))?;
+        decrypt_aead(
+            "decrypting response payload body",
+            &self.shared_secret,
+            &nonce,
+            &data[NONCE_LEN..],
+        )
     }
 
     pub fn shared_secret(&self) -> &[u8; 32] {

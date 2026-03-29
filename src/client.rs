@@ -40,6 +40,18 @@ impl ClientCallOptions {
         self
     }
 
+    #[cfg(feature = "encryption")]
+    #[doc(hidden)]
+    pub fn with_default_recipient(
+        mut self,
+        recipient: crate::encryption::ServiceRecipient,
+    ) -> Self {
+        if self.recipient.is_none() {
+            self.recipient = Some(recipient);
+        }
+        self
+    }
+
     pub async fn into_request(
         self,
         client: &async_nats::Client,
@@ -67,23 +79,23 @@ impl ClientCallOptions {
             }
             builder = builder.payload(payload.to_vec());
 
-            let (msg, _) = builder.nats_request(subject).await.map_err(|e| {
-                NatsErrorResponse::internal("NATS_REQUEST_FAILED", e.to_string())
-            })?;
+            let (msg, _) = builder
+                .nats_request(subject)
+                .await
+                .map_err(|e| NatsErrorResponse::internal("NATS_REQUEST_FAILED", e.to_string()))?;
             return Ok(msg);
         }
 
         if self.plaintext_headers.is_empty() {
-            client.request(subject, payload).await.map_err(|e| {
-                NatsErrorResponse::internal("NATS_REQUEST_FAILED", e.to_string())
-            })
+            client
+                .request(subject, payload)
+                .await
+                .map_err(|e| NatsErrorResponse::internal("NATS_REQUEST_FAILED", e.to_string()))
         } else {
             client
                 .request_with_headers(subject, self.plaintext_headers, payload)
                 .await
-                .map_err(|e| {
-                    NatsErrorResponse::internal("NATS_REQUEST_FAILED", e.to_string())
-                })
+                .map_err(|e| NatsErrorResponse::internal("NATS_REQUEST_FAILED", e.to_string()))
         }
     }
 
@@ -93,10 +105,7 @@ impl ClientCallOptions {
         client: &async_nats::Client,
         subject: String,
         payload: Vec<u8>,
-    ) -> Result<
-        (async_nats::Message, crate::encryption::EphemeralContext),
-        NatsErrorResponse,
-    > {
+    ) -> Result<(async_nats::Message, crate::encryption::EphemeralContext), NatsErrorResponse> {
         let recipient = self.recipient.ok_or_else(|| {
             NatsErrorResponse::internal(
                 "MISSING_RECIPIENT",
@@ -116,11 +125,10 @@ impl ClientCallOptions {
         }
         builder = builder.encrypted_payload(payload);
 
-        println!("Sending encrypted request to subject '{}'", subject);
-
-        let (msg, eph_ctx) = builder.nats_request(subject).await.map_err(|e| {
-            NatsErrorResponse::internal("NATS_REQUEST_FAILED", e.to_string())
-        })?;
+        let (msg, eph_ctx) = builder
+            .nats_request(subject)
+            .await
+            .map_err(|e| NatsErrorResponse::internal("NATS_REQUEST_FAILED", e.to_string()))?;
         Ok((msg, eph_ctx))
     }
 }

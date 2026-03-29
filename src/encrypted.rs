@@ -42,15 +42,21 @@ impl<T: FromPayload> FromPayload for Encrypted<T> {
         let shared_key = keypair.derive_shared_key(&eph_pub);
 
         let plaintext = ServiceKeyPair::decrypt_with_shared_key(&shared_key, &ctx.request.payload)
-            .map_err(|_| {
-                NatsErrorResponse::bad_request("DECRYPT_FAILED", "payload decryption failed")
-                    .with_request_id(ctx.request.request_id.clone())
+            .map_err(|error| {
+                NatsErrorResponse::bad_request(
+                    "DECRYPT_FAILED",
+                    format!("payload decryption failed: {error}"),
+                )
+                .with_request_id(ctx.request.request_id.clone())
             })?;
 
         let recovered_headers =
-            decrypt_headers(&ctx.request.headers, &shared_key).map_err(|_| {
-                NatsErrorResponse::bad_request("DECRYPT_FAILED", "header decryption failed")
-                    .with_request_id(ctx.request.request_id.clone())
+            decrypt_headers(&ctx.request.headers, &shared_key).map_err(|error| {
+                NatsErrorResponse::bad_request(
+                    "DECRYPT_FAILED",
+                    format!("header decryption failed: {error}"),
+                )
+                .with_request_id(ctx.request.request_id.clone())
             })?;
 
         let mut patched = ctx.clone();

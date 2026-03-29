@@ -1,6 +1,6 @@
 use anyhow::Result;
 use async_nats::jetstream::{self, AckKind};
-use async_nats::service::ServiceExt;
+use async_nats::service::{ServiceExt, endpoint};
 use futures::StreamExt;
 use tracing::{debug, error, info};
 
@@ -128,10 +128,10 @@ impl NatsApp {
             };
             use base64::{Engine, engine::general_purpose::STANDARD};
 
-            let response_pub_key = decode_response_pub_key(&req.headers).map_err(|_| {
+            let response_pub_key = decode_response_pub_key(&req.headers).map_err(|error| {
                 NatsErrorResponse::bad_request(
                     "DECRYPT_FAILED",
-                    "failed to decode ephemeral public key from headers",
+                    format!("failed to decode ephemeral public key from headers: {error}"),
                 )
                 .with_request_id(req.request_id.clone())
             })?;
@@ -174,10 +174,10 @@ impl NatsApp {
                 )?;
 
                 let decrypted_headers = if req.headers.get(ENCRYPTED_HEADERS_NAME).is_some() {
-                    decrypt_headers(&req.headers, &shared_key).map_err(|_| {
+                    decrypt_headers(&req.headers, &shared_key).map_err(|error| {
                         NatsErrorResponse::bad_request(
                             "DECRYPT_FAILED",
-                            "failed to decrypt the request headers",
+                            format!("failed to decrypt the request headers: {error}"),
                         )
                         .with_request_id(req.request_id.clone())
                     })?
@@ -256,22 +256,12 @@ impl NatsApp {
                 "registering endpoint"
             );
 
-            let mut ep = if endpoint_group.is_empty() {
-                service
-                    .endpoint_builder()
-                    .name(endpoint_def.fn_name)
-                    .add(endpoint_subject.clone())
-                    .await
-                    .map_err(|e| anyhow::anyhow!("{e}"))?
-            } else {
-                service
-                    .group(endpoint_group.clone())
-                    .endpoint_builder()
-                    .name(endpoint_def.fn_name)
-                    .add(endpoint_subject.clone())
-                    .await
-                    .map_err(|e| anyhow::anyhow!("{e}"))?
-            };
+            let mut ep = service
+                .endpoint_builder()
+                .name(endpoint_def.fn_name.clone())
+                .add(endpoint_def.full_subject())
+                .await
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
 
             info!(
                 service = %endpoint_service_name,
@@ -330,6 +320,7 @@ impl NatsApp {
                             );
                             let err = err.into_nats_error(request_id.clone());
                             let payload = serde_json::to_vec(&err).unwrap_or_default();
+
                             let _ = raw_req.respond(Ok(payload.into())).await;
                             continue;
                         }

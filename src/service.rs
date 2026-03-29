@@ -1,11 +1,21 @@
 use crate::consumer::ConsumerDefinition;
 use crate::handler::HandlerFn;
 
+pub fn build_subject(prefix: Option<&str>, group: &str, subject: &str) -> String {
+    match (prefix.filter(|value| !value.is_empty()), group.is_empty()) {
+        (Some(prefix), false) => format!("{}.{}.{}", prefix, group, subject),
+        (Some(prefix), true) => format!("{}.{}", prefix, subject),
+        (None, false) => format!("{}.{}", group, subject),
+        (None, true) => subject.to_string(),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ServiceMetadata {
     pub name: String,
     pub version: String,
     pub description: String,
+    pub subject_prefix: Option<String>,
 }
 
 impl ServiceMetadata {
@@ -13,17 +23,20 @@ impl ServiceMetadata {
         name: impl Into<String>,
         version: impl Into<String>,
         description: impl Into<String>,
+        subject_prefix: Option<String>,
     ) -> Self {
         Self {
             name: name.into(),
             version: version.into(),
             description: description.into(),
+            subject_prefix: subject_prefix.filter(|value| !value.is_empty()),
         }
     }
 }
 
 #[derive(Clone)]
 pub struct EndpointDefinition {
+    pub subject_prefix: Option<String>,
     pub service_name: String,
     pub service_version: String,
     pub service_description: String,
@@ -38,12 +51,7 @@ pub struct EndpointDefinition {
 
 impl EndpointDefinition {
     pub fn full_subject(&self) -> String {
-        match (self.service_name.is_empty(), self.group.is_empty()) {
-            (false, false) => format!("{}.{}.{}", self.service_name, self.group, self.subject),
-            (false, true) => format!("{}.{}", self.service_name, self.subject),
-            (true, false) => format!("{}.{}", self.group, self.subject),
-            (true, true) => self.subject.clone(),
-        }
+        build_subject(self.subject_prefix.as_deref(), &self.group, &self.subject)
     }
 }
 
@@ -118,4 +126,21 @@ pub struct ServiceDefinition {
 
 pub trait NatsService: Send + Sync + 'static {
     fn definition() -> ServiceDefinition;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_subject;
+
+    #[test]
+    fn builds_subject_with_prefix() {
+        assert_eq!(build_subject(Some("api"), "math", "sum"), "api.math.sum");
+        assert_eq!(build_subject(Some("api"), "", "health"), "api.health");
+    }
+
+    #[test]
+    fn builds_subject_without_prefix() {
+        assert_eq!(build_subject(None, "math", "sum"), "math.sum");
+        assert_eq!(build_subject(None, "", "health"), "health");
+    }
 }

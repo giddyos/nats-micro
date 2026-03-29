@@ -15,14 +15,14 @@ pub(crate) fn decode_response_pub_key(
         return Ok(None);
     };
 
-    let decoded = STANDARD
-        .decode(value.as_str().as_bytes())
-        .map_err(|_| EncryptionError::DecryptFailed)?;
+    let decoded = STANDARD.decode(value.as_str().as_bytes()).map_err(|_| {
+        EncryptionError::decrypt_failed("decoding x-ephemeral-pub-key header from base64")
+    })?;
 
     decoded
         .try_into()
         .map(Some)
-        .map_err(|_| EncryptionError::DecryptFailed)
+        .map_err(|_| EncryptionError::decrypt_failed("parsing x-ephemeral-pub-key header bytes"))
 }
 
 fn decode_header_blob(headers: &async_nats::HeaderMap) -> Result<Option<Vec<u8>>, EncryptionError> {
@@ -33,7 +33,9 @@ fn decode_header_blob(headers: &async_nats::HeaderMap) -> Result<Option<Vec<u8>>
     STANDARD
         .decode(value.as_str().as_bytes())
         .map(Some)
-        .map_err(|_| EncryptionError::DecryptFailed)
+        .map_err(|_| {
+            EncryptionError::decrypt_failed("decoding x-encrypted-headers header from base64")
+        })
 }
 
 pub fn decrypt_headers(
@@ -45,8 +47,8 @@ pub fn decrypt_headers(
     };
 
     let plaintext = ServiceKeyPair::decrypt_with_shared_key(shared_key, &decoded)
-        .map_err(|_| EncryptionError::DecryptFailed)?;
-    let map: HashMap<String, String> =
-        serde_json::from_slice(&plaintext).map_err(|_| EncryptionError::DecryptFailed)?;
+        .map_err(|_| EncryptionError::decrypt_failed("decrypting encrypted headers payload"))?;
+    let map: HashMap<String, String> = serde_json::from_slice(&plaintext)
+        .map_err(|_| EncryptionError::decrypt_failed("deserializing decrypted headers JSON"))?;
     Ok(map)
 }
