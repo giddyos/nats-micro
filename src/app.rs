@@ -119,11 +119,13 @@ impl NatsApp {
 
         #[cfg(feature = "encryption")]
         {
+            use base64::{Engine, engine::general_purpose::STANDARD};
             use crate::{
                 encrypted_headers::{
-                    ENCRYPTED_HEADERS_NAME, RESPONSE_PUB_KEY_NAME, decode_response_pub_key, decrypt_request_headers
+                    ENCRYPTED_HEADERS_NAME, RESPONSE_PUB_KEY_NAME, SIGNATURE_HEADER_NAME,
+                    decode_response_pub_key, decrypt_headers
                 },
-                encryption::ServiceKeyPair,
+                encryption::{ServiceKeyPair, verify_signature},
             };
 
             let response_pub_key = decode_response_pub_key(&req.headers).map_err(|_| {
@@ -131,11 +133,55 @@ impl NatsApp {
                     .with_request_id(req.request_id.clone())
             })?;
 
-            if req.headers.get(ENCRYPTED_HEADERS_NAME).is_none() {
+            if let Some(eph_pub) = &response_pub_key {
+                let keypair = state.get::<ServiceKeyPair>().ok_or_else(|| {
+                    NatsErrorResponse::bad_request("DECRYPT_FAILED", "service encryption key not configured")
+                        .with_request_id(req.request_id.clone())
+                })?;
+                let shared_key = keypair.derive_shared_key(eph_pub);
+
+                let sig_header = req.headers.get(SIGNATURE_HEADER_NAME).ok_or_else(|| {
+                    NatsErrorResponse::bad_request(
+                        "SIGNATURE_MISSING",
+                        "x-signature header is required when x-ephemeral-pub-key is present",
+                    )
+                    .with_request_id(req.request_id.clone())
+                })?;
+                let signature = STANDARD
+                    .decode(sig_header.as_str().as_bytes())
+                    .map_err(|_| {
+                        NatsErrorResponse::bad_request("SIGNATURE_INVALID", "invalid signature encoding")
+                            .with_request_id(req.request_id.clone())
+                    })?;
+                let enc_hdr_val = req.headers.get(ENCRYPTED_HEADERS_NAME).map(|v| v.as_str());
+                verify_signature(&shared_key, &req.payload, enc_hdr_val, &signature)
+                    .map_err(|_| {
+                        NatsErrorResponse::bad_request(
+                            "SIGNATURE_INVALID",
+                            "request signature verification failed",
+                        )
+                        .with_request_id(req.request_id.clone())
+                    })?;
+
+                let decrypted_headers = if req.headers.get(ENCRYPTED_HEADERS_NAME).is_some() {
+                    decrypt_headers(&req.headers, &shared_key).map_err(|_| {
+                        NatsErrorResponse::bad_request(
+                            "DECRYPT_FAILED",
+                            "failed to decrypt the request headers",
+                        )
+                        .with_request_id(req.request_id.clone())
+                    })?
+                } else {
+                    std::collections::HashMap::new()
+                };
+
                 let mut clean_headers = async_nats::HeaderMap::new();
                 for (name, values) in req.headers.iter() {
                     let name_ref: &str = name.as_ref();
-                    if name_ref.eq_ignore_ascii_case(RESPONSE_PUB_KEY_NAME) {
+                    if name_ref.eq_ignore_ascii_case(ENCRYPTED_HEADERS_NAME)
+                        || name_ref.eq_ignore_ascii_case(RESPONSE_PUB_KEY_NAME)
+                        || name_ref.eq_ignore_ascii_case(SIGNATURE_HEADER_NAME)
+                    {
                         continue;
                     }
                     for value in values {
@@ -143,45 +189,17 @@ impl NatsApp {
                     }
                 }
                 req.headers = clean_headers;
-                return Ok((req, response_pub_key));
-            }
 
-            let keypair = state.get::<ServiceKeyPair>().ok_or_else(|| {
-                NatsErrorResponse::bad_request("DECRYPT_FAILED", "service encryption key not configured")
-                    .with_request_id(req.request_id.clone())
-            })?;
-
-            let decrypted = decrypt_request_headers(&req.headers, &keypair, response_pub_key)
-                .map_err(|_| {
-                    NatsErrorResponse::bad_request("DECRYPT_FAILED", "failed to decrypt the request headers")
-                        .with_request_id(req.request_id.clone())
-                })?;
-
-            let Some(decrypted) = decrypted else {
-                return Ok((req, response_pub_key));
-            };
-
-            let mut clean_headers = async_nats::HeaderMap::new();
-            for (name, values) in req.headers.iter() {
-                let name_ref: &str = name.as_ref();
-                if name_ref.eq_ignore_ascii_case(ENCRYPTED_HEADERS_NAME)
-                    || name_ref.eq_ignore_ascii_case(RESPONSE_PUB_KEY_NAME)
-                {
-                    continue;
+                for (key, value) in decrypted_headers {
+                    if let Ok(header_value) = value.parse::<async_nats::HeaderValue>() {
+                        req.headers.insert(key.as_str(), header_value);
+                    }
                 }
-                for value in values {
-                    clean_headers.append(name_ref, value.as_str());
-                }
-            }
-            req.headers = clean_headers;
 
-            for (key, value) in decrypted.headers {
-                if let Ok(header_value) = value.parse::<async_nats::HeaderValue>() {
-                    req.headers.insert(key.as_str(), header_value);
-                }
+                Ok((req, response_pub_key))
+            } else {
+                Ok((req, None))
             }
-
-            Ok((req, response_pub_key))
         }
     }
 
@@ -554,7 +572,10 @@ mod tests {
     use async_nats::HeaderMap;
 
     use crate::{
-        Encrypted, EncryptedHeadersBuilder, IntoNatsResponse, Payload, auth::AuthError, encrypted_headers::{ENCRYPTED_HEADERS_NAME, RESPONSE_PUB_KEY_NAME}, encryption::{ServiceKeyPair, ServiceRecipient}, extractors::FromRequest
+        BuiltRequest, Encrypted, IntoNatsResponse, Payload, auth::AuthError,
+        encrypted_headers::{ENCRYPTED_HEADERS_NAME, RESPONSE_PUB_KEY_NAME, SIGNATURE_HEADER_NAME},
+        encryption::{ServiceKeyPair, ServiceRecipient},
+        extractors::FromRequest,
     };
 
     fn state_with_keypair(keypair: ServiceKeyPair) -> StateMap {
@@ -575,23 +596,24 @@ mod tests {
     fn prepare_request_for_dispatch_decrypts_header_only_requests() {
         let keypair = ServiceKeyPair::generate();
         let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
-        let eph = recipient.begin();
-
-        let headers = EncryptedHeadersBuilder::new(&eph)
+        let built = recipient
+            .request_builder()
             .header("x-request-id", "req-header-only")
             .encrypted_header("authorization", "Bearer demo-token")
             .encrypted_header("x-user-id", "user-42")
+            .payload(b"plain payload".to_vec())
             .build()
-            .expect("headers encrypt");
+            .expect("build request");
 
+        let eph_pub_bytes = built.context.ephemeral_pub_bytes();
         let (prepared, ephemeral_pub) = NatsApp::prepare_request_for_dispatch_with_state(
             &state_with_keypair(keypair),
-            request_with_headers(headers, b"plain payload"),
+            request_with_headers(built.headers, &built.payload),
         )
         .expect("header-only request decrypts");
 
         assert_eq!(prepared.payload.as_ref(), b"plain payload");
-        assert_eq!(ephemeral_pub, Some(eph.ephemeral_pub_bytes()));
+        assert_eq!(ephemeral_pub, Some(eph_pub_bytes));
         assert_eq!(
             prepared
                 .headers
@@ -608,23 +630,24 @@ mod tests {
         );
         assert!(prepared.headers.get(ENCRYPTED_HEADERS_NAME).is_none());
         assert!(prepared.headers.get(RESPONSE_PUB_KEY_NAME).is_none());
+        assert!(prepared.headers.get(SIGNATURE_HEADER_NAME).is_none());
     }
 
     #[tokio::test]
     async fn prepare_request_for_dispatch_runs_before_auth_resolution() {
         let keypair = ServiceKeyPair::generate();
         let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
-        let eph = recipient.begin();
-
-        let headers = EncryptedHeadersBuilder::new(&eph)
+        let built = recipient
+            .request_builder()
             .header("x-request-id", "req-header-only")
             .encrypted_header("authorization", "Bearer demo-token")
+            .payload(b"plain payload".to_vec())
             .build()
-            .expect("headers encrypt");
+            .expect("build request");
 
         let (prepared, _) = NatsApp::prepare_request_for_dispatch_with_state(
             &state_with_keypair(keypair),
-            request_with_headers(headers, b"plain payload"),
+            request_with_headers(built.headers, &built.payload),
         )
         .expect("header-only request decrypts");
 
@@ -655,18 +678,18 @@ mod tests {
     fn header_only_encryption_can_drive_encrypted_response() {
         let keypair = ServiceKeyPair::generate();
         let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
-        let eph = recipient.begin();
-
-        let headers = EncryptedHeadersBuilder::new(&eph)
+        let BuiltRequest { headers, payload, context: eph } = recipient
+            .request_builder()
             .header("x-request-id", "req-header-only")
             .encrypted_header("authorization", "Bearer demo-token")
+            .payload(b"plain payload".to_vec())
             .build()
-            .expect("headers encrypt");
+            .expect("build request");
 
         let state = state_with_keypair(keypair);
         let (prepared, ephemeral_pub) = NatsApp::prepare_request_for_dispatch_with_state(
             &state,
-            request_with_headers(headers, b"plain payload"),
+            request_with_headers(headers, &payload),
         )
         .expect("header-only request decrypts");
 
@@ -701,64 +724,140 @@ mod tests {
         let correct_keypair = ServiceKeyPair::generate();
         let wrong_keypair = ServiceKeyPair::generate();
         let recipient = ServiceRecipient::from_bytes(correct_keypair.public_key_bytes());
-        let eph = recipient.begin();
-
-        let headers = EncryptedHeadersBuilder::new(&eph)
+        let built = recipient
+            .request_builder()
             .header("x-request-id", "req-header-only")
             .encrypted_header("authorization", "Bearer demo-token")
+            .payload(b"plain payload".to_vec())
             .build()
-            .expect("headers encrypt");
+            .expect("build request");
 
         let err = NatsApp::prepare_request_for_dispatch_with_state(
             &state_with_keypair(wrong_keypair),
-            request_with_headers(headers, b"plain payload"),
+            request_with_headers(built.headers, &built.payload),
         )
         .expect_err("wrong service key should fail");
 
         assert_eq!(err.code, 400);
-        assert_eq!(err.error, "DECRYPT_FAILED");
-        assert_eq!(err.message, "failed to decrypt the request headers");
+        assert_eq!(err.error, "SIGNATURE_INVALID");
+        assert_eq!(err.message, "request signature verification failed");
         assert_eq!(err.request_id, "req-header-only");
+    }
+
+    #[test]
+    fn tampered_payload_fails_signature_verification() {
+        let keypair = ServiceKeyPair::generate();
+        let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+        let built = recipient
+            .request_builder()
+            .header("x-request-id", "req-header-only")
+            .encrypted_header("authorization", "Bearer demo-token")
+            .encrypted_payload(b"secret payload".to_vec())
+            .build()
+            .expect("build request");
+
+        let mut tampered_payload = built.payload.to_vec();
+        if let Some(last) = tampered_payload.last_mut() {
+            *last ^= 0xFF;
+        }
+
+        let err = NatsApp::prepare_request_for_dispatch_with_state(
+            &state_with_keypair(keypair),
+            request_with_headers(built.headers, &tampered_payload),
+        )
+        .expect_err("tampered payload should fail");
+
+        assert_eq!(err.code, 400);
+        assert_eq!(err.error, "SIGNATURE_INVALID");
+    }
+
+    #[test]
+    fn missing_signature_fails_when_eph_pub_key_present() {
+        let keypair = ServiceKeyPair::generate();
+        let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+        let built = recipient
+            .request_builder()
+            .header("x-request-id", "req-header-only")
+            .payload(b"plain payload".to_vec())
+            .build()
+            .expect("build request");
+
+        let mut headers = async_nats::HeaderMap::new();
+        for (name, values) in built.headers.iter() {
+            let name_ref: &str = name.as_ref();
+            if name_ref.eq_ignore_ascii_case(SIGNATURE_HEADER_NAME) {
+                continue;
+            }
+            for value in values {
+                headers.append(name_ref, value.as_str());
+            }
+        }
+
+        let err = NatsApp::prepare_request_for_dispatch_with_state(
+            &state_with_keypair(keypair),
+            request_with_headers(headers, &built.payload),
+        )
+        .expect_err("missing signature should fail");
+
+        assert_eq!(err.code, 400);
+        assert_eq!(err.error, "SIGNATURE_MISSING");
+    }
+
+    #[test]
+    fn plain_request_without_encryption_passes_through() {
+        let keypair = ServiceKeyPair::generate();
+        let headers = {
+            let mut h = HeaderMap::new();
+            h.insert("x-request-id", "req-plain");
+            h.insert("authorization", "Bearer tok");
+            h
+        };
+
+        let (prepared, ephemeral_pub) = NatsApp::prepare_request_for_dispatch_with_state(
+            &state_with_keypair(keypair),
+            request_with_headers(headers, b"plain payload"),
+        )
+        .expect("plain request passes");
+
+        assert_eq!(prepared.payload.as_ref(), b"plain payload");
+        assert_eq!(ephemeral_pub, None);
+        assert_eq!(
+            prepared
+                .headers
+                .get("authorization")
+                .map(|v| v.as_str()),
+            Some("Bearer tok")
+        );
     }
 
     #[test]
     fn encrypted_payload_rejects_mismatched_header_ephemeral_key() {
         let keypair = ServiceKeyPair::generate();
-        let header_recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
-        let payload_recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
-        let header_eph = header_recipient.begin();
+        let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
 
-        let headers = EncryptedHeadersBuilder::new(&header_eph)
+        let built = recipient
+            .request_builder()
             .header("x-request-id", "req-header-only")
             .encrypted_header("authorization", "Bearer demo-token")
             .build()
-            .expect("headers encrypt");
+            .expect("build request");
+
+        let payload_recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
         let encrypted_payload = payload_recipient
             .encrypt(b"encrypted payload")
             .expect("payload encrypts")
             .0;
 
-        let state = state_with_keypair(keypair);
-        let (prepared, ephemeral_pub) = NatsApp::prepare_request_for_dispatch_with_state(
-            &state,
-            request_with_headers(headers, &encrypted_payload),
+        // The signature was computed over the builder's own (empty) payload, not
+        // the payload_recipient encrypted payload, so the framework rejects it
+        // at the signature level before the extractor even runs.
+        let err = NatsApp::prepare_request_for_dispatch_with_state(
+            &state_with_keypair(keypair),
+            request_with_headers(built.headers, &encrypted_payload),
         )
-        .expect("headers decrypt");
-        let ctx = RequestContext {
-            request: prepared,
-            states: state,
-            user: None,
-            subject_template: None,
-            current_param_name: None,
-            ephemeral_pub,
-        };
+        .expect_err("mismatched payload should fail signature");
 
-        let err = match Encrypted::<Payload<Vec<u8>>>::from_request(&ctx) {
-            Ok(_) => panic!("mismatch must fail"),
-            Err(err) => err,
-        };
         assert_eq!(err.code, 400);
-        assert_eq!(err.error, "DECRYPT_FAILED");
-        assert_eq!(err.message, "multiple ephemeral keys detected; only a single key should be used to encrypt both headers and payload");
+        assert_eq!(err.error, "SIGNATURE_INVALID");
     }
 }

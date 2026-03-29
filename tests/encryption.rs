@@ -1,7 +1,7 @@
 #![cfg(feature = "encryption")]
 
 use async_nats::HeaderMap;
-use nats_micro::{EncryptedHeadersBuilder, EncryptionError, ServiceKeyPair, ServiceRecipient};
+use nats_micro::{EncryptionError, ServiceKeyPair, ServiceRecipient};
 
 #[test]
 fn round_trip_encrypt_decrypt_payload() {
@@ -40,25 +40,23 @@ fn headers_and_payload_share_ephemeral_key() {
     let keypair = ServiceKeyPair::generate();
     let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
 
-    let eph_ctx = recipient.begin();
-
-    let payload = b"payload data";
-    let encrypted_payload = eph_ctx.encrypt(payload).unwrap();
-
-    let headers = EncryptedHeadersBuilder::new(&eph_ctx)
+    let built = recipient
+        .request_builder()
         .header("x-request-id", "req-123")
         .encrypted_header("authorization", "Bearer secret-token")
+        .encrypted_payload(b"payload data".to_vec())
         .build()
         .unwrap();
 
-    let eph_from_payload: [u8; 32] = encrypted_payload[..32].try_into().unwrap();
-    assert_eq!(eph_from_payload, eph_ctx.ephemeral_pub_bytes());
+    let eph_from_payload: [u8; 32] = built.payload[..32].try_into().unwrap();
+    assert_eq!(eph_from_payload, built.context.ephemeral_pub_bytes());
 
-    let decrypted_payload = keypair.decrypt(&encrypted_payload).unwrap();
-    assert_eq!(decrypted_payload, payload);
+    let decrypted_payload = keypair.decrypt(&built.payload).unwrap();
+    assert_eq!(decrypted_payload, b"payload data");
 
     let shared_key = keypair.derive_shared_key(&eph_from_payload);
-    let decrypted_headers = nats_micro::encrypted_headers_decrypt(&headers, &shared_key).unwrap();
+    let decrypted_headers =
+        nats_micro::encrypted_headers_decrypt(&built.headers, &shared_key).unwrap();
     assert_eq!(
         decrypted_headers.get("authorization").unwrap(),
         "Bearer secret-token"
@@ -128,42 +126,51 @@ fn from_private_bytes_round_trip() {
 }
 
 #[test]
-fn encrypted_headers_builder_plaintext_only() {
+fn request_builder_plaintext_only() {
     let keypair = ServiceKeyPair::generate();
     let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
-    let eph = recipient.begin();
 
-    let headers = EncryptedHeadersBuilder::new(&eph)
+    let built = recipient
+        .request_builder()
         .header("x-request-id", "req-1")
         .header("content-type", "application/json")
         .build()
         .unwrap();
 
-    assert!(headers.get("x-encrypted-headers").is_none());
-    assert!(headers.get("x-ephemeral-pub-key").is_some());
-    assert_eq!(headers.get("x-request-id").unwrap().as_str(), "req-1");
+    assert!(built.headers.get("x-encrypted-headers").is_none());
+    assert!(built.headers.get("x-ephemeral-pub-key").is_some());
+    assert!(built.headers.get("x-signature").is_some());
+    assert_eq!(
+        built.headers.get("x-request-id").unwrap().as_str(),
+        "req-1"
+    );
 }
 
 #[test]
-fn encrypted_headers_builder_mixed() {
+fn request_builder_mixed() {
     let keypair = ServiceKeyPair::generate();
     let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
-    let eph = recipient.begin();
 
-    let headers = EncryptedHeadersBuilder::new(&eph)
+    let built = recipient
+        .request_builder()
         .header("x-request-id", "req-2")
         .encrypted_header("x-user-id", "user-42")
         .bearer_token("my-token")
         .build()
         .unwrap();
 
-    assert_eq!(headers.get("x-request-id").unwrap().as_str(), "req-2");
-    assert!(headers.get("x-encrypted-headers").is_some());
-    assert!(headers.get("x-ephemeral-pub-key").is_some());
-    assert!(headers.get("authorization").is_none());
+    assert_eq!(
+        built.headers.get("x-request-id").unwrap().as_str(),
+        "req-2"
+    );
+    assert!(built.headers.get("x-encrypted-headers").is_some());
+    assert!(built.headers.get("x-ephemeral-pub-key").is_some());
+    assert!(built.headers.get("x-signature").is_some());
+    assert!(built.headers.get("authorization").is_none());
 
-    let shared_key = keypair.derive_shared_key(&eph.ephemeral_pub_bytes());
-    let decrypted = nats_micro::encrypted_headers_decrypt(&headers, &shared_key).unwrap();
+    let shared_key = keypair.derive_shared_key(&built.context.ephemeral_pub_bytes());
+    let decrypted =
+        nats_micro::encrypted_headers_decrypt(&built.headers, &shared_key).unwrap();
     assert_eq!(decrypted.get("x-user-id").unwrap(), "user-42");
     assert_eq!(decrypted.get("authorization").unwrap(), "Bearer my-token");
 }
@@ -214,27 +221,26 @@ fn full_encrypted_request_response_cycle() {
     let keypair = ServiceKeyPair::generate();
     let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
 
-    let eph = recipient.begin();
-    let request_payload = b"full cycle request data";
-    let encrypted_request = eph.encrypt(request_payload).unwrap();
-
-    let headers = EncryptedHeadersBuilder::new(&eph)
+    let built = recipient
+        .request_builder()
         .header("x-request-id", "cycle-1")
         .encrypted_header("x-secret", "classified")
+        .encrypted_payload(b"full cycle request data".to_vec())
         .build()
         .unwrap();
 
-    let eph_pub: [u8; 32] = encrypted_request[..32].try_into().unwrap();
+    let eph_pub: [u8; 32] = built.payload[..32].try_into().unwrap();
     let shared_key = keypair.derive_shared_key(&eph_pub);
 
     let decrypted_request = nats_micro::encryption::ServiceKeyPair::decrypt_with_shared_key(
         &shared_key,
-        &encrypted_request,
+        &built.payload,
     )
     .unwrap();
-    assert_eq!(decrypted_request, request_payload);
+    assert_eq!(decrypted_request, b"full cycle request data");
 
-    let decrypted_headers = nats_micro::encrypted_headers_decrypt(&headers, &shared_key).unwrap();
+    let decrypted_headers =
+        nats_micro::encrypted_headers_decrypt(&built.headers, &shared_key).unwrap();
     assert_eq!(decrypted_headers.get("x-secret").unwrap(), "classified");
 
     let response_payload = b"full cycle response";
@@ -242,7 +248,7 @@ fn full_encrypted_request_response_cycle() {
         .encrypt_response(response_payload, &eph_pub)
         .unwrap();
 
-    let decrypted_response = eph.decrypt_response(&encrypted_response).unwrap();
+    let decrypted_response = built.context.decrypt_response(&encrypted_response).unwrap();
     assert_eq!(decrypted_response, response_payload);
 }
 
@@ -259,4 +265,71 @@ fn each_encryption_produces_different_ciphertext() {
 
     assert_eq!(keypair.decrypt(&enc1).unwrap(), plaintext);
     assert_eq!(keypair.decrypt(&enc2).unwrap(), plaintext);
+}
+
+#[test]
+fn request_builder_encrypted_payload_round_trip() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+
+    let built = recipient
+        .request_builder()
+        .encrypted_payload(b"encrypted via builder".to_vec())
+        .build()
+        .unwrap();
+
+    assert!(built.payload.len() > b"encrypted via builder".len());
+    let decrypted = keypair.decrypt(&built.payload).unwrap();
+    assert_eq!(decrypted, b"encrypted via builder");
+}
+
+#[test]
+fn request_builder_plain_payload_is_unencrypted() {
+    let recipient = {
+        let keypair = ServiceKeyPair::generate();
+        ServiceRecipient::from_bytes(keypair.public_key_bytes())
+    };
+
+    let built = recipient
+        .request_builder()
+        .payload(b"hello plain".to_vec())
+        .build()
+        .unwrap();
+
+    assert_eq!(&*built.payload, b"hello plain");
+}
+
+#[test]
+fn request_builder_no_payload_produces_empty_bytes() {
+    let recipient = {
+        let keypair = ServiceKeyPair::generate();
+        ServiceRecipient::from_bytes(keypair.public_key_bytes())
+    };
+
+    let built = recipient.request_builder().build().unwrap();
+    assert!(built.payload.is_empty());
+}
+
+#[test]
+fn signature_present_on_all_built_requests() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+
+    let plain = recipient
+        .request_builder()
+        .payload(b"data".to_vec())
+        .build()
+        .unwrap();
+    assert!(plain.headers.get("x-signature").is_some());
+
+    let encrypted = recipient
+        .request_builder()
+        .encrypted_payload(b"data".to_vec())
+        .encrypted_header("k", "v")
+        .build()
+        .unwrap();
+    assert!(encrypted.headers.get("x-signature").is_some());
+
+    let empty = recipient.request_builder().build().unwrap();
+    assert!(empty.headers.get("x-signature").is_some());
 }

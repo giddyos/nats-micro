@@ -39,11 +39,12 @@ pub use state::StateMap;
 #[cfg(feature = "encryption")]
 pub use encrypted::Encrypted;
 #[cfg(feature = "encryption")]
-pub use encrypted_headers::{
-    EncryptedHeadersBuilder, decrypt_headers as encrypted_headers_decrypt,
-};
+pub use encrypted_headers::decrypt_headers as encrypted_headers_decrypt;
 #[cfg(feature = "encryption")]
-pub use encryption::{EncryptionError, EphemeralContext, ServiceKeyPair, ServiceRecipient};
+pub use encryption::{
+    BuiltRequest, EncryptionError, EphemeralContext, RequestBuilder, ServiceKeyPair,
+    ServiceRecipient,
+};
 
 pub use bytes::Bytes;
 pub use nats_micro_macros::{service, service_error, service_handlers};

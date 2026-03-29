@@ -1,13 +1,21 @@
+use base64::{Engine, engine::general_purpose::STANDARD};
 use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
     aead::{Aead, KeyInit},
 };
 use hkdf::Hkdf;
+use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use std::collections::HashMap;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
+use crate::encrypted_headers::{ENCRYPTED_HEADERS_NAME, RESPONSE_PUB_KEY_NAME, SIGNATURE_HEADER_NAME};
+
+type HmacSha256 = Hmac<Sha256>;
+
 const HKDF_INFO: &[u8] = b"nats-micro-v1";
+const HKDF_SIG_INFO: &[u8] = b"nats-micro-v1-sig";
 const EPH_PUB_LEN: usize = 32;
 const NONCE_LEN: usize = 24;
 const TAG_LEN: usize = 16;
@@ -22,6 +30,14 @@ pub enum EncryptionError {
     TooShort,
     #[error("encryption failed")]
     EncryptFailed,
+    #[error("invalid signature")]
+    SignatureInvalid,
+    #[error("no NATS client configured on ServiceRecipient")]
+    NoClient,
+    #[error("NATS publish failed: {0}")]
+    PublishFailed(String),
+    #[error("NATS request failed: {0}")]
+    RequestFailed(String),
 }
 
 fn derive_key(dh_output: &[u8]) -> Zeroizing<[u8; 32]> {
@@ -30,6 +46,44 @@ fn derive_key(dh_output: &[u8]) -> Zeroizing<[u8; 32]> {
     hk.expand(HKDF_INFO, &mut key)
         .expect("32-byte output is always valid for HKDF-SHA256");
     Zeroizing::new(key)
+}
+
+fn derive_sig_key(shared_key: &[u8; 32]) -> Zeroizing<[u8; 32]> {
+    let hk = Hkdf::<Sha256>::new(None, shared_key);
+    let mut key = [0u8; 32];
+    hk.expand(HKDF_SIG_INFO, &mut key)
+        .expect("32-byte output is always valid for HKDF-SHA256");
+    Zeroizing::new(key)
+}
+
+pub fn compute_signature(
+    shared_key: &[u8; 32],
+    payload: &[u8],
+    encrypted_headers_value: Option<&str>,
+) -> Vec<u8> {
+    let sig_key = derive_sig_key(shared_key);
+    let mut mac = <HmacSha256 as Mac>::new_from_slice(&*sig_key).expect("HMAC accepts any key length");
+    mac.update(payload);
+    if let Some(val) = encrypted_headers_value {
+        mac.update(val.as_bytes());
+    }
+    mac.finalize().into_bytes().to_vec()
+}
+
+pub fn verify_signature(
+    shared_key: &[u8; 32],
+    payload: &[u8],
+    encrypted_headers_value: Option<&str>,
+    signature: &[u8],
+) -> Result<(), EncryptionError> {
+    let sig_key = derive_sig_key(shared_key);
+    let mut mac = <HmacSha256 as Mac>::new_from_slice(&*sig_key).expect("HMAC accepts any key length");
+    mac.update(payload);
+    if let Some(val) = encrypted_headers_value {
+        mac.update(val.as_bytes());
+    }
+    mac.verify_slice(signature)
+        .map_err(|_| EncryptionError::SignatureInvalid)
 }
 
 fn encrypt_aead(
@@ -140,13 +194,24 @@ impl ServiceKeyPair {
 
 pub struct ServiceRecipient {
     public_key: PublicKey,
+    client: Option<async_nats::Client>,
 }
 
 impl ServiceRecipient {
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
         Self {
             public_key: PublicKey::from(bytes),
+            client: None,
         }
+    }
+
+    pub fn with_client(mut self, client: async_nats::Client) -> Self {
+        self.client = Some(client);
+        self
+    }
+
+    pub fn client(&self) -> Option<&async_nats::Client> {
+        self.client.as_ref()
     }
 
     pub fn begin(&self) -> EphemeralContext {
@@ -168,6 +233,141 @@ impl ServiceRecipient {
         let encrypted = ctx.encrypt(plaintext)?;
         Ok((encrypted, ctx))
     }
+
+    pub fn request_builder(&self) -> RequestBuilder {
+        let ctx = self.begin();
+        RequestBuilder {
+            ctx,
+            client: self.client.clone(),
+            plaintext_headers: Vec::new(),
+            encrypted_headers: Vec::new(),
+            payload: None,
+            encrypt_payload: false,
+        }
+    }
+}
+
+pub struct RequestBuilder {
+    ctx: EphemeralContext,
+    client: Option<async_nats::Client>,
+    plaintext_headers: Vec<(String, String)>,
+    encrypted_headers: Vec<(String, String)>,
+    payload: Option<Vec<u8>>,
+    encrypt_payload: bool,
+}
+
+impl RequestBuilder {
+    pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.plaintext_headers.push((key.into(), value.into()));
+        self
+    }
+
+    pub fn encrypted_header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.encrypted_headers.push((key.into(), value.into()));
+        self
+    }
+
+    pub fn bearer_token(self, token: impl Into<String>) -> Self {
+        self.encrypted_header("authorization", format!("Bearer {}", token.into()))
+    }
+
+    pub fn payload(mut self, data: impl Into<Vec<u8>>) -> Self {
+        self.payload = Some(data.into());
+        self.encrypt_payload = false;
+        self
+    }
+
+    pub fn encrypted_payload(mut self, data: impl Into<Vec<u8>>) -> Self {
+        self.payload = Some(data.into());
+        self.encrypt_payload = true;
+        self
+    }
+
+    pub fn context(&self) -> &EphemeralContext {
+        &self.ctx
+    }
+
+    pub fn build(self) -> Result<BuiltRequest, EncryptionError> {
+        let mut headers = async_nats::HeaderMap::new();
+        headers.insert(
+            RESPONSE_PUB_KEY_NAME,
+            STANDARD.encode(self.ctx.ephemeral_pub_bytes()),
+        );
+
+        for (k, v) in &self.plaintext_headers {
+            headers.insert(
+                k.as_str(),
+                v.parse::<async_nats::HeaderValue>()
+                    .unwrap_or_else(|_| async_nats::HeaderValue::from(v.as_str())),
+            );
+        }
+
+        let encrypted_headers_value = if !self.encrypted_headers.is_empty() {
+            let map: HashMap<&str, &str> = self
+                .encrypted_headers
+                .iter()
+                .map(|(k, v)| (k.as_str(), v.as_str()))
+                .collect();
+            let json = serde_json::to_vec(&map).map_err(|_| EncryptionError::EncryptFailed)?;
+            let encrypted = self.ctx.encrypt(&json)?;
+            let encoded = STANDARD.encode(&encrypted);
+            headers.insert(ENCRYPTED_HEADERS_NAME, encoded.as_str());
+            Some(encoded)
+        } else {
+            None
+        };
+
+        let final_payload: Vec<u8> = if let Some(data) = &self.payload {
+            if self.encrypt_payload {
+                self.ctx.encrypt(data)?
+            } else {
+                data.clone()
+            }
+        } else {
+            Vec::new()
+        };
+
+        let signature = compute_signature(
+            self.ctx.shared_secret(),
+            &final_payload,
+            encrypted_headers_value.as_deref(),
+        );
+        headers.insert(SIGNATURE_HEADER_NAME, STANDARD.encode(&signature));
+
+        Ok(BuiltRequest {
+            headers,
+            payload: final_payload.into(),
+            context: self.ctx,
+        })
+    }
+
+    pub async fn publish(mut self, subject: impl Into<String>) -> Result<(), EncryptionError> {
+        let client = self.client.take().ok_or(EncryptionError::NoClient)?;
+        let built = self.build()?;
+        client
+            .publish_with_headers(subject.into(), built.headers, built.payload)
+            .await
+            .map_err(|e| EncryptionError::PublishFailed(e.to_string()))
+    }
+
+    pub async fn nats_request(
+        mut self,
+        subject: impl Into<String>,
+    ) -> Result<(async_nats::Message, EphemeralContext), EncryptionError> {
+        let client = self.client.take().ok_or(EncryptionError::NoClient)?;
+        let built = self.build()?;
+        let msg = client
+            .request_with_headers(subject.into(), built.headers, built.payload)
+            .await
+            .map_err(|e| EncryptionError::RequestFailed(e.to_string()))?;
+        Ok((msg, built.context))
+    }
+}
+
+pub struct BuiltRequest {
+    pub headers: async_nats::HeaderMap,
+    pub payload: bytes::Bytes,
+    pub context: EphemeralContext,
 }
 
 pub struct EphemeralContext {
@@ -201,5 +401,113 @@ impl EphemeralContext {
 
     pub fn shared_secret(&self) -> &[u8; 32] {
         &self.shared_secret
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signature_round_trip() {
+        let keypair = ServiceKeyPair::generate();
+        let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+        let ctx = recipient.begin();
+
+        let sig = compute_signature(ctx.shared_secret(), b"test payload", Some("headers-blob"));
+        verify_signature(ctx.shared_secret(), b"test payload", Some("headers-blob"), &sig)
+            .expect("valid signature");
+    }
+
+    #[test]
+    fn signature_fails_with_wrong_key() {
+        let kp1 = ServiceKeyPair::generate();
+        let kp2 = ServiceKeyPair::generate();
+        let r1 = ServiceRecipient::from_bytes(kp1.public_key_bytes());
+        let r2 = ServiceRecipient::from_bytes(kp2.public_key_bytes());
+        let c1 = r1.begin();
+        let c2 = r2.begin();
+
+        let sig = compute_signature(c1.shared_secret(), b"data", None);
+        assert!(verify_signature(c2.shared_secret(), b"data", None, &sig).is_err());
+    }
+
+    #[test]
+    fn signature_fails_with_tampered_payload() {
+        let keypair = ServiceKeyPair::generate();
+        let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+        let ctx = recipient.begin();
+
+        let sig = compute_signature(ctx.shared_secret(), b"original", None);
+        assert!(verify_signature(ctx.shared_secret(), b"tampered", None, &sig).is_err());
+    }
+
+    #[test]
+    fn signature_fails_with_tampered_headers() {
+        let keypair = ServiceKeyPair::generate();
+        let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+        let ctx = recipient.begin();
+
+        let sig = compute_signature(ctx.shared_secret(), b"data", Some("original"));
+        assert!(verify_signature(ctx.shared_secret(), b"data", Some("tampered"), &sig).is_err());
+    }
+
+    #[test]
+    fn signature_with_none_headers_differs_from_some() {
+        let keypair = ServiceKeyPair::generate();
+        let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+        let ctx = recipient.begin();
+
+        let sig_none = compute_signature(ctx.shared_secret(), b"data", None);
+        let sig_some = compute_signature(ctx.shared_secret(), b"data", Some("headers"));
+        assert_ne!(sig_none, sig_some);
+    }
+
+    #[test]
+    fn request_builder_includes_signature() {
+        let keypair = ServiceKeyPair::generate();
+        let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+        let built = recipient
+            .request_builder()
+            .payload(b"test".to_vec())
+            .build()
+            .unwrap();
+
+        assert!(built.headers.get(SIGNATURE_HEADER_NAME).is_some());
+        assert!(built.headers.get(RESPONSE_PUB_KEY_NAME).is_some());
+    }
+
+    #[test]
+    fn request_builder_signature_verifies() {
+        let keypair = ServiceKeyPair::generate();
+        let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+        let built = recipient
+            .request_builder()
+            .encrypted_header("authorization", "Bearer tok")
+            .encrypted_payload(b"signed data".to_vec())
+            .build()
+            .unwrap();
+
+        let shared_key = keypair.derive_shared_key(&built.context.ephemeral_pub_bytes());
+        let sig_value = built.headers.get(SIGNATURE_HEADER_NAME).unwrap();
+        let signature = STANDARD
+            .decode(sig_value.as_str().as_bytes())
+            .unwrap();
+        let enc_hdr_val = built.headers.get(ENCRYPTED_HEADERS_NAME).map(|v| v.as_str());
+        verify_signature(&shared_key, &built.payload, enc_hdr_val, &signature)
+            .expect("signature should verify");
+    }
+
+    #[test]
+    fn request_builder_no_client_errors() {
+        let keypair = ServiceKeyPair::generate();
+        let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+        let builder = recipient.request_builder().payload(b"data".to_vec());
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let err = rt.block_on(builder.publish("test.subject")).unwrap_err();
+        assert!(matches!(err, EncryptionError::NoClient));
     }
 }
