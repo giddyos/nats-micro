@@ -625,13 +625,13 @@ fn generate_client_module(
 
         let deserialize_response = match response_encoding {
             ResponseEncoding::Unit => {
-                quote! { ::nats_micro::__macros::deserialize_unit_response::<#error_type>(&__response_payload) }
+                quote! { ::nats_micro::__macros::deserialize_unit_response::<#error_type>(__response_headers, &__response_payload) }
             }
             ResponseEncoding::Json | ResponseEncoding::Serde => {
-                quote! { ::nats_micro::__macros::deserialize_response::<#return_type, #error_type>(&__response_payload) }
+                quote! { ::nats_micro::__macros::deserialize_response::<#return_type, #error_type>(__response_headers, &__response_payload) }
             }
             ResponseEncoding::Proto => {
-                quote! { ::nats_micro::__macros::deserialize_proto_response::<#return_type, #error_type>(&__response_payload) }
+                quote! { ::nats_micro::__macros::deserialize_proto_response::<#return_type, #error_type>(__response_headers, &__response_payload) }
             }
             ResponseEncoding::Raw => {
                 if let Some(rt) = response_type {
@@ -639,17 +639,17 @@ fn generate_client_module(
                     let is_str_ref = matches!(rt, Type::Reference(r) if matches!(&*r.elem, Type::Path(p) if p.path.is_ident("str")));
                     match ident.as_deref() {
                         Some("String") => {
-                            quote! { ::nats_micro::__macros::raw_response_to_string::<#error_type>(&__response_payload) }
+                            quote! { ::nats_micro::__macros::raw_response_to_string::<#error_type>(__response_headers, &__response_payload) }
                         }
                         _ if is_str_ref => {
-                            quote! { ::nats_micro::__macros::raw_response_to_string::<#error_type>(&__response_payload) }
+                            quote! { ::nats_micro::__macros::raw_response_to_string::<#error_type>(__response_headers, &__response_payload) }
                         }
                         _ => {
-                            quote! { ::nats_micro::__macros::raw_response_to_bytes::<#error_type>(&__response_payload) }
+                            quote! { ::nats_micro::__macros::raw_response_to_bytes::<#error_type>(__response_headers, &__response_payload) }
                         }
                     }
                 } else {
-                    quote! { ::nats_micro::__macros::raw_response_to_bytes::<#error_type>(&__response_payload) }
+                    quote! { ::nats_micro::__macros::raw_response_to_bytes::<#error_type>(__response_headers, &__response_payload) }
                 }
             }
         };
@@ -684,7 +684,9 @@ fn generate_client_module(
                         .into_encrypted_request(&self.client, __subject, __body.to_vec())
                         .await
                         .map_err(::nats_micro::ClientError::<#error_type>::request)?;
+                    let __response_headers = __msg.headers.as_ref();
                     let __response_payload = ::nats_micro::__macros::decrypt_client_response::<#error_type>(
+                        __response_headers,
                         &__eph_ctx,
                         &__msg.payload,
                     )?;
@@ -699,6 +701,7 @@ fn generate_client_module(
                         .into_encrypted_request(&self.client, __subject, __body.to_vec())
                         .await
                         .map_err(::nats_micro::ClientError::<#error_type>::request)?;
+                    let __response_headers = __msg.headers.as_ref();
                     let __response_payload = __msg.payload.to_vec();
                     #deserialize_response
                 }
@@ -710,6 +713,7 @@ fn generate_client_module(
                         .into_request(&self.client, __subject, __body)
                         .await
                         .map_err(::nats_micro::ClientError::<#error_type>::request)?;
+                    let __response_headers = __msg.headers.as_ref();
                     let __response_payload = __msg.payload.to_vec();
                     #deserialize_response
                 }
@@ -722,6 +726,7 @@ fn generate_client_module(
                     .into_request(&self.client, __subject, __body)
                     .await
                     .map_err(::nats_micro::ClientError::<#error_type>::request)?;
+                let __response_headers = __msg.headers.as_ref();
                 let __response_payload = __msg.payload.to_vec();
                 #deserialize_response
             }
