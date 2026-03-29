@@ -1,7 +1,11 @@
 #![cfg(feature = "encryption")]
 
 use async_nats::HeaderMap;
-use nats_micro::{EncryptionError, ServiceKeyPair, ServiceRecipient};
+use base64::{Engine, engine::general_purpose::STANDARD};
+use nats_micro::{
+    EncryptionError, ServiceKeyPair, ServiceRecipient, encrypted_headers_decrypt,
+    encryption::{compute_signature, verify_signature},
+};
 
 #[test]
 fn round_trip_encrypt_decrypt_payload() {
@@ -55,8 +59,7 @@ fn headers_and_payload_share_ephemeral_key() {
     assert_eq!(decrypted_payload, b"payload data");
 
     let shared_key = keypair.derive_shared_key(&eph_from_payload);
-    let decrypted_headers =
-        nats_micro::encrypted_headers_decrypt(&built.headers, &shared_key).unwrap();
+    let decrypted_headers = encrypted_headers_decrypt(&built.headers, &shared_key).unwrap();
     assert_eq!(
         decrypted_headers.get("authorization").unwrap(),
         "Bearer secret-token"
@@ -140,10 +143,7 @@ fn request_builder_plaintext_only() {
     assert!(built.headers.get("x-encrypted-headers").is_none());
     assert!(built.headers.get("x-ephemeral-pub-key").is_some());
     assert!(built.headers.get("x-signature").is_some());
-    assert_eq!(
-        built.headers.get("x-request-id").unwrap().as_str(),
-        "req-1"
-    );
+    assert_eq!(built.headers.get("x-request-id").unwrap().as_str(), "req-1");
 }
 
 #[test]
@@ -159,18 +159,14 @@ fn request_builder_mixed() {
         .build()
         .unwrap();
 
-    assert_eq!(
-        built.headers.get("x-request-id").unwrap().as_str(),
-        "req-2"
-    );
+    assert_eq!(built.headers.get("x-request-id").unwrap().as_str(), "req-2");
     assert!(built.headers.get("x-encrypted-headers").is_some());
     assert!(built.headers.get("x-ephemeral-pub-key").is_some());
     assert!(built.headers.get("x-signature").is_some());
     assert!(built.headers.get("authorization").is_none());
 
     let shared_key = keypair.derive_shared_key(&built.context.ephemeral_pub_bytes());
-    let decrypted =
-        nats_micro::encrypted_headers_decrypt(&built.headers, &shared_key).unwrap();
+    let decrypted = encrypted_headers_decrypt(&built.headers, &shared_key).unwrap();
     assert_eq!(decrypted.get("x-user-id").unwrap(), "user-42");
     assert_eq!(decrypted.get("authorization").unwrap(), "Bearer my-token");
 }
@@ -212,7 +208,7 @@ fn tampered_ciphertext_fails() {
 fn no_encrypted_headers_returns_empty_map() {
     let headers = HeaderMap::new();
     let dummy_key = [0u8; 32];
-    let result = nats_micro::encrypted_headers_decrypt(&headers, &dummy_key).unwrap();
+    let result = encrypted_headers_decrypt(&headers, &dummy_key).unwrap();
     assert!(result.is_empty());
 }
 
@@ -239,8 +235,7 @@ fn full_encrypted_request_response_cycle() {
     .unwrap();
     assert_eq!(decrypted_request, b"full cycle request data");
 
-    let decrypted_headers =
-        nats_micro::encrypted_headers_decrypt(&built.headers, &shared_key).unwrap();
+    let decrypted_headers = encrypted_headers_decrypt(&built.headers, &shared_key).unwrap();
     assert_eq!(decrypted_headers.get("x-secret").unwrap(), "classified");
 
     let response_payload = b"full cycle response";
@@ -332,4 +327,113 @@ fn signature_present_on_all_built_requests() {
 
     let empty = recipient.request_builder().build().unwrap();
     assert!(empty.headers.get("x-signature").is_some());
+}
+
+#[test]
+fn signature_round_trip() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+    let ctx = recipient.begin();
+
+    let sig = compute_signature(ctx.shared_secret(), b"test payload", Some("headers-blob"));
+    verify_signature(
+        ctx.shared_secret(),
+        b"test payload",
+        Some("headers-blob"),
+        &sig,
+    )
+    .expect("valid signature");
+}
+
+#[test]
+fn signature_fails_with_wrong_key() {
+    let kp1 = ServiceKeyPair::generate();
+    let kp2 = ServiceKeyPair::generate();
+    let r1 = ServiceRecipient::from_bytes(kp1.public_key_bytes());
+    let r2 = ServiceRecipient::from_bytes(kp2.public_key_bytes());
+    let c1 = r1.begin();
+    let c2 = r2.begin();
+
+    let sig = compute_signature(c1.shared_secret(), b"data", None);
+    assert!(verify_signature(c2.shared_secret(), b"data", None, &sig).is_err());
+}
+
+#[test]
+fn signature_fails_with_tampered_payload() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+    let ctx = recipient.begin();
+
+    let sig = compute_signature(ctx.shared_secret(), b"original", None);
+    assert!(verify_signature(ctx.shared_secret(), b"tampered", None, &sig).is_err());
+}
+
+#[test]
+fn signature_fails_with_tampered_headers() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+    let ctx = recipient.begin();
+
+    let sig = compute_signature(ctx.shared_secret(), b"data", Some("original"));
+    assert!(verify_signature(ctx.shared_secret(), b"data", Some("tampered"), &sig).is_err());
+}
+
+#[test]
+fn signature_with_none_headers_differs_from_some() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+    let ctx = recipient.begin();
+
+    let sig_none = compute_signature(ctx.shared_secret(), b"data", None);
+    let sig_some = compute_signature(ctx.shared_secret(), b"data", Some("headers"));
+    assert_ne!(sig_none, sig_some);
+}
+
+#[test]
+fn request_builder_includes_signature() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+    let built = recipient
+        .request_builder()
+        .payload(b"test".to_vec())
+        .build()
+        .unwrap();
+
+    assert!(built.headers.get("x-signature").is_some());
+    assert!(built.headers.get("x-ephemeral-pub-key").is_some());
+}
+
+#[test]
+fn request_builder_signature_verifies() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+    let built = recipient
+        .request_builder()
+        .encrypted_header("authorization", "Bearer tok")
+        .encrypted_payload(b"signed data".to_vec())
+        .build()
+        .unwrap();
+
+    let shared_key = keypair.derive_shared_key(&built.context.ephemeral_pub_bytes());
+    let sig_value = built.headers.get("x-signature").unwrap();
+    let signature = STANDARD.decode(sig_value.as_str().as_bytes()).unwrap();
+    let enc_hdr_val = built
+        .headers
+        .get("x-encrypted-headers")
+        .map(|value| value.as_str());
+    verify_signature(&shared_key, &built.payload, enc_hdr_val, &signature)
+        .expect("signature should verify");
+}
+
+#[test]
+fn request_builder_no_client_errors() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+    let builder = recipient.request_builder().payload(b"data".to_vec());
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let err = rt.block_on(builder.publish("test.subject")).unwrap_err();
+    assert!(matches!(err, EncryptionError::NoClient));
 }

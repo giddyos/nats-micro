@@ -24,7 +24,7 @@ pub use auth::{Auth, AuthConfig, AuthError};
 pub use consumer::{ConsumerDefinition, ConsumerHandlerFn};
 pub use error::{IntoNatsError, NatsError, NatsErrorResponse};
 pub use extractors::{
-    FromPayload, FromRequest, FromSubjectParam, Json, Payload, Proto, RequestId, State,
+    FromPayload, FromRequest, FromSubjectParam, Json, Payload, Proto, RequestId, State, Subject,
     SubjectParam,
 };
 pub use handler::{HandlerFn, RequestContext};
@@ -48,6 +48,17 @@ pub use encryption::{
 
 pub use bytes::Bytes;
 pub use nats_micro_macros::{service, service_error, service_handlers};
+
+#[doc(hidden)]
+pub mod __test_support {
+    #[cfg(feature = "encryption")]
+    pub fn prepare_request_for_dispatch_with_state(
+        state: &crate::StateMap,
+        req: crate::NatsRequest,
+    ) -> Result<(crate::NatsRequest, Option<[u8; 32]>), crate::NatsErrorResponse> {
+        crate::app::NatsApp::prepare_request_for_dispatch_with_state(state, req)
+    }
+}
 
 #[doc(hidden)]
 pub mod __macros {

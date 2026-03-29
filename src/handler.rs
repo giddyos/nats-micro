@@ -77,6 +77,13 @@ impl RequestContext {
         next.current_param_name = Some(name.into());
         next
     }
+
+    #[cfg(feature = "encryption")]
+    #[doc(hidden)]
+    pub fn __with_ephemeral_pub(mut self, ephemeral_pub: Option<[u8; 32]>) -> Self {
+        self.ephemeral_pub = ephemeral_pub;
+        self
+    }
 }
 
 pub trait Handler<Args>: Send + Sync + 'static {
