@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use async_nats::HeaderMap;
 use nats_micro::{
-    __test_support, AuthConfig, AuthError, BuiltRequest, Encrypted, IntoNatsResponse, NatsRequest,
-    RequestContext, ServiceKeyPair, ServiceRecipient, StateMap,
+    __test_support, AuthConfig, AuthError, BuiltRequest, Encrypted, FromRequest, Headers,
+    IntoNatsResponse, NatsRequest, RequestContext, ServiceKeyPair, ServiceRecipient, StateMap,
 };
 
 fn state_with_keypair(keypair: ServiceKeyPair) -> StateMap {
@@ -16,7 +16,7 @@ fn request_with_headers(headers: HeaderMap, payload: &[u8]) -> NatsRequest {
     NatsRequest {
         subject: "secure.demo".to_string(),
         payload: payload.to_vec().into(),
-        headers,
+        headers: headers.into(),
         reply: Some("reply.subject".to_string()),
         request_id: "req-header-only".to_string(),
     }
@@ -36,11 +36,12 @@ fn prepare_request_for_dispatch_decrypts_header_only_requests() {
         .expect("build request");
 
     let eph_pub_bytes = built.context.ephemeral_pub_bytes();
-    let (prepared, ephemeral_pub) = __test_support::prepare_request_for_dispatch_with_state(
-        &state_with_keypair(keypair),
-        request_with_headers(built.headers, &built.payload),
-    )
-    .expect("header-only request decrypts");
+    let (prepared, ephemeral_pub) =
+        __test_support::prepare_request_for_dispatch_with_state(
+            &state_with_keypair(keypair),
+            request_with_headers(built.headers, &built.payload),
+        )
+        .expect("header-only request decrypts");
 
     assert_eq!(prepared.payload.as_ref(), b"plain payload");
     assert_eq!(ephemeral_pub, Some(eph_pub_bytes));
@@ -121,11 +122,12 @@ fn header_only_encryption_can_drive_encrypted_response() {
         .expect("build request");
 
     let state = state_with_keypair(keypair);
-    let (prepared, ephemeral_pub) = __test_support::prepare_request_for_dispatch_with_state(
-        &state,
-        request_with_headers(headers, &payload),
-    )
-    .expect("header-only request decrypts");
+    let (prepared, ephemeral_pub) =
+        __test_support::prepare_request_for_dispatch_with_state(
+            &state,
+            request_with_headers(headers, &payload),
+        )
+        .expect("header-only request decrypts");
 
     let ctx = RequestContext::new(prepared, state, None, None).__with_ephemeral_pub(ephemeral_pub);
 
@@ -240,7 +242,8 @@ fn plain_request_without_encryption_passes_through() {
         h
     };
 
-    let (prepared, ephemeral_pub) = __test_support::prepare_request_for_dispatch_with_state(
+    let (prepared, ephemeral_pub) =
+        __test_support::prepare_request_for_dispatch_with_state(
         &state_with_keypair(keypair),
         request_with_headers(headers, b"plain payload"),
     )
@@ -255,6 +258,63 @@ fn plain_request_without_encryption_passes_through() {
             .map(|value| value.as_str()),
         Some("Bearer tok")
     );
+}
+
+#[test]
+fn headers_extractor_tracks_encrypted_precedence() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+    let built = recipient
+        .request_builder()
+        .header("x-request-id", "req-header-only")
+        .header("Authorization", "Bearer plaintext")
+        .header("x-plain", "plain-value")
+        .encrypted_header("authorization", "Bearer encrypted")
+        .encrypted_header("x-secure", "secure-value")
+        .payload(b"plain payload".to_vec())
+        .build()
+        .expect("build request");
+
+    let state = state_with_keypair(keypair);
+    let (prepared, ephemeral_pub) =
+        __test_support::prepare_request_for_dispatch_with_state(
+            &state,
+            request_with_headers(built.headers, &built.payload),
+        )
+        .expect("request decrypts");
+
+    assert_eq!(
+        prepared
+            .headers
+            .get("authorization")
+            .map(|value| value.as_str()),
+        Some("Bearer encrypted")
+    );
+
+    let ctx = RequestContext::new(prepared, state, None, None).__with_ephemeral_pub(ephemeral_pub);
+    let headers = Headers::from_request(&ctx).expect("headers extractor should work");
+
+    let authorization = headers
+        .iter()
+        .find(|header| header.key.eq_ignore_ascii_case("authorization"))
+        .expect("authorization header present");
+    assert_eq!(authorization.value, "Bearer encrypted");
+    assert!(authorization.was_encrypted);
+
+    let secure = headers
+        .iter()
+        .find(|header| header.key.eq_ignore_ascii_case("x-secure"))
+        .expect("x-secure header present");
+    assert_eq!(secure.value, "secure-value");
+    assert!(secure.was_encrypted);
+
+    let plain = headers
+        .iter()
+        .find(|header| header.key.eq_ignore_ascii_case("x-plain"))
+        .expect("x-plain header present");
+    assert_eq!(plain.value, "plain-value");
+    assert!(!plain.was_encrypted);
+
 }
 
 #[test]

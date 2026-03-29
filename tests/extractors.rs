@@ -1,8 +1,8 @@
 use async_nats::HeaderMap;
 use bytes::Bytes;
 use nats_micro::{
-    FromPayload, FromRequest, FromSubjectParam, NatsRequest, Proto, RequestContext, StateMap,
-    Subject, SubjectParam,
+    FromPayload, FromRequest, FromSubjectParam, Headers, NatsRequest, Proto, RequestContext,
+    StateMap, Subject, SubjectParam,
 };
 use prost::Message;
 
@@ -19,7 +19,7 @@ fn request_context(payload: Vec<u8>) -> RequestContext {
         NatsRequest {
             subject: "proto.example".to_string(),
             payload: Bytes::from(payload),
-            headers: HeaderMap::new(),
+            headers: HeaderMap::new().into(),
             reply: None,
             request_id: "req-proto-1".to_string(),
         },
@@ -34,7 +34,7 @@ fn subject_param_context(subject: &str, template: &str, param_name: &str) -> Req
         NatsRequest {
             subject: subject.to_string(),
             payload: Bytes::new(),
-            headers: HeaderMap::new(),
+            headers: HeaderMap::new().into(),
             reply: None,
             request_id: "req-subject-1".to_string(),
         },
@@ -123,4 +123,22 @@ fn subject_extractor_works() {
     let ctx = request_context(vec![]);
     let subject = Subject::from_request(&ctx).expect("subject extractor should work");
     assert_eq!(subject.0, "proto.example");
+}
+
+#[test]
+fn headers_extractor_returns_plaintext_headers() {
+    let mut ctx = request_context(vec![]);
+    ctx.request.headers.insert("x-request-id", "req-proto-1");
+    ctx.request.headers.append("x-role", "admin");
+    ctx.request.headers.append("x-role", "writer");
+
+    let headers = Headers::from_request(&ctx).expect("headers extractor should work");
+
+    assert_eq!(headers.len(), 3);
+    assert_eq!(headers[0].key, "x-request-id");
+    assert_eq!(headers[0].value, "req-proto-1");
+    assert_eq!(headers[1].key, "x-role");
+    assert_eq!(headers[1].value, "admin");
+    assert_eq!(headers[2].key, "x-role");
+    assert_eq!(headers[2].value, "writer");
 }
