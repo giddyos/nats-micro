@@ -4,6 +4,7 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
+        Mutex,
     },
     time::Duration,
 };
@@ -12,7 +13,8 @@ use anyhow::{Context, Result};
 use futures::StreamExt;
 use nats_micro::{
     ConsumerDefinition, EndpointDefinition, NatsApp, NatsErrorResponse, Payload, ServiceDefinition,
-    ServiceMetadata, State, WorkerFailurePolicy, async_nats, service, service_handlers,
+    ServiceMetadata, ShutdownSignal, State, WorkerFailurePolicy, async_nats, service,
+    service_handlers,
 };
 use tokio::{
     sync::{Notify, oneshot},
@@ -67,6 +69,41 @@ impl ConsumerProbe {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ShutdownObservation {
+    requested: bool,
+    drain_timeout: Option<Duration>,
+    deadline_present: bool,
+}
+
+#[derive(Clone, Default)]
+struct ShutdownProbe {
+    started: Arc<Notify>,
+    observation: Arc<Mutex<Option<ShutdownObservation>>>,
+}
+
+impl ShutdownProbe {
+    fn mark_started(&self) {
+        self.started.notify_waiters();
+    }
+
+    fn record(&self, shutdown: &ShutdownSignal) {
+        *self.observation.lock().unwrap() = Some(ShutdownObservation {
+            requested: shutdown.is_requested(),
+            drain_timeout: shutdown.drain_timeout(),
+            deadline_present: shutdown.deadline().is_some(),
+        });
+    }
+
+    fn observation(&self) -> ShutdownObservation {
+        self.observation
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("shutdown observation should be recorded")
+    }
+}
+
 #[service(name = "live-consumer-flow")]
 struct LiveConsumerFlowService;
 
@@ -87,6 +124,74 @@ impl LiveConsumerFlowService {
         probe.record();
         Ok(())
     }
+}
+
+#[service(name = "live-shutdown-endpoint")]
+struct LiveShutdownEndpointService;
+
+#[service_handlers]
+impl LiveShutdownEndpointService {
+    #[endpoint(subject = "status", group = "live")]
+    async fn status() -> Result<&'static str, NatsErrorResponse> {
+        Ok("ok")
+    }
+
+    #[endpoint(subject = "cleanup", group = "live")]
+    async fn cleanup(
+        mut shutdown: ShutdownSignal,
+        probe: State<ShutdownProbe>,
+    ) -> Result<&'static str, NatsErrorResponse> {
+        probe.mark_started();
+        shutdown.wait_for_shutdown().await;
+        probe.record(&shutdown);
+        Ok("cleaned")
+    }
+}
+
+#[service(name = "live-shutdown-consumer")]
+struct LiveShutdownConsumerService;
+
+#[service_handlers]
+impl LiveShutdownConsumerService {
+    #[endpoint(subject = "status", group = "live")]
+    async fn status() -> Result<&'static str, NatsErrorResponse> {
+        Ok("ok")
+    }
+
+    #[consumer(
+        stream = "LIVE_SHUTDOWN_STREAM",
+        durable = "LIVE_SHUTDOWN_DURABLE",
+        config = nats_micro::ConsumerConfig {
+            ack_wait: std::time::Duration::from_secs(1),
+            ..Default::default()
+        }
+    )]
+    async fn jobs(
+        _payload: Payload<String>,
+        mut shutdown: ShutdownSignal,
+        probe: State<ShutdownProbe>,
+    ) -> Result<(), NatsErrorResponse> {
+        probe.mark_started();
+        shutdown.wait_for_shutdown().await;
+        probe.record(&shutdown);
+        Ok(())
+    }
+}
+
+#[test]
+fn macro_generated_handlers_only_enable_shutdown_support_when_needed() {
+    assert!(!LiveQueueAlphaService::jobs_endpoint()
+        .handler
+        .requires_shutdown_signal());
+    assert!(!LiveConsumerFlowService::jobs_consumer()
+        .handler
+        .requires_shutdown_signal());
+    assert!(LiveShutdownEndpointService::cleanup_endpoint()
+        .handler
+        .requires_shutdown_signal());
+    assert!(LiveShutdownConsumerService::jobs_consumer()
+        .handler
+        .requires_shutdown_signal());
 }
 
 #[tokio::test]
@@ -237,6 +342,160 @@ async fn live_jetstream_consumer_processes_messages() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn live_endpoint_handlers_observe_shutdown_signal_and_timeout() -> Result<()> {
+    let Some(client) = connect_live_nats().await else {
+        return Ok(());
+    };
+
+    let probe = ShutdownProbe::default();
+    let unique = unique_name("shutdown-endpoint");
+    let group = format!("live.{unique}");
+    let status_subject = format!("{group}.status");
+    let cleanup_subject = format!("{group}.cleanup");
+
+    let mut status_endpoint = LiveShutdownEndpointService::status_endpoint();
+    status_endpoint.group = group.clone();
+
+    let mut cleanup_endpoint = LiveShutdownEndpointService::cleanup_endpoint();
+    cleanup_endpoint.group = group.clone();
+
+    let (shutdown_tx, app_handle) = spawn_app_until_shutdown(
+        NatsApp::new(client.clone())
+            .state(probe.clone())
+            .with_shutdown_drain_timeout(Duration::from_secs(2))
+            .service_def(service_definition(
+                unique_name("shutdown-endpoint-service"),
+                vec![status_endpoint, cleanup_endpoint],
+                Vec::new(),
+            )),
+    );
+
+    request_expected_replies(&client, &status_subject, 1).await?;
+
+    let request_client = client.clone();
+    let request_handle = tokio::spawn(async move {
+        let message = timeout(
+            Duration::from_secs(5),
+            request_client.request(cleanup_subject, "".into()),
+        )
+        .await
+        .context("timed out waiting for cleanup endpoint response")?
+        .context("cleanup endpoint request failed")?;
+
+        String::from_utf8(message.payload.to_vec()).context("cleanup reply was not valid UTF-8")
+    });
+
+    timeout(Duration::from_secs(5), probe.started.notified())
+        .await
+        .context("timed out waiting for endpoint handler to start")?;
+
+    let _ = shutdown_tx.send(());
+
+    let reply = request_handle
+        .await
+        .context("cleanup request task failed")??;
+    let app_result = timeout(Duration::from_secs(5), app_handle)
+        .await
+        .context("timed out waiting for endpoint app shutdown")?
+        .context("endpoint app task failed")?;
+
+    assert_eq!(reply, "cleaned");
+    assert_eq!(
+        probe.observation(),
+        ShutdownObservation {
+            requested: true,
+            drain_timeout: Some(Duration::from_secs(2)),
+            deadline_present: true,
+        }
+    );
+    app_result?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn live_consumer_handlers_observe_shutdown_signal_and_timeout() -> Result<()> {
+    let Some(client) = connect_live_nats().await else {
+        return Ok(());
+    };
+
+    let jetstream = async_nats::jetstream::new(client.clone());
+    let stream_name = unique_name("LIVE_SHUTDOWN_STREAM").to_uppercase();
+    let subject = format!("live.{}.shutdown", unique_name("consumer-shutdown-subject"));
+    let durable = unique_name("shutdown-durable");
+
+    let _stream = match jetstream
+        .get_or_create_stream(async_nats::jetstream::stream::Config {
+            name: stream_name.clone(),
+            subjects: vec![subject.clone()],
+            ..Default::default()
+        })
+        .await
+    {
+        Ok(stream) => stream,
+        Err(err) => {
+            eprintln!("skipping live shutdown consumer test: {err}");
+            return Ok(());
+        }
+    };
+
+    let probe = ShutdownProbe::default();
+    let unique = unique_name("shutdown-consumer");
+    let group = format!("live.{unique}");
+    let status_subject = format!("{group}.status");
+
+    let mut status_endpoint = LiveShutdownConsumerService::status_endpoint();
+    status_endpoint.group = group;
+
+    let mut consumer = LiveShutdownConsumerService::jobs_consumer();
+    consumer.stream = stream_name.clone();
+    consumer.durable = durable;
+    consumer.config.filter_subject = subject.clone();
+
+    let (shutdown_tx, app_handle) = spawn_app_until_shutdown(
+        NatsApp::new(client.clone())
+            .state(probe.clone())
+            .with_shutdown_drain_timeout(Duration::from_secs(2))
+            .service_def(service_definition(
+                unique_name("shutdown-consumer-service"),
+                vec![status_endpoint],
+                vec![consumer],
+            )),
+    );
+
+    request_expected_replies(&client, &status_subject, 1).await?;
+
+    jetstream
+        .publish(subject.clone(), "hello".into())
+        .await
+        .context("failed to publish shutdown consumer message")?
+        .await
+        .context("failed to await shutdown consumer publish ack")?;
+
+    timeout(Duration::from_secs(5), probe.started.notified())
+        .await
+        .context("timed out waiting for consumer handler to start")?;
+
+    let _ = shutdown_tx.send(());
+
+    let app_result = timeout(Duration::from_secs(5), app_handle)
+        .await
+        .context("timed out waiting for shutdown consumer app")?
+        .context("shutdown consumer app task failed")?;
+    let _ = jetstream.delete_stream(&stream_name).await;
+
+    assert_eq!(
+        probe.observation(),
+        ShutdownObservation {
+            requested: true,
+            drain_timeout: Some(Duration::from_secs(2)),
+            deadline_present: true,
+        }
+    );
+    app_result?;
+    Ok(())
+}
+
 async fn connect_live_nats() -> Option<async_nats::Client> {
     let nats_url = std::env::var("NATS_URL")
         .unwrap_or_else(|_| "nats://127.0.0.1:4222".to_string());
@@ -248,6 +507,129 @@ async fn connect_live_nats() -> Option<async_nats::Client> {
             None
         }
     }
+}
+
+#[tokio::test]
+async fn live_consumer_promotes_concurrency_limit_to_max_ack_pending() -> Result<()> {
+    let Some(client) = connect_live_nats().await else {
+        return Ok(());
+    };
+
+    let jetstream = async_nats::jetstream::new(client.clone());
+    let stream_name = unique_name("PROMOTE_LIVE_STREAM").to_uppercase();
+    let subject = format!("live.{}.promote", unique_name("consumer-promote-subject"));
+    let durable = unique_name("promote-durable");
+
+    let _stream = match jetstream
+        .get_or_create_stream(async_nats::jetstream::stream::Config {
+            name: stream_name.clone(),
+            subjects: vec![subject.clone()],
+            ..Default::default()
+        })
+        .await
+    {
+        Ok(stream) => stream,
+        Err(err) => {
+            eprintln!("skipping live promote test: {err}");
+            return Ok(());
+        }
+    };
+
+    let probe = ConsumerProbe::default();
+    let mut consumer = LiveConsumerFlowService::jobs_consumer();
+    consumer.stream = stream_name.clone();
+    consumer.durable = durable.clone();
+    consumer.config.filter_subject = subject.clone();
+    // set server consumer max_ack_pending higher than the app default to exercise promotion
+    consumer.config.max_ack_pending = 5;
+
+    let (shutdown_tx, app_handle) = spawn_app_until_shutdown(
+        NatsApp::new(client.clone())
+            .with_default_concurrency_limit(1)
+            .state(probe.clone())
+            .service_def(consumer_service(unique_name("consumer-service"), consumer)),
+    );
+
+    let publish_result = async {
+        jetstream
+            .publish(subject.clone(), "hello".into())
+            .await
+            .context("failed to publish live JetStream test message")?
+            .await
+            .context("failed to await publish ack")?;
+
+        timeout(Duration::from_secs(5), probe.processed.notified())
+            .await
+            .context("timed out waiting for live consumer to process message")?;
+
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+
+    let _ = shutdown_tx.send(());
+    let app_result = timeout(Duration::from_secs(5), app_handle)
+        .await
+        .context("timed out waiting for consumer app shutdown")?
+        .context("consumer app task failed")?;
+    let _ = jetstream.delete_stream(&stream_name).await;
+
+    publish_result?;
+    app_result?;
+    assert_eq!(probe.hits.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn live_consumer_configured_concurrency_exceeding_max_ack_pending_errors() -> Result<()> {
+    let Some(client) = connect_live_nats().await else {
+        return Ok(());
+    };
+
+    let jetstream = async_nats::jetstream::new(client.clone());
+    let stream_name = unique_name("BAD_LIVE_STREAM").to_uppercase();
+    let subject = format!("live.{}.bad", unique_name("consumer-bad-subject"));
+    let durable = unique_name("bad-durable");
+
+    let _stream = match jetstream
+        .get_or_create_stream(async_nats::jetstream::stream::Config {
+            name: stream_name.clone(),
+            subjects: vec![subject.clone()],
+            ..Default::default()
+        })
+        .await
+    {
+        Ok(stream) => stream,
+        Err(err) => {
+            eprintln!("skipping live bad-config test: {err}");
+            return Ok(());
+        }
+    };
+
+    let mut consumer = LiveConsumerFlowService::jobs_consumer();
+    consumer.stream = stream_name.clone();
+    consumer.durable = durable.clone();
+    consumer.config.filter_subject = subject.clone();
+    // set a small server max_ack_pending and an explicit concurrency_limit larger than it
+    consumer.config.max_ack_pending = 2;
+    consumer.concurrency_limit = Some(5);
+
+    let (_shutdown_tx, app_handle) = spawn_app_until_shutdown(
+        NatsApp::new(client.clone()).service_def(consumer_service(unique_name("consumer-service"), consumer)),
+    );
+
+    let app_result = timeout(Duration::from_secs(5), app_handle)
+        .await
+        .context("timed out waiting for consumer app")?
+        .context("consumer app task failed")?;
+
+    // Should have errored due to invalid configured concurrency limit
+    let err = app_result
+        .expect_err("app should have errored due to invalid configured concurrency limit");
+    let err_str = err.to_string();
+    assert!(err_str.contains("invalid configured concurrency limit"), "unexpected error: {err_str}");
+
+    let _ = jetstream.delete_stream(&stream_name).await;
+    Ok(())
 }
 
 fn spawn_app_until_shutdown(app: NatsApp) -> (oneshot::Sender<()>, JoinHandle<Result<()>>) {
@@ -263,20 +645,22 @@ fn spawn_app_until_shutdown(app: NatsApp) -> (oneshot::Sender<()>, JoinHandle<Re
 }
 
 fn endpoint_service(name: String, endpoint: EndpointDefinition) -> ServiceDefinition {
-    ServiceDefinition {
-        metadata: ServiceMetadata::new(name, "0.1.0", "", None),
-        endpoints: vec![endpoint],
-        consumers: Vec::new(),
-        endpoint_info: Vec::new(),
-        consumer_info: Vec::new(),
-    }
+    service_definition(name, vec![endpoint], Vec::new())
 }
 
 fn consumer_service(name: String, consumer: ConsumerDefinition) -> ServiceDefinition {
+    service_definition(name, Vec::new(), vec![consumer])
+}
+
+fn service_definition(
+    name: String,
+    endpoints: Vec<EndpointDefinition>,
+    consumers: Vec<ConsumerDefinition>,
+) -> ServiceDefinition {
     ServiceDefinition {
         metadata: ServiceMetadata::new(name, "0.1.0", "", None),
-        endpoints: Vec::new(),
-        consumers: vec![consumer],
+        endpoints,
+        consumers,
         endpoint_info: Vec::new(),
         consumer_info: Vec::new(),
     }

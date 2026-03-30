@@ -2,7 +2,7 @@ use async_nats::HeaderMap;
 use bytes::Bytes;
 use nats_micro::{
     Auth, AuthError, FromAuthRequest, FromPayload, FromRequest, FromSubjectParam, Headers,
-    NatsRequest, Proto, RequestContext, StateMap, Subject, SubjectParam,
+    NatsRequest, Proto, RequestContext, ShutdownSignal, StateMap, Subject, SubjectParam,
 };
 use prost::Message;
 
@@ -171,6 +171,20 @@ async fn subject_extractor_works() {
         .await
         .expect("subject extractor should work");
     assert_eq!(subject.0, "proto.example");
+}
+
+#[tokio::test]
+async fn shutdown_signal_extractor_requires_runtime_wiring() {
+    let ctx = request_context(vec![]);
+
+    let err = match ShutdownSignal::from_request(&ctx).await {
+        Ok(_) => panic!("shutdown extractor should fail without runtime wiring"),
+        Err(err) => err,
+    };
+
+    assert_eq!(err.code, 500);
+    assert_eq!(err.error, "SHUTDOWN_SIGNAL_UNAVAILABLE");
+    assert_eq!(err.request_id, "req-proto-1");
 }
 
 #[tokio::test]
