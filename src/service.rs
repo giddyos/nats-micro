@@ -46,6 +46,7 @@ pub struct EndpointDefinition {
     pub subject_template: Option<String>,
     pub queue_group: Option<String>,
     pub auth_required: bool,
+    pub concurrency_limit: Option<u64>,
     pub handler: HandlerFn,
 }
 
@@ -101,6 +102,7 @@ pub struct EndpointInfo {
     pub group: String,
     pub queue_group: Option<String>,
     pub auth_required: bool,
+    pub concurrency_limit: Option<u64>,
     pub params: Vec<ParamInfo>,
     pub payload_meta: Option<PayloadMeta>,
     pub response_meta: ResponseMeta,
@@ -112,6 +114,7 @@ pub struct ConsumerInfo {
     pub stream: String,
     pub durable: String,
     pub auth_required: bool,
+    pub concurrency_limit: Option<u64>,
     pub params: Vec<ParamInfo>,
 }
 

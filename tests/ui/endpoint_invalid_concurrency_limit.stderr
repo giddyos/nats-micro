@@ -1,0 +1,5 @@
+error: Unknown value: `fast`
+ --> tests/ui/endpoint_invalid_concurrency_limit.rs:8:56
+  |
+8 |     #[endpoint(subject = "status", concurrency_limit = "fast")]
+  |                                                        ^^^^^^

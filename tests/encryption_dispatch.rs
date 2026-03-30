@@ -36,12 +36,11 @@ fn prepare_request_for_dispatch_decrypts_header_only_requests() {
         .expect("build request");
 
     let eph_pub_bytes = built.context.ephemeral_pub_bytes();
-    let (prepared, ephemeral_pub) =
-        __test_support::prepare_request_for_dispatch_with_state(
-            &state_with_keypair(keypair),
-            request_with_headers(built.headers, &built.payload),
-        )
-        .expect("header-only request decrypts");
+    let (prepared, ephemeral_pub) = __test_support::prepare_request_for_dispatch_with_state(
+        &state_with_keypair(keypair),
+        request_with_headers(built.headers, &built.payload),
+    )
+    .expect("header-only request decrypts");
 
     assert_eq!(prepared.payload.as_ref(), b"plain payload");
     assert_eq!(ephemeral_pub, Some(eph_pub_bytes));
@@ -122,12 +121,11 @@ fn header_only_encryption_can_drive_encrypted_response() {
         .expect("build request");
 
     let state = state_with_keypair(keypair);
-    let (prepared, ephemeral_pub) =
-        __test_support::prepare_request_for_dispatch_with_state(
-            &state,
-            request_with_headers(headers, &payload),
-        )
-        .expect("header-only request decrypts");
+    let (prepared, ephemeral_pub) = __test_support::prepare_request_for_dispatch_with_state(
+        &state,
+        request_with_headers(headers, &payload),
+    )
+    .expect("header-only request decrypts");
 
     let ctx = RequestContext::new(prepared, state, None, None).__with_ephemeral_pub(ephemeral_pub);
 
@@ -242,8 +240,7 @@ fn plain_request_without_encryption_passes_through() {
         h
     };
 
-    let (prepared, ephemeral_pub) =
-        __test_support::prepare_request_for_dispatch_with_state(
+    let (prepared, ephemeral_pub) = __test_support::prepare_request_for_dispatch_with_state(
         &state_with_keypair(keypair),
         request_with_headers(headers, b"plain payload"),
     )
@@ -276,12 +273,11 @@ fn headers_extractor_tracks_encrypted_precedence() {
         .expect("build request");
 
     let state = state_with_keypair(keypair);
-    let (prepared, ephemeral_pub) =
-        __test_support::prepare_request_for_dispatch_with_state(
-            &state,
-            request_with_headers(built.headers, &built.payload),
-        )
-        .expect("request decrypts");
+    let (prepared, ephemeral_pub) = __test_support::prepare_request_for_dispatch_with_state(
+        &state,
+        request_with_headers(built.headers, &built.payload),
+    )
+    .expect("request decrypts");
 
     assert_eq!(
         prepared
@@ -314,7 +310,6 @@ fn headers_extractor_tracks_encrypted_precedence() {
         .expect("x-plain header present");
     assert_eq!(plain.value, "plain-value");
     assert!(!plain.was_encrypted);
-
 }
 
 #[test]

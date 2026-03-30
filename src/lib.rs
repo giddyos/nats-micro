@@ -93,20 +93,20 @@ pub mod __macros {
     pub use inventory;
 
     // Error helpers
+    pub use crate::error::deserialize_error_response;
     pub use crate::error::deserialize_error_response_payload;
     pub use crate::error::invalid_response;
-    pub use crate::error::deserialize_error_response;
     pub use crate::error::try_deserialize_error_response;
 
     // Response / client helpers
-    pub use crate::response::response_success_from_headers;
-    pub use crate::response::deserialize_response;
     pub use crate::response::deserialize_proto_response;
+    pub use crate::response::deserialize_response;
     pub use crate::response::deserialize_unit_response;
-    pub use crate::response::raw_response_to_string;
     pub use crate::response::raw_response_to_bytes;
-    pub use crate::response::serialize_serde_payload;
+    pub use crate::response::raw_response_to_string;
+    pub use crate::response::response_success_from_headers;
     pub use crate::response::serialize_proto_payload;
+    pub use crate::response::serialize_serde_payload;
 
     #[cfg(feature = "encryption")]
     pub use crate::response::decrypt_client_response;

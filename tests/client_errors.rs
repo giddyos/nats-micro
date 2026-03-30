@@ -1,7 +1,7 @@
 use nats_micro::{
-    __test_support::success_headers,
-    ClientError, ClientTransportError, FromNatsErrorResponse, IntoNatsError, NatsErrorResponse,
-    ServiceErrorMatch, ServiceKeyPair, ServiceRecipient, service_error,
+    __test_support::success_headers, ClientError, ClientTransportError, FromNatsErrorResponse,
+    IntoNatsError, NatsErrorResponse, ServiceErrorMatch, ServiceKeyPair, ServiceRecipient,
+    service_error,
 };
 use prost::Message;
 use thiserror::Error;

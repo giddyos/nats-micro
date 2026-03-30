@@ -7,6 +7,7 @@ pub struct ConsumerDefinition {
     pub stream: String,
     pub durable: String,
     pub auth_required: bool,
+    pub concurrency_limit: Option<u64>,
     pub config: push::Config,
     pub handler: HandlerFn,
 }
