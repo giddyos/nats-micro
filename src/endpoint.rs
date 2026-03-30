@@ -12,6 +12,7 @@ pub(crate) struct EndpointArgs {
     pub queue_group: Option<String>,
     #[darling(default)]
     pub auth: bool,
+    pub concurrency_limit: Option<u64>,
 }
 
 pub fn expand_endpoint(args: EndpointArgs, func: ItemFn) -> TokenStream {

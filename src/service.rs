@@ -235,6 +235,7 @@ fn process_endpoint_method(
     let subject = &args.subject;
     let group = args.group.as_deref().unwrap_or("");
     let auth_required = args.auth;
+    let concurrency_limit = args.concurrency_limit;
     let fn_name = &method.sig.ident;
 
     let (nats_subject, template_params) = parse_subject_template(subject, fn_name)?;
@@ -248,6 +249,10 @@ fn process_endpoint_method(
 
     let queue_group = match &args.queue_group {
         Some(qg) => quote! { Some(#qg.to_string()) },
+        None => quote! { None },
+    };
+    let concurrency_limit_tokens = match concurrency_limit {
+        Some(limit) => quote! { Some(#limit) },
         None => quote! { None },
     };
 
@@ -312,6 +317,7 @@ fn process_endpoint_method(
                     subject_template: #subject_template,
                     queue_group: #queue_group,
                     auth_required: #auth_required,
+                    concurrency_limit: #concurrency_limit_tokens,
                     handler: #handler,
                 }
             }
@@ -330,6 +336,7 @@ fn process_endpoint_method(
                 group: #group.to_string(),
                 queue_group: #queue_group,
                 auth_required: #auth_required,
+                concurrency_limit: #concurrency_limit_tokens,
                 params: vec![#(#param_infos),*],
                 payload_meta: #payload_meta_tokens,
                 response_meta: #response_meta_tokens,
@@ -362,6 +369,11 @@ fn process_consumer_method(
     let stream = args.stream.as_deref().unwrap_or("DEFAULT");
     let durable = args.durable.unwrap_or_else(|| fn_name.to_string());
     let auth_required = args.auth;
+    let concurrency_limit = args.concurrency_limit;
+    let concurrency_limit_tokens = match concurrency_limit {
+        Some(limit) => quote! { Some(#limit) },
+        None => quote! { None },
+    };
 
     let config_tokens = match args.config {
         Some(config) => {
@@ -392,6 +404,7 @@ fn process_consumer_method(
                     stream: #stream.to_string(),
                     durable: #durable.to_string(),
                     auth_required: #auth_required,
+                    concurrency_limit: #concurrency_limit_tokens,
                     config: #config_tokens,
                     handler: #handler,
                 }
@@ -409,6 +422,7 @@ fn process_consumer_method(
                 stream: #stream.to_string(),
                 durable: #durable.to_string(),
                 auth_required: #auth_required,
+                concurrency_limit: #concurrency_limit_tokens,
                 params: vec![#(#param_infos),*],
             }
         },

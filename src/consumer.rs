@@ -17,6 +17,7 @@ pub(crate) struct ConsumerArgs {
     pub durable: Option<String>,
     #[darling(default)]
     pub auth: bool,
+    pub concurrency_limit: Option<u64>,
     pub config: Option<ConsumerConfigExpr>,
 }
 
