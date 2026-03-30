@@ -13,7 +13,12 @@ struct DemoUser {
 
 impl FromAuthRequest for DemoUser {
     async fn from_auth_request(ctx: &RequestContext) -> Result<Self, AuthError> {
-        match ctx.request.headers.get("authorization").map(|value| value.as_str()) {
+        match ctx
+            .request
+            .headers
+            .get("authorization")
+            .map(|value| value.as_str())
+        {
             Some("Bearer demo-token") => Ok(Self {
                 id: "demo-user".to_string(),
             }),
@@ -96,9 +101,10 @@ async fn prepare_request_for_dispatch_runs_before_auth_resolution() {
     )
     .expect("header-only request decrypts");
 
-    let user = Auth::<DemoUser>::from_request(&RequestContext::new(prepared, StateMap::new(), None))
-        .await
-        .expect("auth uses decrypted headers");
+    let user =
+        Auth::<DemoUser>::from_request(&RequestContext::new(prepared, StateMap::new(), None))
+            .await
+            .expect("auth uses decrypted headers");
 
     assert_eq!(user.id, "demo-user");
 }

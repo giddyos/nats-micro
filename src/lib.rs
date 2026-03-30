@@ -22,7 +22,7 @@ mod service;
 mod state;
 mod utils;
 
-pub use app::NatsApp;
+pub use app::{NatsApp, NatsAppConfig, WorkerFailurePolicy};
 pub use async_nats;
 pub use async_nats::jetstream::consumer::push::Config as ConsumerConfig;
 pub use auth::{Auth, AuthError, FromAuthRequest};

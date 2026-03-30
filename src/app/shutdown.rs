@@ -1,11 +1,20 @@
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{
+    any::Any,
+    future::Future,
+    panic::AssertUnwindSafe,
+    pin::Pin,
+    sync::Arc,
+    time::Duration,
+};
 
 use anyhow::Result;
+use futures::FutureExt;
 use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
+    time::Instant,
 };
-use tracing::error;
+use tracing::{error, warn};
 
 pub(super) type ShutdownHookFuture = Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>;
 pub(super) type ShutdownHook = Arc<dyn Fn() -> ShutdownHookFuture + Send + Sync>;
@@ -35,12 +44,8 @@ pub(super) struct LiveService {
 }
 
 impl LiveService {
-    pub(super) async fn shutdown(self) {
-        for worker in self.workers {
-            if let Err(err) = worker.await {
-                error!(error = %err, "worker task failed during shutdown");
-            }
-        }
+    pub(super) async fn shutdown(self, deadline: Option<Instant>) -> Result<()> {
+        wait_for_workers(self.workers, deadline).await
     }
 }
 
@@ -61,13 +66,78 @@ pub(super) fn spawn_supervised_worker<Fut>(
 {
     let label = label.into();
     workers.push(tokio::spawn(async move {
-        let exit = match tokio::spawn(worker).await {
+        let exit = match AssertUnwindSafe(worker).catch_unwind().await {
             Ok(Ok(())) => WorkerExit::completed(label),
             Ok(Err(err)) => WorkerExit::failed(label, err.to_string()),
-            Err(err) => WorkerExit::failed(label, format!("task panicked: {err}")),
+            Err(panic) => WorkerExit::failed(
+                label,
+                format!("task panicked: {}", panic_payload(panic)),
+            ),
         };
         let _ = worker_events.send(exit);
     }));
+}
+
+pub(super) fn shutdown_deadline(drain_timeout: Option<Duration>) -> Option<Instant> {
+    drain_timeout.map(|timeout| Instant::now() + timeout)
+}
+
+pub(super) async fn wait_for_workers(
+    workers: Vec<JoinHandle<()>>,
+    deadline: Option<Instant>,
+) -> Result<()> {
+    let mut timed_out_workers = 0usize;
+
+    for mut worker in workers {
+        match deadline {
+            Some(deadline) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    worker.abort();
+                    let _ = worker.await;
+                    timed_out_workers += 1;
+                    continue;
+                }
+
+                match tokio::time::timeout(remaining, &mut worker).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(err)) => {
+                        error!(error = %err, "worker task failed during shutdown");
+                    }
+                    Err(_) => {
+                        worker.abort();
+                        let _ = worker.await;
+                        timed_out_workers += 1;
+                    }
+                }
+            }
+            None => {
+                if let Err(err) = worker.await {
+                    error!(error = %err, "worker task failed during shutdown");
+                }
+            }
+        }
+    }
+
+    if timed_out_workers > 0 {
+        warn!(
+            timed_out_workers = timed_out_workers,
+            "timed out waiting for workers to drain; aborting remaining tasks"
+        );
+        anyhow::bail!("timed out draining {timed_out_workers} worker(s)");
+    }
+
+    Ok(())
+}
+
+fn panic_payload(panic: Box<dyn Any + Send>) -> String {
+    if let Some(message) = panic.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else if let Some(message) = panic.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "unknown panic payload".to_string()
+    }
 }
 
 pub(super) async fn run_shutdown_hook(shutdown_hook: Option<&ShutdownHook>) -> Result<()> {

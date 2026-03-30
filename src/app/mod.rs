@@ -1,3 +1,4 @@
+mod config;
 mod limits;
 mod prepare;
 mod shutdown;
@@ -14,7 +15,7 @@ use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
 };
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::{
     consumer::ConsumerDefinition, error::NatsErrorResponse, request::NatsRequest,
@@ -23,21 +24,24 @@ use crate::{
 
 use self::{
     limits::{
-        DEFAULT_CONCURRENCY_LIMIT, resolve_consumer_concurrency_limit,
+        resolve_consumer_concurrency_limit,
         resolve_endpoint_concurrency_limit, validate_consumer_concurrency_limit,
     },
     prepare::{PreparedRequest, prepare_request_for_dispatch_with_state},
     shutdown::{
-        LiveService, ShutdownHook, WorkerExit, run_shutdown_hook, spawn_supervised_worker,
+        LiveService, ShutdownHook, WorkerExit, run_shutdown_hook, shutdown_deadline,
+        spawn_supervised_worker,
     },
     workers::{run_consumer_worker, run_endpoint_worker},
 };
 
+pub use self::config::{NatsAppConfig, WorkerFailurePolicy};
 pub use self::workers::success_headers;
 
 #[derive(Clone)]
 pub struct NatsApp {
     client: async_nats::Client,
+    config: NatsAppConfig,
     state: StateMap,
     service_defs: Vec<ServiceDefinition>,
     shutdown_hook: Option<ShutdownHook>,
@@ -47,10 +51,36 @@ impl NatsApp {
     pub fn new(client: async_nats::Client) -> Self {
         Self {
             client,
+            config: NatsAppConfig::default(),
             state: StateMap::new(),
             service_defs: Vec::new(),
             shutdown_hook: None,
         }
+    }
+
+    pub fn with_config(mut self, config: NatsAppConfig) -> Self {
+        self.config = config;
+        self
+    }
+
+    pub fn with_default_concurrency_limit(mut self, limit: u64) -> Self {
+        self.config = self.config.with_default_concurrency_limit(limit);
+        self
+    }
+
+    pub fn with_shutdown_drain_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.config = self.config.with_shutdown_drain_timeout(timeout);
+        self
+    }
+
+    pub fn without_shutdown_drain_timeout(mut self) -> Self {
+        self.config = self.config.without_shutdown_drain_timeout();
+        self
+    }
+
+    pub fn with_worker_failure_policy(mut self, policy: WorkerFailurePolicy) -> Self {
+        self.config = self.config.with_worker_failure_policy(policy);
+        self
     }
 
     pub fn state<T>(mut self, value: T) -> Self
@@ -95,6 +125,8 @@ impl NatsApp {
     where
         Fut: Future<Output = Result<()>>,
     {
+        self.config.validate()?;
+
         if self.service_defs.is_empty() {
             anyhow::bail!(
                 "NatsApp requires at least one explicit service via .service(...) or .service_def(...)"
@@ -125,7 +157,7 @@ impl NatsApp {
                 Err(err) => {
                     let _ = shutdown_tx.send(true);
                     for live_service in live_services {
-                        live_service.shutdown().await;
+                        let _ = live_service.shutdown(None).await;
                     }
                     return Err(err);
                 }
@@ -141,17 +173,41 @@ impl NatsApp {
             "all services are running"
         );
 
-        let (shutdown_result, triggered_by_worker) = tokio::select! {
-            signal = shutdown_signal => (signal, false),
-            worker_exit = worker_events_rx.recv(), if worker_count > 0 => {
-                let result = match worker_exit {
-                    Some(worker_exit) => match worker_exit.error {
-                        Some(error) => Err(anyhow::anyhow!("worker `{}` failed: {error}", worker_exit.label)),
-                        None => Err(anyhow::anyhow!("worker `{}` exited unexpectedly", worker_exit.label)),
-                    },
-                    None => Err(anyhow::anyhow!("worker supervision channel closed unexpectedly")),
-                };
-                (result, true)
+        tokio::pin!(shutdown_signal);
+
+        let mut active_workers = worker_count;
+        let (shutdown_result, triggered_by_worker) = loop {
+            tokio::select! {
+                signal = &mut shutdown_signal => break (signal, false),
+                worker_exit = worker_events_rx.recv(), if active_workers > 0 => {
+                    let Some(worker_exit) = worker_exit else {
+                        break (
+                            Err(anyhow::anyhow!("worker supervision channel closed unexpectedly")),
+                            true,
+                        );
+                    };
+
+                    active_workers -= 1;
+                    let WorkerExit { label, error } = worker_exit;
+
+                    match self.config.worker_failure_policy() {
+                        WorkerFailurePolicy::ShutdownApp => {
+                            let result = match error {
+                                Some(error) => Err(anyhow::anyhow!("worker `{label}` failed: {error}")),
+                                None => Err(anyhow::anyhow!("worker `{label}` exited unexpectedly")),
+                            };
+                            break (result, true);
+                        }
+                        WorkerFailurePolicy::Ignore => match error {
+                            Some(error) => {
+                                warn!(worker = %label, error = %error, "worker exited unexpectedly; continuing due to configured failure policy");
+                            }
+                            None => {
+                                warn!(worker = %label, "worker exited unexpectedly; continuing due to configured failure policy");
+                            }
+                        },
+                    }
+                }
             }
         };
 
@@ -183,11 +239,18 @@ impl NatsApp {
             service_count = live_services.len(),
             "waiting for workers to drain"
         );
+        let drain_deadline = shutdown_deadline(self.config.shutdown_drain_timeout());
+        let mut worker_shutdown_result = Ok(());
         for live_service in live_services {
-            live_service.shutdown().await;
+            if let Err(err) = live_service.shutdown(drain_deadline).await
+                && worker_shutdown_result.is_ok()
+            {
+                worker_shutdown_result = Err(err);
+            }
         }
 
         shutdown_hook_result?;
+        worker_shutdown_result?;
         shutdown_result?;
         Ok(())
     }
@@ -238,7 +301,7 @@ impl NatsApp {
                 shutdown_rx.clone(),
                 worker_events.clone(),
             )
-                .await?,
+            .await?,
         );
 
         for endpoint_def in svc_def.endpoints {
@@ -248,8 +311,10 @@ impl NatsApp {
             let endpoint_subject = endpoint_def.subject.clone();
             let endpoint_full_subject = endpoint_def.full_subject();
             let queue_group = endpoint_def.queue_group.clone();
-            let concurrency_limit =
-                resolve_endpoint_concurrency_limit(endpoint_def.concurrency_limit);
+            let concurrency_limit = resolve_endpoint_concurrency_limit(
+                endpoint_def.concurrency_limit,
+                self.config.default_concurrency_limit(),
+            );
 
             debug!(
                 service = %endpoint_service_name,
@@ -263,7 +328,9 @@ impl NatsApp {
                 "registering endpoint"
             );
 
-            let mut endpoint_builder = service.endpoint_builder().name(endpoint_def.fn_name.clone());
+            let mut endpoint_builder = service
+                .endpoint_builder()
+                .name(endpoint_def.fn_name.clone());
             if let Some(queue_group) = queue_group.as_deref() {
                 endpoint_builder = endpoint_builder.queue_group(queue_group);
             }
@@ -294,6 +361,7 @@ impl NatsApp {
                     endpoint_def,
                     endpoint_service_name,
                     ep,
+                    concurrency_limit,
                     shutdown_rx.clone(),
                 ),
             );
@@ -317,6 +385,7 @@ impl NatsApp {
             return Ok(Vec::new());
         }
 
+        let default_concurrency_limit = self.config.default_concurrency_limit();
         let jetstream = jetstream::new(self.client.clone());
         let mut workers = Vec::new();
 
@@ -385,13 +454,14 @@ impl NatsApp {
             let resolved_limit = resolve_consumer_concurrency_limit(
                 consumer_def.concurrency_limit,
                 cached_max_ack_pending,
+                default_concurrency_limit,
             );
             if resolved_limit.promoted_from_default {
                 info!(
                     service = %service_name,
                     stream = %consumer_def.stream,
                     durable = %durable,
-                    default_concurrency_limit = DEFAULT_CONCURRENCY_LIMIT,
+                    default_concurrency_limit = default_concurrency_limit,
                     max_ack_pending = cached_max_ack_pending,
                     concurrency_limit = resolved_limit.value,
                     "consumer concurrency limit raised to match max_ack_pending"

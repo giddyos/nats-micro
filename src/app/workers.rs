@@ -97,7 +97,11 @@ async fn handle_endpoint_request(
     let req = prepared.request;
     let request_subject = req.subject.clone();
 
-    let mut ctx = RequestContext::new(req, app.state.clone(), endpoint_def.subject_template.clone());
+    let mut ctx = RequestContext::new(
+        req,
+        app.state.clone(),
+        endpoint_def.subject_template.clone(),
+    );
     #[cfg(feature = "encryption")]
     {
         ctx = ctx.__with_ephemeral_pub(prepared.ephemeral_pub);
@@ -144,10 +148,10 @@ pub(super) async fn run_endpoint_worker(
     endpoint_def: EndpointDefinition,
     service_name: String,
     mut endpoint_stream: endpoint::Endpoint,
+    concurrency_limit: u64,
     mut shutdown_rx: watch::Receiver<bool>,
 ) -> anyhow::Result<()> {
     let full_subject = endpoint_def.full_subject();
-    let concurrency_limit = resolve_endpoint_concurrency_limit(endpoint_def.concurrency_limit);
     let semaphore = Arc::new(Semaphore::new(semaphore_permits(concurrency_limit)));
     let mut tasks = JoinSet::new();
     let mut should_stop_endpoint = false;
@@ -412,7 +416,9 @@ pub(super) async fn run_consumer_worker(
 
         let Some(message) = message else {
             drop(permit);
-            break Err(anyhow::anyhow!("consumer message stream ended unexpectedly"));
+            break Err(anyhow::anyhow!(
+                "consumer message stream ended unexpectedly"
+            ));
         };
 
         let message = match message {

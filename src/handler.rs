@@ -52,11 +52,7 @@ impl Clone for RequestContext {
 }
 
 impl RequestContext {
-    pub fn new(
-        request: NatsRequest,
-        states: StateMap,
-        subject_template: Option<String>,
-    ) -> Self {
+    pub fn new(request: NatsRequest, states: StateMap, subject_template: Option<String>) -> Self {
         Self {
             request,
             states,

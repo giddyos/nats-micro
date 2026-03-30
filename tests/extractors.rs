@@ -54,7 +54,12 @@ struct JwtUser {
 
 impl FromAuthRequest for JwtUser {
     async fn from_auth_request(ctx: &RequestContext) -> Result<Self, AuthError> {
-        match ctx.request.headers.get("authorization").map(|value| value.as_str()) {
+        match ctx
+            .request
+            .headers
+            .get("authorization")
+            .map(|value| value.as_str())
+        {
             Some("Bearer demo-token") => Ok(Self {
                 subject: "demo-user".to_string(),
             }),
@@ -71,7 +76,12 @@ struct ApiUser {
 
 impl FromAuthRequest for ApiUser {
     async fn from_auth_request(ctx: &RequestContext) -> Result<Self, AuthError> {
-        match ctx.request.headers.get("x-api-key").map(|value| value.as_str()) {
+        match ctx
+            .request
+            .headers
+            .get("x-api-key")
+            .map(|value| value.as_str())
+        {
             Some("demo-key") => Ok(Self {
                 key_id: "api-demo".to_string(),
             }),

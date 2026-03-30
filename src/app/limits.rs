@@ -8,8 +8,11 @@ pub(super) struct ResolvedConsumerConcurrencyLimit {
     pub(super) promoted_from_default: bool,
 }
 
-pub(super) fn resolve_endpoint_concurrency_limit(requested_limit: Option<u64>) -> u64 {
-    requested_limit.unwrap_or(DEFAULT_CONCURRENCY_LIMIT)
+pub(super) fn resolve_endpoint_concurrency_limit(
+    requested_limit: Option<u64>,
+    default_limit: u64,
+) -> u64 {
+    requested_limit.unwrap_or(default_limit)
 }
 
 pub(super) fn validate_consumer_concurrency_limit(limit: u64, max_ack_pending: i64) -> Result<()> {
@@ -27,6 +30,7 @@ pub(super) fn validate_consumer_concurrency_limit(limit: u64, max_ack_pending: i
 pub(super) fn resolve_consumer_concurrency_limit(
     requested_limit: Option<u64>,
     server_max_ack_pending: i64,
+    default_limit: u64,
 ) -> ResolvedConsumerConcurrencyLimit {
     match requested_limit {
         Some(limit) => ResolvedConsumerConcurrencyLimit {
@@ -36,7 +40,7 @@ pub(super) fn resolve_consumer_concurrency_limit(
         None => {
             let promoted_limit = u64::try_from(server_max_ack_pending)
                 .ok()
-                .filter(|limit| *limit > DEFAULT_CONCURRENCY_LIMIT);
+                .filter(|limit| *limit > default_limit);
 
             match promoted_limit {
                 Some(limit) => ResolvedConsumerConcurrencyLimit {
@@ -44,7 +48,7 @@ pub(super) fn resolve_consumer_concurrency_limit(
                     promoted_from_default: true,
                 },
                 None => ResolvedConsumerConcurrencyLimit {
-                    value: DEFAULT_CONCURRENCY_LIMIT,
+                    value: default_limit,
                     promoted_from_default: false,
                 },
             }

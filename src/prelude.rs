@@ -1,5 +1,5 @@
 pub use crate::ConsumerConfig;
-pub use crate::app::NatsApp;
+pub use crate::{NatsApp, NatsAppConfig, WorkerFailurePolicy};
 pub use crate::auth::{Auth, FromAuthRequest};
 pub use crate::consumer::ConsumerDefinition;
 pub use crate::error::{IntoNatsError, NatsError, NatsErrorResponse};
