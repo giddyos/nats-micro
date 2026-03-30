@@ -145,7 +145,7 @@ pub(super) async fn run_endpoint_worker(
     service_name: String,
     mut endpoint_stream: endpoint::Endpoint,
     mut shutdown_rx: watch::Receiver<bool>,
-) {
+) -> anyhow::Result<()> {
     let full_subject = endpoint_def.full_subject();
     let concurrency_limit = resolve_endpoint_concurrency_limit(endpoint_def.concurrency_limit);
     let semaphore = Arc::new(Semaphore::new(semaphore_permits(concurrency_limit)));
@@ -161,14 +161,14 @@ pub(super) async fn run_endpoint_worker(
         "endpoint worker started"
     );
 
-    loop {
+    let outcome = loop {
         let permit = tokio::select! {
             biased;
 
             changed = shutdown_rx.changed() => {
                 if shutdown_requested(changed, &shutdown_rx) {
                     should_stop_endpoint = true;
-                    break;
+                    break Ok(());
                 }
                 continue;
             }
@@ -187,7 +187,7 @@ pub(super) async fn run_endpoint_worker(
             }
             permit_result = semaphore.clone().acquire_owned() => match permit_result {
                 Ok(permit) => permit,
-                Err(_) => break,
+                Err(_) => break Err(anyhow::anyhow!("endpoint semaphore closed unexpectedly")),
             },
         };
 
@@ -198,7 +198,7 @@ pub(super) async fn run_endpoint_worker(
                 drop(permit);
                 if shutdown_requested(changed, &shutdown_rx) {
                     should_stop_endpoint = true;
-                    break;
+                    break Ok(());
                 }
                 continue;
             }
@@ -207,7 +207,7 @@ pub(super) async fn run_endpoint_worker(
 
         let Some(raw_req) = raw_req else {
             drop(permit);
-            break;
+            break Err(anyhow::anyhow!("endpoint subscription ended unexpectedly"));
         };
 
         let app = app.clone();
@@ -217,7 +217,7 @@ pub(super) async fn run_endpoint_worker(
             let _permit = permit;
             handle_endpoint_request(app, endpoint_def, service_name, raw_req).await;
         });
-    }
+    };
 
     if should_stop_endpoint {
         debug!(
@@ -259,6 +259,8 @@ pub(super) async fn run_endpoint_worker(
         full_subject = %full_subject,
         "endpoint worker stopped"
     );
+
+    outcome
 }
 
 async fn handle_consumer_message(
@@ -355,7 +357,7 @@ pub(super) async fn run_consumer_worker(
     mut messages: async_nats::jetstream::consumer::push::Messages,
     concurrency_limit: u64,
     mut shutdown_rx: watch::Receiver<bool>,
-) {
+) -> anyhow::Result<()> {
     let semaphore = Arc::new(Semaphore::new(semaphore_permits(concurrency_limit)));
     let mut tasks = JoinSet::new();
 
@@ -367,13 +369,13 @@ pub(super) async fn run_consumer_worker(
         "consumer worker started"
     );
 
-    loop {
+    let outcome = loop {
         let permit = tokio::select! {
             biased;
 
             changed = shutdown_rx.changed() => {
                 if shutdown_requested(changed, &shutdown_rx) {
-                    break;
+                    break Ok(());
                 }
                 continue;
             }
@@ -391,7 +393,7 @@ pub(super) async fn run_consumer_worker(
             }
             permit_result = semaphore.clone().acquire_owned() => match permit_result {
                 Ok(permit) => permit,
-                Err(_) => break,
+                Err(_) => break Err(anyhow::anyhow!("consumer semaphore closed unexpectedly")),
             },
         };
 
@@ -401,7 +403,7 @@ pub(super) async fn run_consumer_worker(
             changed = shutdown_rx.changed() => {
                 drop(permit);
                 if shutdown_requested(changed, &shutdown_rx) {
-                    break;
+                    break Ok(());
                 }
                 continue;
             }
@@ -410,7 +412,7 @@ pub(super) async fn run_consumer_worker(
 
         let Some(message) = message else {
             drop(permit);
-            break;
+            break Err(anyhow::anyhow!("consumer message stream ended unexpectedly"));
         };
 
         let message = match message {
@@ -435,7 +437,7 @@ pub(super) async fn run_consumer_worker(
             let _permit = permit;
             handle_consumer_message(app, consumer_def, service_name, durable, message).await;
         });
-    }
+    };
 
     while let Some(join_result) = tasks.join_next().await {
         if let Err(err) = join_result {
@@ -455,4 +457,6 @@ pub(super) async fn run_consumer_worker(
         durable = %durable,
         "consumer worker stopped"
     );
+
+    outcome
 }

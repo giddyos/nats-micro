@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-pub(super) const DEFAULT_CONCURRENCY_LIMIT: u64 = 10_000_000;
+pub(super) const DEFAULT_CONCURRENCY_LIMIT: u64 = 10_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct ResolvedConsumerConcurrencyLimit {

@@ -3,13 +3,15 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+use tokio::sync::mpsc;
+
 use super::{
     limits::{
         DEFAULT_CONCURRENCY_LIMIT, ResolvedConsumerConcurrencyLimit,
         resolve_consumer_concurrency_limit, resolve_endpoint_concurrency_limit,
         validate_consumer_concurrency_limit,
     },
-    shutdown::{ShutdownHookFuture, run_shutdown_hook},
+    shutdown::{ShutdownHookFuture, spawn_supervised_worker, run_shutdown_hook},
 };
 
 #[test]
@@ -71,4 +73,52 @@ async fn shutdown_hook_runs_when_present() {
 
     run_shutdown_hook(Some(&hook)).await.unwrap();
     assert_eq!(counter.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn supervised_workers_report_success_failures_and_panics() {
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut workers = Vec::new();
+
+    spawn_supervised_worker(&mut workers, tx.clone(), "ok-worker", async { Ok(()) });
+    spawn_supervised_worker(&mut workers, tx.clone(), "err-worker", async {
+        anyhow::bail!("boom")
+    });
+    spawn_supervised_worker(&mut workers, tx, "panic-worker", async {
+        panic!("crash");
+        #[allow(unreachable_code)]
+        Ok(())
+    });
+
+    let mut exits = Vec::new();
+    for _ in 0..3 {
+        exits.push(rx.recv().await.expect("worker exit should be reported"));
+    }
+
+    for worker in workers {
+        worker.await.unwrap();
+    }
+
+    exits.sort_by(|left, right| left.label.cmp(&right.label));
+
+    assert_eq!(
+        exits[0],
+        super::shutdown::WorkerExit {
+            label: "err-worker".to_string(),
+            error: Some("boom".to_string()),
+        }
+    );
+    assert_eq!(
+        exits[1],
+        super::shutdown::WorkerExit {
+            label: "ok-worker".to_string(),
+            error: None,
+        }
+    );
+    assert_eq!(exits[2].label, "panic-worker");
+    assert!(exits[2]
+        .error
+        .as_deref()
+        .expect("panic should surface")
+        .contains("task panicked"));
 }

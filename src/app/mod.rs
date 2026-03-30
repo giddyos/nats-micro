@@ -10,7 +10,10 @@ use std::{future::Future, sync::Arc};
 use anyhow::Result;
 use async_nats::jetstream;
 use async_nats::service::ServiceExt;
-use tokio::{sync::watch, task::JoinHandle};
+use tokio::{
+    sync::{mpsc, watch},
+    task::JoinHandle,
+};
 use tracing::{debug, error, info};
 
 use crate::{
@@ -24,7 +27,9 @@ use self::{
         resolve_endpoint_concurrency_limit, validate_consumer_concurrency_limit,
     },
     prepare::{PreparedRequest, prepare_request_for_dispatch_with_state},
-    shutdown::{LiveService, ShutdownHook, run_shutdown_hook},
+    shutdown::{
+        LiveService, ShutdownHook, WorkerExit, run_shutdown_hook, spawn_supervised_worker,
+    },
     workers::{run_consumer_worker, run_endpoint_worker},
 };
 
@@ -81,7 +86,15 @@ impl NatsApp {
         self
     }
 
-    pub async fn run(mut self) -> Result<()> {
+    pub async fn run(self) -> Result<()> {
+        self.run_until(async { tokio::signal::ctrl_c().await.map_err(anyhow::Error::from) })
+            .await
+    }
+
+    pub async fn run_until<Fut>(mut self, shutdown_signal: Fut) -> Result<()>
+    where
+        Fut: Future<Output = Result<()>>,
+    {
         if self.service_defs.is_empty() {
             anyhow::bail!(
                 "NatsApp requires at least one explicit service via .service(...) or .service_def(...)"
@@ -89,8 +102,10 @@ impl NatsApp {
         }
 
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let (worker_events_tx, mut worker_events_rx) = mpsc::unbounded_channel::<WorkerExit>();
         let mut live_services: Vec<LiveService> = Vec::new();
         let total_services = self.service_defs.len();
+        let mut worker_count = 0usize;
 
         info!(service_count = total_services, "starting nats application");
 
@@ -102,7 +117,10 @@ impl NatsApp {
                 consumer_count = svc_def.consumers.len(),
                 "spawning service"
             );
-            let svc = match self.spawn_service(svc_def, shutdown_rx.clone()).await {
+            let svc = match self
+                .spawn_service(svc_def, shutdown_rx.clone(), worker_events_tx.clone())
+                .await
+            {
                 Ok(svc) => svc,
                 Err(err) => {
                     let _ = shutdown_tx.send(true);
@@ -112,18 +130,42 @@ impl NatsApp {
                     return Err(err);
                 }
             };
+            worker_count += svc.workers.len();
             live_services.push(svc);
         }
+
+        drop(worker_events_tx);
 
         info!(
             service_count = live_services.len(),
             "all services are running"
         );
-        tokio::signal::ctrl_c().await?;
-        info!(
-            service_count = live_services.len(),
-            "shutdown signal received"
-        );
+
+        let (shutdown_result, triggered_by_worker) = tokio::select! {
+            signal = shutdown_signal => (signal, false),
+            worker_exit = worker_events_rx.recv(), if worker_count > 0 => {
+                let result = match worker_exit {
+                    Some(worker_exit) => match worker_exit.error {
+                        Some(error) => Err(anyhow::anyhow!("worker `{}` failed: {error}", worker_exit.label)),
+                        None => Err(anyhow::anyhow!("worker `{}` exited unexpectedly", worker_exit.label)),
+                    },
+                    None => Err(anyhow::anyhow!("worker supervision channel closed unexpectedly")),
+                };
+                (result, true)
+            }
+        };
+
+        if triggered_by_worker {
+            if let Err(err) = &shutdown_result {
+                error!(error = %err, "worker exited unexpectedly, shutting down application");
+            }
+        } else {
+            info!(
+                service_count = live_services.len(),
+                "shutdown signal received"
+            );
+        }
+
         let _ = shutdown_tx.send(true);
 
         let shutdown_hook_result = if self.shutdown_hook.is_some() {
@@ -146,6 +188,7 @@ impl NatsApp {
         }
 
         shutdown_hook_result?;
+        shutdown_result?;
         Ok(())
     }
 
@@ -167,6 +210,7 @@ impl NatsApp {
         &self,
         svc_def: ServiceDefinition,
         shutdown_rx: watch::Receiver<bool>,
+        worker_events: mpsc::UnboundedSender<WorkerExit>,
     ) -> Result<LiveService> {
         let service_name = svc_def.metadata.name.clone();
         let service_version = svc_def.metadata.version.clone();
@@ -188,7 +232,12 @@ impl NatsApp {
         );
 
         workers.extend(
-            self.spawn_consumers_for(&service_name, &svc_def.consumers, shutdown_rx.clone())
+            self.spawn_consumers_for(
+                &service_name,
+                &svc_def.consumers,
+                shutdown_rx.clone(),
+                worker_events.clone(),
+            )
                 .await?,
         );
 
@@ -214,10 +263,13 @@ impl NatsApp {
                 "registering endpoint"
             );
 
-            let mut ep = service
-                .endpoint_builder()
-                .name(endpoint_def.fn_name.clone())
-                .add(endpoint_def.full_subject())
+            let mut endpoint_builder = service.endpoint_builder().name(endpoint_def.fn_name.clone());
+            if let Some(queue_group) = queue_group.as_deref() {
+                endpoint_builder = endpoint_builder.queue_group(queue_group);
+            }
+
+            let ep = endpoint_builder
+                .add(endpoint_full_subject.clone())
                 .await
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
 
@@ -230,13 +282,21 @@ impl NatsApp {
                 "endpoint registered"
             );
 
-            workers.push(tokio::spawn(run_endpoint_worker(
-                app,
-                endpoint_def,
-                endpoint_service_name,
-                ep,
-                shutdown_rx.clone(),
-            )));
+            spawn_supervised_worker(
+                &mut workers,
+                worker_events.clone(),
+                format!(
+                    "endpoint `{}` for service `{}`",
+                    endpoint_full_subject, endpoint_service_name
+                ),
+                run_endpoint_worker(
+                    app,
+                    endpoint_def,
+                    endpoint_service_name,
+                    ep,
+                    shutdown_rx.clone(),
+                ),
+            );
         }
 
         Ok(LiveService {
@@ -250,6 +310,7 @@ impl NatsApp {
         service_name: &str,
         consumers: &[ConsumerDefinition],
         shutdown_rx: watch::Receiver<bool>,
+        worker_events: mpsc::UnboundedSender<WorkerExit>,
     ) -> Result<Vec<JoinHandle<()>>> {
         if consumers.is_empty() {
             debug!(service = %service_name, "service has no consumers to spawn");
@@ -356,15 +417,23 @@ impl NatsApp {
             let app = self.clone();
             let consumer_def = consumer_def.clone();
             let service_name = service_name.to_string();
-            workers.push(tokio::spawn(run_consumer_worker(
-                app,
-                consumer_def,
-                service_name,
-                durable,
-                messages,
-                resolved_limit.value,
-                shutdown_rx.clone(),
-            )));
+            spawn_supervised_worker(
+                &mut workers,
+                worker_events.clone(),
+                format!(
+                    "consumer `{}` on stream `{}` for service `{}`",
+                    durable, consumer_def.stream, service_name
+                ),
+                run_consumer_worker(
+                    app,
+                    consumer_def,
+                    service_name,
+                    durable,
+                    messages,
+                    resolved_limit.value,
+                    shutdown_rx.clone(),
+                ),
+            );
         }
 
         Ok(workers)
