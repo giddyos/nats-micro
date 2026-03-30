@@ -11,6 +11,7 @@ use crate::endpoint::{
     classify_return_type, extract_client_meta, extract_param_info, parse_subject_template,
     requires_auth, validate_template_bindings,
 };
+use crate::utils::nats_micro_path;
 
 #[derive(Debug, FromMeta)]
 pub struct ServiceArgs {
@@ -21,6 +22,7 @@ pub struct ServiceArgs {
 }
 
 pub fn expand_service(args: ServiceArgs, item_struct: ItemStruct) -> TokenStream {
+    let nats_micro = nats_micro_path();
     let ident = &item_struct.ident;
     let service_name = args.name.unwrap_or_else(|| item_struct.ident.to_string());
     let version = args.version.unwrap_or_else(|| "0.1.0".to_string());
@@ -34,8 +36,8 @@ pub fn expand_service(args: ServiceArgs, item_struct: ItemStruct) -> TokenStream
         #item_struct
 
         impl #ident {
-            pub fn __nats_micro_service_meta() -> ::nats_micro::ServiceMetadata {
-                ::nats_micro::ServiceMetadata::new(
+            pub fn __nats_micro_service_meta() -> #nats_micro::ServiceMetadata {
+                #nats_micro::ServiceMetadata::new(
                     #service_name,
                     #version,
                     #description,
@@ -47,6 +49,7 @@ pub fn expand_service(args: ServiceArgs, item_struct: ItemStruct) -> TokenStream
 }
 
 pub fn expand_service_handlers(item_impl: ItemImpl) -> TokenStream {
+    let nats_micro = nats_micro_path();
     let struct_ty = &item_impl.self_ty;
     let Some(struct_ident) = extract_ident_from_type(struct_ty) else {
         return syn::Error::new_spanned(struct_ty, "expected a named struct type")
@@ -167,9 +170,9 @@ pub fn expand_service_handlers(item_impl: ItemImpl) -> TokenStream {
             #(#consumer_accessor_fns)*
         }
 
-        impl ::nats_micro::__macros::NatsService for #struct_ident {
-            fn definition() -> ::nats_micro::__macros::ServiceDefinition {
-                ::nats_micro::__macros::ServiceDefinition {
+        impl #nats_micro::__macros::NatsService for #struct_ident {
+            fn definition() -> #nats_micro::__macros::ServiceDefinition {
+                #nats_micro::__macros::ServiceDefinition {
                     metadata: #struct_ident::__nats_micro_service_meta(),
                     endpoints: vec![#(#endpoint_def_calls),*],
                     consumers: vec![#(#consumer_def_calls),*],
@@ -179,9 +182,9 @@ pub fn expand_service_handlers(item_impl: ItemImpl) -> TokenStream {
             }
         }
 
-        ::nats_micro::__macros::inventory::submit! {
-            ::nats_micro::__macros::ServiceRegistration {
-                constructor: <#struct_ident as ::nats_micro::__macros::NatsService>::definition,
+        #nats_micro::__macros::inventory::submit! {
+            #nats_micro::__macros::ServiceRegistration {
+                constructor: <#struct_ident as #nats_micro::__macros::NatsService>::definition,
             }
         }
 
@@ -231,6 +234,7 @@ fn process_endpoint_method(
     method: &ImplItemFn,
     attr: &syn::Attribute,
 ) -> Result<(HandlerResult, ClientEndpointData), TokenStream> {
+    let nats_micro = nats_micro_path();
     let args = parse_attr::<EndpointArgs>(attr)?;
     let subject = &args.subject;
     let group = args.group.as_deref().unwrap_or("");
@@ -269,7 +273,7 @@ fn process_endpoint_method(
             let inner_type = &pm.inner_type;
             let inner_type_str = quote!(#inner_type).to_string();
             quote! {
-                Some(::nats_micro::__macros::PayloadMeta {
+                Some(#nats_micro::__macros::PayloadMeta {
                     encoding: #enc,
                     encrypted: #encrypted,
                     inner_type: #inner_type_str.to_string(),
@@ -288,7 +292,7 @@ fn process_endpoint_method(
         .map(|t| quote!(#t).to_string())
         .unwrap_or_default();
     let response_meta_tokens = quote! {
-        ::nats_micro::__macros::ResponseMeta {
+        #nats_micro::__macros::ResponseMeta {
             encoding: #resp_enc,
             encrypted: #resp_encrypted,
             inner_type: #resp_inner_str.to_string(),
@@ -304,9 +308,9 @@ fn process_endpoint_method(
         attrs: attrs.clone(),
         def_fn: quote! {
             #[doc(hidden)]
-            pub fn #def_method_name() -> ::nats_micro::EndpointDefinition {
+            pub fn #def_method_name() -> #nats_micro::EndpointDefinition {
                 let __meta = Self::__nats_micro_service_meta();
-                ::nats_micro::EndpointDefinition {
+                #nats_micro::EndpointDefinition {
                     subject_prefix: __meta.subject_prefix.clone(),
                     service_name: __meta.name,
                     service_version: __meta.version,
@@ -323,13 +327,13 @@ fn process_endpoint_method(
             }
         },
         accessor_fn: quote! {
-            pub fn #accessor_name() -> ::nats_micro::EndpointDefinition {
+            pub fn #accessor_name() -> #nats_micro::EndpointDefinition {
                 Self::#def_method_name()
             }
         },
         def_call: quote! { Self::#def_method_name() },
         info_expr: quote! {
-            ::nats_micro::__macros::EndpointInfo {
+            #nats_micro::__macros::EndpointInfo {
                 fn_name: #fn_name_str.to_string(),
                 subject_template: #subject.to_string(),
                 subject_pattern: #nats_subject.to_string(),
@@ -364,6 +368,7 @@ fn process_consumer_method(
     method: &ImplItemFn,
     attr: &syn::Attribute,
 ) -> Result<HandlerResult, TokenStream> {
+    let nats_micro = nats_micro_path();
     let args = parse_attr::<ConsumerArgs>(attr)?;
     let fn_name = &method.sig.ident;
     let stream = args.stream.as_deref().unwrap_or("DEFAULT");
@@ -379,11 +384,11 @@ fn process_consumer_method(
         Some(config) => {
             let expr = config.0;
             quote! {{
-                let __config: ::nats_micro::__macros::ConsumerConfig = (#expr);
+                let __config: #nats_micro::__macros::ConsumerConfig = (#expr);
                 __config
             }}
         }
-        None => quote! { ::nats_micro::__macros::ConsumerConfig::default() },
+        None => quote! { #nats_micro::__macros::ConsumerConfig::default() },
     };
 
     let fn_path = quote! { #struct_ident::#fn_name };
@@ -399,8 +404,8 @@ fn process_consumer_method(
         attrs,
         def_fn: quote! {
             #[doc(hidden)]
-            pub fn #def_method_name() -> ::nats_micro::ConsumerDefinition {
-                ::nats_micro::ConsumerDefinition {
+            pub fn #def_method_name() -> #nats_micro::ConsumerDefinition {
+                #nats_micro::ConsumerDefinition {
                     stream: #stream.to_string(),
                     durable: #durable.to_string(),
                     auth_required: #auth_required,
@@ -411,13 +416,13 @@ fn process_consumer_method(
             }
         },
         accessor_fn: quote! {
-            pub fn #accessor_name() -> ::nats_micro::ConsumerDefinition {
+            pub fn #accessor_name() -> #nats_micro::ConsumerDefinition {
                 Self::#def_method_name()
             }
         },
         def_call: quote! { Self::#def_method_name() },
         info_expr: quote! {
-            ::nats_micro::__macros::ConsumerInfo {
+            #nats_micro::__macros::ConsumerInfo {
                 fn_name: #fn_name_str.to_string(),
                 stream: #stream.to_string(),
                 durable: #durable.to_string(),
@@ -485,21 +490,23 @@ fn extract_result_error_type(sig: &syn::Signature) -> Result<Type, TokenStream> 
 }
 
 fn payload_encoding_tokens(enc: &PayloadEncoding) -> TokenStream {
+    let nats_micro = nats_micro_path();
     match enc {
-        PayloadEncoding::Json => quote! { ::nats_micro::__macros::PayloadEncoding::Json },
-        PayloadEncoding::Proto => quote! { ::nats_micro::__macros::PayloadEncoding::Proto },
-        PayloadEncoding::Serde => quote! { ::nats_micro::__macros::PayloadEncoding::Serde },
-        PayloadEncoding::Raw => quote! { ::nats_micro::__macros::PayloadEncoding::Raw },
+        PayloadEncoding::Json => quote! { #nats_micro::__macros::PayloadEncoding::Json },
+        PayloadEncoding::Proto => quote! { #nats_micro::__macros::PayloadEncoding::Proto },
+        PayloadEncoding::Serde => quote! { #nats_micro::__macros::PayloadEncoding::Serde },
+        PayloadEncoding::Raw => quote! { #nats_micro::__macros::PayloadEncoding::Raw },
     }
 }
 
 fn response_encoding_tokens(enc: &ResponseEncoding) -> TokenStream {
+    let nats_micro = nats_micro_path();
     match enc {
-        ResponseEncoding::Json => quote! { ::nats_micro::__macros::ResponseEncoding::Json },
-        ResponseEncoding::Proto => quote! { ::nats_micro::__macros::ResponseEncoding::Proto },
-        ResponseEncoding::Serde => quote! { ::nats_micro::__macros::ResponseEncoding::Serde },
-        ResponseEncoding::Raw => quote! { ::nats_micro::__macros::ResponseEncoding::Raw },
-        ResponseEncoding::Unit => quote! { ::nats_micro::__macros::ResponseEncoding::Unit },
+        ResponseEncoding::Json => quote! { #nats_micro::__macros::ResponseEncoding::Json },
+        ResponseEncoding::Proto => quote! { #nats_micro::__macros::ResponseEncoding::Proto },
+        ResponseEncoding::Serde => quote! { #nats_micro::__macros::ResponseEncoding::Serde },
+        ResponseEncoding::Raw => quote! { #nats_micro::__macros::ResponseEncoding::Raw },
+        ResponseEncoding::Unit => quote! { #nats_micro::__macros::ResponseEncoding::Unit },
     }
 }
 
@@ -508,6 +515,7 @@ fn generate_client_module(
     service_name_str: &str,
     endpoints: &[ClientEndpointData],
 ) -> TokenStream {
+    let nats_micro = nats_micro_path();
     let module_name = format_ident!("{}_client", service_name_str.to_snake_case());
     let client_struct_name = format_ident!("{}Client", service_name_str);
     let encryption_enabled = cfg!(feature = "macros_encryption_feature");
@@ -595,22 +603,22 @@ fn generate_client_module(
             match payload_encoding.unwrap() {
                 PayloadEncoding::Json | PayloadEncoding::Serde => {
                     quote! {
-                        let __body = ::nats_micro::__macros::serialize_serde_payload(payload)
-                            .map_err(::nats_micro::ClientError::<#error_type>::serialize)?;
+                        let __body = #nats_micro::__macros::serialize_serde_payload(payload)
+                            .map_err(#nats_micro::ClientError::<#error_type>::serialize)?;
                     }
                 }
                 PayloadEncoding::Proto => {
                     quote! {
-                        let __body = ::nats_micro::__macros::serialize_proto_payload(payload)
-                            .map_err(::nats_micro::ClientError::<#error_type>::serialize)?;
+                        let __body = #nats_micro::__macros::serialize_proto_payload(payload)
+                            .map_err(#nats_micro::ClientError::<#error_type>::serialize)?;
                     }
                 }
                 PayloadEncoding::Raw => {
-                    quote! { let __body = ::nats_micro::Bytes::copy_from_slice(payload.as_ref()); }
+                    quote! { let __body = #nats_micro::Bytes::copy_from_slice(payload.as_ref()); }
                 }
             }
         } else {
-            quote! { let __body = ::nats_micro::Bytes::new(); }
+            quote! { let __body = #nats_micro::Bytes::new(); }
         };
 
         let return_type: TokenStream = match response_encoding {
@@ -639,13 +647,13 @@ fn generate_client_module(
 
         let deserialize_response = match response_encoding {
             ResponseEncoding::Unit => {
-                quote! { ::nats_micro::__macros::deserialize_unit_response::<#error_type>(__response_headers, &__response_payload) }
+                quote! { #nats_micro::__macros::deserialize_unit_response::<#error_type>(__response_headers, &__response_payload) }
             }
             ResponseEncoding::Json | ResponseEncoding::Serde => {
-                quote! { ::nats_micro::__macros::deserialize_response::<#return_type, #error_type>(__response_headers, &__response_payload) }
+                quote! { #nats_micro::__macros::deserialize_response::<#return_type, #error_type>(__response_headers, &__response_payload) }
             }
             ResponseEncoding::Proto => {
-                quote! { ::nats_micro::__macros::deserialize_proto_response::<#return_type, #error_type>(__response_headers, &__response_payload) }
+                quote! { #nats_micro::__macros::deserialize_proto_response::<#return_type, #error_type>(__response_headers, &__response_payload) }
             }
             ResponseEncoding::Raw => {
                 if let Some(rt) = response_type {
@@ -653,17 +661,17 @@ fn generate_client_module(
                     let is_str_ref = matches!(rt, Type::Reference(r) if matches!(&*r.elem, Type::Path(p) if p.path.is_ident("str")));
                     match ident.as_deref() {
                         Some("String") => {
-                            quote! { ::nats_micro::__macros::raw_response_to_string::<#error_type>(__response_headers, &__response_payload) }
+                            quote! { #nats_micro::__macros::raw_response_to_string::<#error_type>(__response_headers, &__response_payload) }
                         }
                         _ if is_str_ref => {
-                            quote! { ::nats_micro::__macros::raw_response_to_string::<#error_type>(__response_headers, &__response_payload) }
+                            quote! { #nats_micro::__macros::raw_response_to_string::<#error_type>(__response_headers, &__response_payload) }
                         }
                         _ => {
-                            quote! { ::nats_micro::__macros::raw_response_to_bytes::<#error_type>(__response_headers, &__response_payload) }
+                            quote! { #nats_micro::__macros::raw_response_to_bytes::<#error_type>(__response_headers, &__response_payload) }
                         }
                     }
                 } else {
-                    quote! { ::nats_micro::__macros::raw_response_to_bytes::<#error_type>(__response_headers, &__response_payload) }
+                    quote! { #nats_micro::__macros::raw_response_to_bytes::<#error_type>(__response_headers, &__response_payload) }
                 }
             }
         };
@@ -697,9 +705,9 @@ fn generate_client_module(
                     let (__msg, __eph_ctx) = options
                         .into_encrypted_request(&self.client, __subject, __body.to_vec())
                         .await
-                        .map_err(::nats_micro::ClientError::<#error_type>::request)?;
+                        .map_err(#nats_micro::ClientError::<#error_type>::request)?;
                     let __response_headers = __msg.headers.as_ref();
-                    let __response_payload = ::nats_micro::__macros::decrypt_client_response::<#error_type>(
+                    let __response_payload = #nats_micro::__macros::decrypt_client_response::<#error_type>(
                         __response_headers,
                         &__eph_ctx,
                         &__msg.payload,
@@ -714,7 +722,7 @@ fn generate_client_module(
                     let (__msg, _) = options
                         .into_encrypted_request(&self.client, __subject, __body.to_vec())
                         .await
-                        .map_err(::nats_micro::ClientError::<#error_type>::request)?;
+                        .map_err(#nats_micro::ClientError::<#error_type>::request)?;
                     let __response_headers = __msg.headers.as_ref();
                     let __response_payload = __msg.payload.to_vec();
                     #deserialize_response
@@ -726,7 +734,7 @@ fn generate_client_module(
                     let __msg = options
                         .into_request(&self.client, __subject, __body)
                         .await
-                        .map_err(::nats_micro::ClientError::<#error_type>::request)?;
+                        .map_err(#nats_micro::ClientError::<#error_type>::request)?;
                     let __response_headers = __msg.headers.as_ref();
                     let __response_payload = __msg.payload.to_vec();
                     #deserialize_response
@@ -739,7 +747,7 @@ fn generate_client_module(
                 let __msg = options
                     .into_request(&self.client, __subject, __body)
                     .await
-                    .map_err(::nats_micro::ClientError::<#error_type>::request)?;
+                    .map_err(#nats_micro::ClientError::<#error_type>::request)?;
                 let __response_headers = __msg.headers.as_ref();
                 let __response_payload = __msg.payload.to_vec();
                 #deserialize_response
@@ -751,23 +759,23 @@ fn generate_client_module(
             pub async fn #fn_ident(
                 &self,
                 #(#all_with_args,)*
-            ) -> Result<#return_type, ::nats_micro::ClientError<#error_type>> {
-                self.#fn_with_ident(#(#forward_args,)* ::nats_micro::ClientCallOptions::new()).await
+            ) -> Result<#return_type, #nats_micro::ClientError<#error_type>> {
+                self.#fn_with_ident(#(#forward_args,)* #nats_micro::ClientCallOptions::new()).await
             }
 
             #(#attrs)*
             pub async fn #fn_with_ident(
                 &self,
                 #(#all_with_args,)*
-                options: ::nats_micro::ClientCallOptions,
-            ) -> Result<#return_type, ::nats_micro::ClientError<#error_type>> {
+                options: #nats_micro::ClientCallOptions,
+            ) -> Result<#return_type, #nats_micro::ClientError<#error_type>> {
                 #with_body
             }
         });
     }
     let recipient_field = if encryption_enabled {
         quote! {
-            recipient: ::nats_micro::ServiceRecipient,
+            recipient: #nats_micro::ServiceRecipient,
         }
     } else {
         quote! {}
@@ -776,8 +784,8 @@ fn generate_client_module(
     let new_fn = if encryption_enabled {
         quote! {
             pub fn new(
-                client: ::nats_micro::async_nats::Client,
-                recipient: impl Into<::nats_micro::ServiceRecipient>,
+                client: #nats_micro::async_nats::Client,
+                recipient: impl Into<#nats_micro::ServiceRecipient>,
             ) -> Self {
                 Self {
                     client,
@@ -788,7 +796,7 @@ fn generate_client_module(
         }
     } else {
         quote! {
-            pub fn new(client: ::nats_micro::async_nats::Client) -> Self {
+            pub fn new(client: #nats_micro::async_nats::Client) -> Self {
                 Self {
                     client,
                     prefix: #struct_ident::__nats_micro_service_meta().subject_prefix,
@@ -800,9 +808,9 @@ fn generate_client_module(
     let with_prefix_fn = if encryption_enabled {
         quote! {
             pub fn with_prefix(
-                client: ::nats_micro::async_nats::Client,
+                client: #nats_micro::async_nats::Client,
                 prefix: impl Into<String>,
-                recipient: impl Into<::nats_micro::ServiceRecipient>,
+                recipient: impl Into<#nats_micro::ServiceRecipient>,
             ) -> Self {
                 Self {
                     client,
@@ -814,7 +822,7 @@ fn generate_client_module(
     } else {
         quote! {
             pub fn with_prefix(
-                client: ::nats_micro::async_nats::Client,
+                client: #nats_micro::async_nats::Client,
                 prefix: impl Into<String>,
             ) -> Self {
                 Self {
@@ -829,7 +837,7 @@ fn generate_client_module(
         quote! {
             pub fn with_recipient(
                 mut self,
-                recipient: impl Into<::nats_micro::ServiceRecipient>,
+                recipient: impl Into<#nats_micro::ServiceRecipient>,
             ) -> Self {
                 self.recipient = recipient.into();
                 self
@@ -843,8 +851,8 @@ fn generate_client_module(
         quote! {
             fn apply_encryption_recipient(
                 &self,
-                options: ::nats_micro::ClientCallOptions,
-            ) -> ::nats_micro::ClientCallOptions {
+                options: #nats_micro::ClientCallOptions,
+            ) -> #nats_micro::ClientCallOptions {
                 options.with_default_recipient(self.recipient.clone())
             }
         }
@@ -852,8 +860,8 @@ fn generate_client_module(
         quote! {
             fn apply_encryption_recipient(
                 &self,
-                options: ::nats_micro::ClientCallOptions,
-            ) -> ::nats_micro::ClientCallOptions {
+                options: #nats_micro::ClientCallOptions,
+            ) -> #nats_micro::ClientCallOptions {
                 options
             }
         }
@@ -864,7 +872,7 @@ fn generate_client_module(
             use super::*;
 
             pub struct #client_struct_name {
-                client: ::nats_micro::async_nats::Client,
+                client: #nats_micro::async_nats::Client,
                 prefix: Option<String>,
                 #recipient_field
             }
@@ -878,7 +886,7 @@ fn generate_client_module(
                 #with_recipient_fn
 
                 fn build_subject(&self, group: &str, endpoint: &str) -> String {
-                    ::nats_micro::__macros::build_subject(self.prefix.as_deref(), group, endpoint)
+                    #nats_micro::__macros::build_subject(self.prefix.as_deref(), group, endpoint)
                 }
 
                 #apply_encryption_recipient_fn

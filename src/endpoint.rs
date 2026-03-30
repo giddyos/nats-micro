@@ -5,6 +5,8 @@ use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{FnArg, GenericArgument, ItemFn, Pat, PathArguments, ReturnType, Signature, Type};
 
+use crate::utils::nats_micro_path;
+
 #[derive(Debug, FromMeta)]
 pub(crate) struct EndpointArgs {
     pub subject: String,
@@ -26,6 +28,7 @@ pub(crate) fn build_handler_body(
     fn_path: &TokenStream,
     sig: &Signature,
 ) -> Result<TokenStream, TokenStream> {
+    let nats_micro = nats_micro_path();
     let mut extractors = Vec::new();
     let mut args = Vec::new();
 
@@ -55,7 +58,7 @@ pub(crate) fn build_handler_body(
         };
 
         extractors.push(quote! {
-            let #ident: #ty = match <#ty as ::nats_micro::__macros::FromRequest>::from_request(#ctx_expr).await {
+            let #ident: #ty = match <#ty as #nats_micro::__macros::FromRequest>::from_request(#ctx_expr).await {
                 Ok(value) => value,
                 Err(err) => return Err(err),
             };
@@ -64,20 +67,21 @@ pub(crate) fn build_handler_body(
     }
 
     Ok(quote! {
-        ::nats_micro::HandlerFn::new(move |ctx: ::nats_micro::__macros::RequestContext| {
+        #nats_micro::HandlerFn::new(move |ctx: #nats_micro::__macros::RequestContext| {
             ::std::boxed::Box::pin(async move {
                 let __request_id = ctx.request.request_id.clone();
                 #(#extractors)*
                 let response = #fn_path(#(#args),*)
                     .await
-                    .map_err(|err| ::nats_micro::__macros::IntoNatsError::into_nats_error(err, __request_id.clone()))?;
-                ::nats_micro::__macros::IntoNatsResponse::into_response(response, &ctx)
+                    .map_err(|err| #nats_micro::__macros::IntoNatsError::into_nats_error(err, __request_id.clone()))?;
+                #nats_micro::__macros::IntoNatsResponse::into_response(response, &ctx)
             })
         })
     })
 }
 
 pub(crate) fn extract_param_info(sig: &Signature) -> Result<Vec<TokenStream>, TokenStream> {
+    let nats_micro = nats_micro_path();
     let mut params = Vec::new();
     for input in &sig.inputs {
         let FnArg::Typed(pat_type) = input else {
@@ -100,7 +104,7 @@ pub(crate) fn extract_param_info(sig: &Signature) -> Result<Vec<TokenStream>, To
         let is_sp = is_subject_param(ty);
 
         params.push(quote! {
-            ::nats_micro::__macros::ParamInfo {
+            #nats_micro::__macros::ParamInfo {
                 name: #name.to_string(),
                 type_name: #type_name.to_string(),
                 is_subject_param: #is_sp,

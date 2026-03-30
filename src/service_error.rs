@@ -2,9 +2,10 @@ use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
 use syn::{Data, DeriveInput, Fields};
 
-use crate::utils::error_stream;
+use crate::utils::{error_stream, nats_micro_path};
 
 pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
+    let nats_micro = nats_micro_path();
     let span = input.ident.span();
     let enum_ident = &input.ident;
 
@@ -54,7 +55,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
                 quote! { #enum_ident::#v_ident },
                 quote! { None },
                 quote! {
-                    (#code, #v_name) => ::nats_micro::ServiceErrorMatch::Typed(#enum_ident::#v_ident),
+                    (#code, #v_name) => #nats_micro::ServiceErrorMatch::Typed(#enum_ident::#v_ident),
                 },
             ),
             Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
@@ -68,7 +69,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
                             quote! { Some(::serde_json::Value::String(__value.clone())) }
                         },
                         quote! {
-                            (#code, #v_name) => ::nats_micro::ServiceErrorMatch::Typed(
+                            (#code, #v_name) => #nats_micro::ServiceErrorMatch::Typed(
                                 #enum_ident::#v_ident(
                                     response
                                         .details
@@ -105,7 +106,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
 
         variant_arms.push(quote! {
             #pattern => {
-                let __error = ::nats_micro::NatsErrorResponse::new(
+                let __error = #nats_micro::NatsErrorResponse::new(
                     #code,
                     #v_name,
                     #message,
@@ -130,8 +131,8 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
     }
 
     let enum_impl = quote! {
-        impl ::nats_micro::IntoNatsError for #enum_ident {
-            fn into_nats_error(self, request_id: String) -> ::nats_micro::NatsErrorResponse {
+        impl #nats_micro::IntoNatsError for #enum_ident {
+            fn into_nats_error(self, request_id: String) -> #nats_micro::NatsErrorResponse {
                 let __message = ::std::string::ToString::to_string(&self);
                 match self {
                     #(#variant_arms)*
@@ -139,13 +140,13 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
             }
         }
 
-        impl ::nats_micro::FromNatsErrorResponse for #enum_ident {
+        impl #nats_micro::FromNatsErrorResponse for #enum_ident {
             fn from_nats_error_response(
-                response: ::nats_micro::NatsErrorResponse,
-            ) -> ::nats_micro::ServiceErrorMatch<Self> {
+                response: #nats_micro::NatsErrorResponse,
+            ) -> #nats_micro::ServiceErrorMatch<Self> {
                 match (response.code, response.error.as_str()) {
                     #(#from_response_arms)*
-                    _ => ::nats_micro::ServiceErrorMatch::Untyped(response),
+                    _ => #nats_micro::ServiceErrorMatch::Untyped(response),
                 }
             }
         }
@@ -165,6 +166,7 @@ fn build_unnamed_variant_tokens(
     fields: &syn::FieldsUnnamed,
     is_internal: bool,
 ) -> (TokenStream, TokenStream, TokenStream) {
+    let nats_micro = nats_micro_path();
     // Public tuple variants are serialized as positional tuples rather than
     // object maps so both tuple and named variants can share one stable,
     // order-based round-trip format.
@@ -191,9 +193,9 @@ fn build_unnamed_variant_tokens(
                 .and_then(|details| ::serde_json::from_value::<#tuple_type>(details).ok())
             {
                 Some(#deserialize_pattern) => {
-                    ::nats_micro::ServiceErrorMatch::Typed(#enum_ident::#variant_ident(#(#bindings),*))
+                    #nats_micro::ServiceErrorMatch::Typed(#enum_ident::#variant_ident(#(#bindings),*))
                 }
-                None => ::nats_micro::ServiceErrorMatch::Untyped(response),
+                None => #nats_micro::ServiceErrorMatch::Untyped(response),
             },
         },
     )
@@ -207,6 +209,7 @@ fn build_named_variant_tokens(
     fields: &syn::FieldsNamed,
     is_internal: bool,
 ) -> (TokenStream, TokenStream, TokenStream) {
+    let nats_micro = nats_micro_path();
     // Named variants deliberately use the same tuple-shaped details payload as
     // tuple variants. That keeps the reconstruction logic uniform and avoids a
     // second wire format whose field names would become part of the protocol.
@@ -239,9 +242,9 @@ fn build_named_variant_tokens(
                 .and_then(|details| ::serde_json::from_value::<#tuple_type>(details).ok())
             {
                 Some(#deserialize_pattern) => {
-                    ::nats_micro::ServiceErrorMatch::Typed(#enum_ident::#variant_ident { #(#field_idents: #bindings),* })
+                    #nats_micro::ServiceErrorMatch::Typed(#enum_ident::#variant_ident { #(#field_idents: #bindings),* })
                 }
-                None => ::nats_micro::ServiceErrorMatch::Untyped(response),
+                None => #nats_micro::ServiceErrorMatch::Untyped(response),
             },
         },
     )
