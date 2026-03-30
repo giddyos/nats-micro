@@ -97,28 +97,7 @@ async fn handle_endpoint_request(
     let req = prepared.request;
     let request_subject = req.subject.clone();
 
-    let user = match app.resolve_user(&req, endpoint_def.auth_required).await {
-        Ok(user) => user,
-        Err(err) => {
-            debug!(
-                service = %service_name,
-                group = %endpoint_def.group,
-                subject = %request_subject,
-                request_id = %request_id,
-                "request authentication failed"
-            );
-            let err = err.into_nats_error(request_id.clone());
-            let _ = respond_error(&raw_req, &err).await;
-            return;
-        }
-    };
-
-    let mut ctx = RequestContext::new(
-        req,
-        app.state.clone(),
-        user,
-        endpoint_def.subject_template.clone(),
-    );
+    let mut ctx = RequestContext::new(req, app.state.clone(), endpoint_def.subject_template.clone());
     #[cfg(feature = "encryption")]
     {
         ctx = ctx.__with_ephemeral_pub(prepared.ephemeral_pub);
@@ -325,22 +304,7 @@ async fn handle_consumer_message(
 
     let req = prepared.request;
 
-    let user = match app.resolve_user(&req, consumer_def.auth_required).await {
-        Ok(user) => user,
-        Err(err) => {
-            error!(
-                service = %service_name,
-                error = %err,
-                consumer = %durable,
-                request_id = %request_id,
-                "consumer auth resolution failed"
-            );
-            let _ = message.ack_with(AckKind::Nak(None)).await;
-            return;
-        }
-    };
-
-    let mut ctx = RequestContext::new(req, app.state.clone(), user, None);
+    let mut ctx = RequestContext::new(req, app.state.clone(), None);
     #[cfg(feature = "encryption")]
     {
         ctx = ctx.__with_ephemeral_pub(prepared.ephemeral_pub);

@@ -1,42 +1,8 @@
-use std::{ops::Deref, sync::Arc};
+use std::{future::Future, ops::Deref, sync::Arc};
 
-use futures::future::BoxFuture;
 use thiserror::Error;
 
-use crate::{error::NatsErrorResponse, request::NatsRequest};
-
-pub type BoxAuthUser = Arc<dyn std::any::Any + Send + Sync>;
-
-type AuthResolverFn =
-    dyn Fn(&NatsRequest) -> BoxFuture<'static, Result<BoxAuthUser, AuthError>> + Send + Sync;
-
-#[derive(Clone)]
-pub struct AuthConfig {
-    resolver: Arc<AuthResolverFn>,
-}
-
-impl AuthConfig {
-    pub fn new<U, F, Fut>(resolver: F) -> Self
-    where
-        U: Send + Sync + 'static,
-        F: Fn(&NatsRequest) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Result<U, AuthError>> + Send + 'static,
-    {
-        Self {
-            resolver: Arc::new(move |req| {
-                let fut = resolver(req);
-                Box::pin(async move {
-                    let user = fut.await?;
-                    Ok(Arc::new(user) as BoxAuthUser)
-                })
-            }),
-        }
-    }
-
-    pub async fn resolve(&self, req: &NatsRequest) -> Result<BoxAuthUser, AuthError> {
-        (self.resolver)(req).await
-    }
-}
+use crate::{error::NatsErrorResponse, handler::RequestContext};
 
 #[derive(Debug, Error, Clone)]
 pub enum AuthError {
@@ -71,11 +37,21 @@ impl crate::error::IntoNatsError for AuthError {
     }
 }
 
+pub trait FromAuthRequest: Sized + Send + Sync + 'static {
+    fn from_auth_request(
+        ctx: &RequestContext,
+    ) -> impl Future<Output = Result<Self, AuthError>> + Send;
+}
+
 #[derive(Clone)]
 pub struct Auth<U>(Arc<U>);
 
 impl<U> Auth<U> {
-    pub fn new(inner: Arc<U>) -> Self {
+    pub fn new(inner: U) -> Self {
+        Self(Arc::new(inner))
+    }
+
+    pub fn from_arc(inner: Arc<U>) -> Self {
         Self(inner)
     }
 

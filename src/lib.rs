@@ -25,7 +25,7 @@ mod utils;
 pub use app::NatsApp;
 pub use async_nats;
 pub use async_nats::jetstream::consumer::push::Config as ConsumerConfig;
-pub use auth::{Auth, AuthConfig, AuthError};
+pub use auth::{Auth, AuthError, FromAuthRequest};
 pub use consumer::{ConsumerDefinition, ConsumerHandlerFn};
 pub use error::{
     ClientError, ClientTransportError, FromNatsErrorResponse, IntoNatsError, NatsError,

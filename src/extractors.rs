@@ -1,19 +1,21 @@
-use std::{fmt::Display, str::FromStr, sync::Arc};
+use std::{fmt::Display, future::Future, str::FromStr, sync::Arc};
 
 use bytes::Bytes;
 use prost::Message;
 use serde::de::DeserializeOwned;
 
 use crate::{
-    auth::Auth,
-    error::NatsErrorResponse,
+    auth::{Auth, AuthError, FromAuthRequest},
+    error::{IntoNatsError, NatsErrorResponse},
     handler::RequestContext,
     request::{Header, Headers, NatsRequest},
     utils::extract_subject_param,
 };
 
 pub trait FromRequest: Sized + Send + 'static {
-    fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse>;
+    fn from_request(
+        ctx: &RequestContext,
+    ) -> impl Future<Output = Result<Self, NatsErrorResponse>> + Send;
 }
 
 pub trait FromSubjectParam: Sized + Send + 'static {
@@ -37,7 +39,7 @@ impl<T> std::ops::Deref for Payload<T> {
 }
 
 impl<T: FromPayload> FromRequest for Payload<T> {
-    fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
+    async fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
         T::from_payload(ctx).map(Payload)
     }
 }
@@ -105,25 +107,25 @@ impl std::ops::Deref for Subject {
 }
 
 impl FromRequest for NatsRequest {
-    fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
+    async fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
         Ok(ctx.request.clone())
     }
 }
 
 impl FromRequest for Headers {
-    fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
+    async fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
         Ok(ctx.request.headers.clone())
     }
 }
 
 impl FromRequest for RequestId {
-    fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
+    async fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
         Ok(RequestId(ctx.request.request_id.clone()))
     }
 }
 
 impl FromRequest for Subject {
-    fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
+    async fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
         Ok(Subject(ctx.request.subject.clone()))
     }
 }
@@ -180,7 +182,7 @@ impl<T> FromRequest for State<T>
 where
     T: Send + Sync + 'static,
 {
-    fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
+    async fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
         ctx.states.get::<T>().map(State).ok_or_else(|| {
             NatsErrorResponse::internal(
                 "STATE_NOT_FOUND",
@@ -193,49 +195,25 @@ where
 
 impl<U> FromRequest for Auth<U>
 where
-    U: Send + Sync + 'static,
+    U: FromAuthRequest,
 {
-    fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
-        let user = ctx.user.as_ref().ok_or_else(|| {
-            NatsErrorResponse::unauthorized("UNAUTHORIZED", "authentication required")
-                .with_request_id(ctx.request.request_id.clone())
-        })?;
-
-        let typed = user.clone().downcast::<U>().map_err(|_| {
-            NatsErrorResponse::internal(
-                "AUTH_TYPE_MISMATCH",
-                format!(
-                    "requested auth type `{}` did not match resolver output",
-                    std::any::type_name::<U>()
-                ),
-            )
-            .with_request_id(ctx.request.request_id.clone())
-        })?;
-
-        Ok(Auth::new(typed))
+    async fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
+        U::from_auth_request(ctx)
+            .await
+            .map(Auth::new)
+            .map_err(|error| error.into_nats_error(ctx.request.request_id.clone()))
     }
 }
 
 impl<U> FromRequest for Option<Auth<U>>
 where
-    U: Send + Sync + 'static,
+    U: FromAuthRequest,
 {
-    fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
-        match ctx.user.as_ref() {
-            Some(user) => {
-                let typed = user.clone().downcast::<U>().map_err(|_| {
-                    NatsErrorResponse::internal(
-                        "AUTH_TYPE_MISMATCH",
-                        format!(
-                            "requested auth type `{}` did not match resolver output",
-                            std::any::type_name::<U>()
-                        ),
-                    )
-                    .with_request_id(ctx.request.request_id.clone())
-                })?;
-                Ok(Some(Auth::new(typed)))
-            }
-            None => Ok(None),
+    async fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
+        match U::from_auth_request(ctx).await {
+            Ok(user) => Ok(Some(Auth::new(user))),
+            Err(AuthError::MissingCredentials) => Ok(None),
+            Err(error) => Err(error.into_nats_error(ctx.request.request_id.clone())),
         }
     }
 }
@@ -270,7 +248,7 @@ impl<T> FromRequest for SubjectParam<T>
 where
     T: FromSubjectParam,
 {
-    fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
+    async fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
         let param_name = ctx.current_param_name.as_deref().ok_or_else(|| {
             NatsErrorResponse::internal(
                 "PARAM_NAME_MISSING",

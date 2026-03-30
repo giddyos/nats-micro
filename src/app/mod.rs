@@ -14,8 +14,8 @@ use tokio::{sync::watch, task::JoinHandle};
 use tracing::{debug, error, info};
 
 use crate::{
-    auth::AuthConfig, consumer::ConsumerDefinition, error::NatsErrorResponse, request::NatsRequest,
-    service::NatsService, service::ServiceDefinition, state::StateMap, utils::has_auth_headers,
+    consumer::ConsumerDefinition, error::NatsErrorResponse, request::NatsRequest,
+    service::NatsService, service::ServiceDefinition, state::StateMap,
 };
 
 use self::{
@@ -34,7 +34,6 @@ pub use self::workers::success_headers;
 pub struct NatsApp {
     client: async_nats::Client,
     state: StateMap,
-    auth: Option<AuthConfig>,
     service_defs: Vec<ServiceDefinition>,
     shutdown_hook: Option<ShutdownHook>,
 }
@@ -44,7 +43,6 @@ impl NatsApp {
         Self {
             client,
             state: StateMap::new(),
-            auth: None,
             service_defs: Vec::new(),
             shutdown_hook: None,
         }
@@ -55,16 +53,6 @@ impl NatsApp {
         T: Send + Sync + 'static,
     {
         self.state = self.state.insert(value);
-        self
-    }
-
-    pub fn with_auth<U, F, Fut>(mut self, resolver: F) -> Self
-    where
-        U: Send + Sync + 'static,
-        F: Fn(&NatsRequest) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = Result<U, crate::auth::AuthError>> + Send + 'static,
-    {
-        self.auth = Some(AuthConfig::new::<U, _, _>(resolver));
         self
     }
 
@@ -380,23 +368,5 @@ impl NatsApp {
         }
 
         Ok(workers)
-    }
-
-    async fn resolve_user(
-        &self,
-        req: &NatsRequest,
-        auth_required: bool,
-    ) -> Result<Option<crate::auth::BoxAuthUser>, crate::auth::AuthError> {
-        let Some(auth) = &self.auth else {
-            return Ok(None);
-        };
-
-        let should_auth = auth_required || has_auth_headers(&req.headers);
-
-        if !should_auth {
-            return Ok(None);
-        }
-
-        auth.resolve(req).await.map(Some)
     }
 }
