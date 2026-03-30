@@ -1,8 +1,8 @@
 use async_nats::HeaderMap;
 use bytes::Bytes;
 use nats_micro::{
-    FromPayload, FromRequest, FromSubjectParam, Headers, NatsRequest, Proto, RequestContext,
-    StateMap, Subject, SubjectParam,
+    Auth, AuthError, FromAuthRequest, FromPayload, FromRequest, FromSubjectParam, Headers,
+    NatsRequest, Proto, RequestContext, StateMap, Subject, SubjectParam,
 };
 use prost::Message;
 
@@ -25,7 +25,6 @@ fn request_context(payload: Vec<u8>) -> RequestContext {
         },
         StateMap::new(),
         None,
-        None,
     )
 }
 
@@ -39,7 +38,6 @@ fn subject_param_context(subject: &str, template: &str, param_name: &str) -> Req
             request_id: "req-subject-1".to_string(),
         },
         StateMap::new(),
-        None,
         Some(template.to_string()),
     );
     ctx.current_param_name = Some(param_name.to_string());
@@ -48,6 +46,40 @@ fn subject_param_context(subject: &str, template: &str, param_name: &str) -> Req
 
 #[derive(Debug, PartialEq)]
 struct FlexibleBool(bool);
+
+#[derive(Debug, PartialEq, Eq)]
+struct JwtUser {
+    subject: String,
+}
+
+impl FromAuthRequest for JwtUser {
+    async fn from_auth_request(ctx: &RequestContext) -> Result<Self, AuthError> {
+        match ctx.request.headers.get("authorization").map(|value| value.as_str()) {
+            Some("Bearer demo-token") => Ok(Self {
+                subject: "demo-user".to_string(),
+            }),
+            Some(_) => Err(AuthError::InvalidCredentials),
+            None => Err(AuthError::MissingCredentials),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ApiUser {
+    key_id: String,
+}
+
+impl FromAuthRequest for ApiUser {
+    async fn from_auth_request(ctx: &RequestContext) -> Result<Self, AuthError> {
+        match ctx.request.headers.get("x-api-key").map(|value| value.as_str()) {
+            Some("demo-key") => Ok(Self {
+                key_id: "api-demo".to_string(),
+            }),
+            Some(_) => Err(AuthError::Forbidden),
+            None => Err(AuthError::MissingCredentials),
+        }
+    }
+}
 
 impl FromSubjectParam for FlexibleBool {
     type Err = &'static str;
@@ -86,31 +118,35 @@ fn invalid_protobuf_payloads_return_bad_request() {
     assert!(!error.message.is_empty());
 }
 
-#[test]
-fn subject_params_use_default_integer_parsers() {
+#[tokio::test]
+async fn subject_params_use_default_integer_parsers() {
     let ctx = subject_param_context("users.42.profile", "users.{user_id}.profile", "user_id");
 
-    let parsed = SubjectParam::<u32>::from_request(&ctx).expect("integer subject param parses");
+    let parsed = SubjectParam::<u32>::from_request(&ctx)
+        .await
+        .expect("integer subject param parses");
 
     assert_eq!(parsed.0, 42);
 }
 
-#[test]
-fn subject_params_support_custom_parsers() {
+#[tokio::test]
+async fn subject_params_support_custom_parsers() {
     let ctx = subject_param_context("flags.1", "flags.{enabled}", "enabled");
 
     let parsed = SubjectParam::<FlexibleBool>::from_request(&ctx)
+        .await
         .expect("custom subject param parser should be used");
 
     assert_eq!(parsed.0, FlexibleBool(true));
 }
 
-#[test]
-fn missing_subject_params_return_bad_request() {
+#[tokio::test]
+async fn missing_subject_params_return_bad_request() {
     let ctx = subject_param_context("users.profile", "users.{user_id}.profile", "user_id");
 
-    let error =
-        SubjectParam::<u32>::from_request(&ctx).expect_err("missing subject param should fail");
+    let error = SubjectParam::<u32>::from_request(&ctx)
+        .await
+        .expect_err("missing subject param should fail");
 
     assert_eq!(error.code, 400);
     assert_eq!(error.error, "SUBJECT_PARAM_MISSING");
@@ -118,21 +154,25 @@ fn missing_subject_params_return_bad_request() {
     assert!(!error.message.is_empty());
 }
 
-#[test]
-fn subject_extractor_works() {
+#[tokio::test]
+async fn subject_extractor_works() {
     let ctx = request_context(vec![]);
-    let subject = Subject::from_request(&ctx).expect("subject extractor should work");
+    let subject = Subject::from_request(&ctx)
+        .await
+        .expect("subject extractor should work");
     assert_eq!(subject.0, "proto.example");
 }
 
-#[test]
-fn headers_extractor_returns_plaintext_headers() {
+#[tokio::test]
+async fn headers_extractor_returns_plaintext_headers() {
     let mut ctx = request_context(vec![]);
     ctx.request.headers.insert("x-request-id", "req-proto-1");
     ctx.request.headers.append("x-role", "admin");
     ctx.request.headers.append("x-role", "writer");
 
-    let headers = Headers::from_request(&ctx).expect("headers extractor should work");
+    let headers = Headers::from_request(&ctx)
+        .await
+        .expect("headers extractor should work");
 
     assert_eq!(headers.len(), 3);
     assert_eq!(headers[0].key, "x-request-id");
@@ -141,4 +181,49 @@ fn headers_extractor_returns_plaintext_headers() {
     assert_eq!(headers[1].value, "admin");
     assert_eq!(headers[2].key, "x-role");
     assert_eq!(headers[2].value, "writer");
+}
+
+#[tokio::test]
+async fn auth_extractors_resolve_each_type_from_the_request() {
+    let mut ctx = request_context(vec![]);
+    ctx.request
+        .headers
+        .insert("authorization", "Bearer demo-token");
+    ctx.request.headers.insert("x-api-key", "demo-key");
+
+    let jwt_user = Auth::<JwtUser>::from_request(&ctx)
+        .await
+        .expect("jwt auth resolves");
+    let api_user = Auth::<ApiUser>::from_request(&ctx)
+        .await
+        .expect("api-key auth resolves");
+
+    assert_eq!(jwt_user.subject, "demo-user");
+    assert_eq!(api_user.key_id, "api-demo");
+}
+
+#[tokio::test]
+async fn optional_auth_returns_none_when_credentials_are_missing() {
+    let ctx = request_context(vec![]);
+
+    let user = Option::<Auth<JwtUser>>::from_request(&ctx)
+        .await
+        .expect("missing credentials stay optional");
+
+    assert!(user.is_none());
+}
+
+#[tokio::test]
+async fn optional_auth_preserves_non_missing_auth_failures() {
+    let mut ctx = request_context(vec![]);
+    ctx.request.headers.insert("x-api-key", "wrong-key");
+
+    let error = match Option::<Auth<ApiUser>>::from_request(&ctx).await {
+        Ok(_) => panic!("invalid credentials should still fail"),
+        Err(error) => error,
+    };
+
+    assert_eq!(error.code, 403);
+    assert_eq!(error.error, "FORBIDDEN");
+    assert_eq!(error.request_id, "req-proto-1");
 }

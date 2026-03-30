@@ -1,12 +1,27 @@
 #![cfg(feature = "encryption")]
 
-use std::sync::Arc;
-
 use async_nats::HeaderMap;
 use nats_micro::{
-    __test_support, AuthConfig, AuthError, BuiltRequest, Encrypted, FromRequest, Headers,
-    IntoNatsResponse, NatsRequest, RequestContext, ServiceKeyPair, ServiceRecipient, StateMap,
+    __test_support, Auth, AuthError, BuiltRequest, Encrypted, FromAuthRequest, FromRequest,
+    Headers, IntoNatsResponse, NatsRequest, RequestContext, ServiceKeyPair, ServiceRecipient,
+    StateMap,
 };
+
+struct DemoUser {
+    id: String,
+}
+
+impl FromAuthRequest for DemoUser {
+    async fn from_auth_request(ctx: &RequestContext) -> Result<Self, AuthError> {
+        match ctx.request.headers.get("authorization").map(|value| value.as_str()) {
+            Some("Bearer demo-token") => Ok(Self {
+                id: "demo-user".to_string(),
+            }),
+            Some(_) => Err(AuthError::InvalidCredentials),
+            None => Err(AuthError::MissingCredentials),
+        }
+    }
+}
 
 fn state_with_keypair(keypair: ServiceKeyPair) -> StateMap {
     StateMap::new().insert(keypair)
@@ -81,27 +96,11 @@ async fn prepare_request_for_dispatch_runs_before_auth_resolution() {
     )
     .expect("header-only request decrypts");
 
-    let auth = AuthConfig::new(|request: &NatsRequest| {
-        let auth = request
-            .headers
-            .get("authorization")
-            .map(|value| value.as_str().to_string());
-        async move {
-            match auth.as_deref() {
-                Some("Bearer demo-token") => Ok("demo-user".to_string()),
-                Some(_) => Err(AuthError::InvalidCredentials),
-                None => Err(AuthError::MissingCredentials),
-            }
-        }
-    });
-
-    let user = auth
-        .resolve(&prepared)
+    let user = Auth::<DemoUser>::from_request(&RequestContext::new(prepared, StateMap::new(), None))
         .await
         .expect("auth uses decrypted headers");
 
-    let user = Arc::downcast::<String>(user).expect("string user type");
-    assert_eq!(user.as_str(), "demo-user");
+    assert_eq!(user.id, "demo-user");
 }
 
 #[test]
@@ -127,7 +126,7 @@ fn header_only_encryption_can_drive_encrypted_response() {
     )
     .expect("header-only request decrypts");
 
-    let ctx = RequestContext::new(prepared, state, None, None).__with_ephemeral_pub(ephemeral_pub);
+    let ctx = RequestContext::new(prepared, state, None).__with_ephemeral_pub(ephemeral_pub);
 
     let response = Encrypted(String::from("encrypted response"))
         .into_response(&ctx)
@@ -257,8 +256,8 @@ fn plain_request_without_encryption_passes_through() {
     );
 }
 
-#[test]
-fn headers_extractor_tracks_encrypted_precedence() {
+#[tokio::test]
+async fn headers_extractor_tracks_encrypted_precedence() {
     let keypair = ServiceKeyPair::generate();
     let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
     let built = recipient
@@ -287,8 +286,10 @@ fn headers_extractor_tracks_encrypted_precedence() {
         Some("Bearer encrypted")
     );
 
-    let ctx = RequestContext::new(prepared, state, None, None).__with_ephemeral_pub(ephemeral_pub);
-    let headers = Headers::from_request(&ctx).expect("headers extractor should work");
+    let ctx = RequestContext::new(prepared, state, None).__with_ephemeral_pub(ephemeral_pub);
+    let headers = Headers::from_request(&ctx)
+        .await
+        .expect("headers extractor should work");
 
     let authorization = headers
         .iter()
