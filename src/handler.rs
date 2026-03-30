@@ -5,6 +5,7 @@ use crate::{
     extractors::FromRequest,
     request::NatsRequest,
     response::{IntoNatsResponse, NatsResponse},
+    shutdown_signal::ShutdownSignal,
     state::StateMap,
 };
 
@@ -14,6 +15,7 @@ pub type HandlerFuture =
 #[derive(Clone)]
 pub struct HandlerFn {
     inner: Arc<dyn Fn(RequestContext) -> HandlerFuture + Send + Sync>,
+    requires_shutdown_signal: bool,
 }
 
 impl HandlerFn {
@@ -21,11 +23,25 @@ impl HandlerFn {
     where
         F: Fn(RequestContext) -> HandlerFuture + Send + Sync + 'static,
     {
-        Self { inner: Arc::new(f) }
+        Self::new_with_shutdown_signal_support(false, f)
+    }
+
+    pub fn new_with_shutdown_signal_support<F>(requires_shutdown_signal: bool, f: F) -> Self
+    where
+        F: Fn(RequestContext) -> HandlerFuture + Send + Sync + 'static,
+    {
+        Self {
+            inner: Arc::new(f),
+            requires_shutdown_signal,
+        }
     }
 
     pub fn call(&self, ctx: RequestContext) -> HandlerFuture {
         (self.inner)(ctx)
+    }
+
+    pub fn requires_shutdown_signal(&self) -> bool {
+        self.requires_shutdown_signal
     }
 }
 
@@ -34,6 +50,7 @@ pub struct RequestContext {
     pub states: StateMap,
     pub subject_template: Option<String>,
     pub current_param_name: Option<String>,
+    shutdown_signal: Option<ShutdownSignal>,
     #[cfg(feature = "encryption")]
     pub(crate) ephemeral_pub: Option<[u8; 32]>,
 }
@@ -45,6 +62,7 @@ impl Clone for RequestContext {
             states: self.states.clone(),
             subject_template: self.subject_template.clone(),
             current_param_name: self.current_param_name.clone(),
+            shutdown_signal: self.shutdown_signal.clone(),
             #[cfg(feature = "encryption")]
             ephemeral_pub: self.ephemeral_pub,
         }
@@ -58,6 +76,7 @@ impl RequestContext {
             states,
             subject_template,
             current_param_name: None,
+            shutdown_signal: None,
             #[cfg(feature = "encryption")]
             ephemeral_pub: None,
         }
@@ -67,6 +86,16 @@ impl RequestContext {
         let mut next = self.clone();
         next.current_param_name = Some(name.into());
         next
+    }
+
+    pub fn shutdown_signal(&self) -> Option<ShutdownSignal> {
+        self.shutdown_signal.clone()
+    }
+
+    #[doc(hidden)]
+    pub fn __with_shutdown_signal(mut self, shutdown_signal: ShutdownSignal) -> Self {
+        self.shutdown_signal = Some(shutdown_signal);
+        self
     }
 
     #[cfg(feature = "encryption")]

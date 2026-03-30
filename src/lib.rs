@@ -19,6 +19,7 @@ mod registry;
 mod request;
 mod response;
 mod service;
+mod shutdown_signal;
 mod state;
 mod utils;
 
@@ -26,6 +27,7 @@ pub use app::{NatsApp, NatsAppConfig, WorkerFailurePolicy};
 pub use async_nats;
 pub use async_nats::jetstream::consumer::push::Config as ConsumerConfig;
 pub use auth::{Auth, AuthError, FromAuthRequest};
+pub use prost;
 pub use consumer::{ConsumerDefinition, ConsumerHandlerFn};
 pub use error::{
     ClientError, ClientTransportError, FromNatsErrorResponse, IntoNatsError, NatsError,
@@ -42,6 +44,9 @@ pub use service::{
     ConsumerInfo, EndpointDefinition, EndpointInfo, NatsService, ParamInfo, PayloadEncoding,
     PayloadMeta, ResponseEncoding, ResponseMeta, ServiceDefinition, ServiceMetadata,
 };
+pub use serde;
+pub use serde_json;
+pub use shutdown_signal::ShutdownSignal;
 pub use state::StateMap;
 
 #[cfg(feature = "client")]

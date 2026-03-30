@@ -18,6 +18,7 @@ use crate::{
     handler::RequestContext,
     request::NatsRequest,
     service::EndpointDefinition,
+    shutdown_signal::{ShutdownSignal, ShutdownState},
     utils::ensure_request_id,
 };
 
@@ -59,6 +60,7 @@ async fn handle_endpoint_request(
     endpoint_def: EndpointDefinition,
     service_name: String,
     raw_req: service::Request,
+    shutdown_signal: Option<ShutdownSignal>,
 ) {
     let headers: crate::Headers = raw_req.message.headers.clone().unwrap_or_default().into();
     let request_id = ensure_request_id(&headers);
@@ -97,11 +99,10 @@ async fn handle_endpoint_request(
     let req = prepared.request;
     let request_subject = req.subject.clone();
 
-    let mut ctx = RequestContext::new(
-        req,
-        app.state.clone(),
-        endpoint_def.subject_template.clone(),
-    );
+    let mut ctx = RequestContext::new(req, app.state.clone(), endpoint_def.subject_template.clone());
+    if let Some(shutdown_signal) = shutdown_signal {
+        ctx = ctx.__with_shutdown_signal(shutdown_signal);
+    }
     #[cfg(feature = "encryption")]
     {
         ctx = ctx.__with_ephemeral_pub(prepared.ephemeral_pub);
@@ -149,9 +150,10 @@ pub(super) async fn run_endpoint_worker(
     service_name: String,
     mut endpoint_stream: endpoint::Endpoint,
     concurrency_limit: u64,
-    mut shutdown_rx: watch::Receiver<bool>,
+    mut shutdown_rx: watch::Receiver<ShutdownState>,
 ) -> anyhow::Result<()> {
     let full_subject = endpoint_def.full_subject();
+    let requires_shutdown_signal = endpoint_def.handler.requires_shutdown_signal();
     let semaphore = Arc::new(Semaphore::new(semaphore_permits(concurrency_limit)));
     let mut tasks = JoinSet::new();
     let mut should_stop_endpoint = false;
@@ -217,9 +219,11 @@ pub(super) async fn run_endpoint_worker(
         let app = app.clone();
         let endpoint_def = endpoint_def.clone();
         let service_name = service_name.clone();
+        let shutdown_signal = requires_shutdown_signal.then(|| ShutdownSignal::new(shutdown_rx.clone()));
         tasks.spawn(async move {
             let _permit = permit;
-            handle_endpoint_request(app, endpoint_def, service_name, raw_req).await;
+            handle_endpoint_request(app, endpoint_def, service_name, raw_req, shutdown_signal)
+                .await;
         });
     };
 
@@ -273,6 +277,7 @@ async fn handle_consumer_message(
     service_name: String,
     durable: String,
     message: jetstream::Message,
+    shutdown_signal: Option<ShutdownSignal>,
 ) {
     let headers: crate::Headers = message.headers.clone().unwrap_or_default().into();
     let request_id = ensure_request_id(&headers);
@@ -311,6 +316,9 @@ async fn handle_consumer_message(
     let req = prepared.request;
 
     let mut ctx = RequestContext::new(req, app.state.clone(), None);
+    if let Some(shutdown_signal) = shutdown_signal {
+        ctx = ctx.__with_shutdown_signal(shutdown_signal);
+    }
     #[cfg(feature = "encryption")]
     {
         ctx = ctx.__with_ephemeral_pub(prepared.ephemeral_pub);
@@ -360,8 +368,9 @@ pub(super) async fn run_consumer_worker(
     durable: String,
     mut messages: async_nats::jetstream::consumer::push::Messages,
     concurrency_limit: u64,
-    mut shutdown_rx: watch::Receiver<bool>,
+    mut shutdown_rx: watch::Receiver<ShutdownState>,
 ) -> anyhow::Result<()> {
+    let requires_shutdown_signal = consumer_def.handler.requires_shutdown_signal();
     let semaphore = Arc::new(Semaphore::new(semaphore_permits(concurrency_limit)));
     let mut tasks = JoinSet::new();
 
@@ -439,9 +448,18 @@ pub(super) async fn run_consumer_worker(
         let consumer_def = consumer_def.clone();
         let service_name = service_name.clone();
         let durable = durable.clone();
+        let shutdown_signal = requires_shutdown_signal.then(|| ShutdownSignal::new(shutdown_rx.clone()));
         tasks.spawn(async move {
             let _permit = permit;
-            handle_consumer_message(app, consumer_def, service_name, durable, message).await;
+            handle_consumer_message(
+                app,
+                consumer_def,
+                service_name,
+                durable,
+                message,
+                shutdown_signal,
+            )
+            .await;
         });
     };
 

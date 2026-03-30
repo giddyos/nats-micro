@@ -15,3 +15,4 @@ pub use crate::service::{
     ConsumerInfo, EndpointDefinition, EndpointInfo, NatsService, ParamInfo, ServiceDefinition,
     ServiceMetadata,
 };
+pub use crate::ShutdownSignal;

@@ -1,7 +1,9 @@
 use bytes::Bytes;
-use serde::Serialize;
 
-use crate::{Proto, error::NatsErrorResponse, extractors::Json, handler::RequestContext};
+use crate::{
+    Proto, error::NatsErrorResponse, extractors::Json, handler::RequestContext,
+    serde::Serialize,
+};
 
 pub const X_SUCCESS_HEADER: &str = "x-success";
 
@@ -63,7 +65,7 @@ where
     T: Serialize,
 {
     fn into_response(self, ctx: &RequestContext) -> Result<NatsResponse, NatsErrorResponse> {
-        serde_json::to_vec(&self.0)
+        crate::serde_json::to_vec(&self.0)
             .map_err(|e| {
                 NatsErrorResponse::internal("SERIALIZATION_ERROR", e.to_string())
                     .with_request_id(ctx.request.request_id.clone())
@@ -74,7 +76,7 @@ where
 
 impl<T> IntoNatsResponse for Proto<T>
 where
-    T: prost::Message,
+    T: crate::prost::Message,
 {
     fn into_response(self, ctx: &RequestContext) -> Result<NatsResponse, NatsErrorResponse> {
         let mut buf = Vec::new();
@@ -115,7 +117,7 @@ pub fn response_success_from_headers<
 }
 
 pub fn deserialize_response<
-    T: ::serde::de::DeserializeOwned,
+    T: crate::serde::de::DeserializeOwned,
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
     headers: Option<&crate::async_nats::HeaderMap>,
@@ -123,7 +125,7 @@ pub fn deserialize_response<
 ) -> Result<T, crate::ClientError<E>> {
     match response_success_from_headers::<E>(headers)? {
         Some(true) => {
-            return ::serde_json::from_slice(payload).map_err(|error| {
+            return crate::serde_json::from_slice(payload).map_err(|error| {
                 crate::ClientError::deserialize(crate::NatsErrorResponse::internal(
                     "DESERIALIZATION_ERROR",
                     error.to_string(),
@@ -137,7 +139,7 @@ pub fn deserialize_response<
         None => {}
     }
 
-    match ::serde_json::from_slice(payload) {
+    match crate::serde_json::from_slice(payload) {
         Ok(value) => Ok(value),
         Err(error) => {
             if let Some(response) = crate::error::try_deserialize_error_response(payload) {
@@ -152,7 +154,7 @@ pub fn deserialize_response<
 }
 
 pub fn deserialize_proto_response<
-    T: ::prost::Message + Default,
+    T: crate::prost::Message + Default,
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
     headers: Option<&crate::async_nats::HeaderMap>,
@@ -310,15 +312,15 @@ pub fn decrypt_client_response<
     }
 }
 
-pub fn serialize_serde_payload<T: ::serde::Serialize>(
+pub fn serialize_serde_payload<T: crate::serde::Serialize>(
     payload: &T,
 ) -> Result<::bytes::Bytes, crate::NatsErrorResponse> {
-    ::serde_json::to_vec(payload)
+    crate::serde_json::to_vec(payload)
         .map(::bytes::Bytes::from)
         .map_err(|e| crate::NatsErrorResponse::internal("SERIALIZATION_ERROR", e.to_string()))
 }
 
-pub fn serialize_proto_payload<T: ::prost::Message>(
+pub fn serialize_proto_payload<T: crate::prost::Message>(
     payload: &T,
 ) -> Result<::bytes::Bytes, crate::NatsErrorResponse> {
     let mut buf = Vec::new();

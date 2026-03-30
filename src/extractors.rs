@@ -1,14 +1,15 @@
 use std::{fmt::Display, future::Future, str::FromStr, sync::Arc};
 
 use bytes::Bytes;
-use prost::Message;
-use serde::de::DeserializeOwned;
 
 use crate::{
     auth::{Auth, AuthError, FromAuthRequest},
     error::{IntoNatsError, NatsErrorResponse},
     handler::RequestContext,
+    prost::Message,
     request::{Header, Headers, NatsRequest},
+    serde::de::DeserializeOwned,
+    shutdown_signal::ShutdownSignal,
     utils::extract_subject_param,
 };
 
@@ -130,12 +131,24 @@ impl FromRequest for Subject {
     }
 }
 
+impl FromRequest for ShutdownSignal {
+    async fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
+        ctx.shutdown_signal().ok_or_else(|| {
+            NatsErrorResponse::internal(
+                "SHUTDOWN_SIGNAL_UNAVAILABLE",
+                "shutdown signal extractor was requested but this handler was not registered with shutdown support",
+            )
+            .with_request_id(ctx.request.request_id.clone())
+        })
+    }
+}
+
 impl<T> FromPayload for Json<T>
 where
     T: DeserializeOwned + Send + 'static,
 {
     fn from_payload(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
-        let value = serde_json::from_slice::<T>(&ctx.request.payload).map_err(|e| {
+        let value = crate::serde_json::from_slice::<T>(&ctx.request.payload).map_err(|e| {
             NatsErrorResponse::bad_request("BAD_JSON", e.to_string())
                 .with_request_id(ctx.request.request_id.clone())
         })?;

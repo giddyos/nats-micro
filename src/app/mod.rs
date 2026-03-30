@@ -19,7 +19,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::{
     consumer::ConsumerDefinition, error::NatsErrorResponse, request::NatsRequest,
-    service::NatsService, service::ServiceDefinition, state::StateMap,
+    service::NatsService, service::ServiceDefinition, shutdown_signal::ShutdownState,
+    state::StateMap,
 };
 
 use self::{
@@ -126,6 +127,7 @@ impl NatsApp {
         Fut: Future<Output = Result<()>>,
     {
         self.config.validate()?;
+        let shutdown_drain_timeout = self.config.shutdown_drain_timeout();
 
         if self.service_defs.is_empty() {
             anyhow::bail!(
@@ -133,7 +135,8 @@ impl NatsApp {
             );
         }
 
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let (shutdown_tx, shutdown_rx) =
+            watch::channel(ShutdownState::running(shutdown_drain_timeout));
         let (worker_events_tx, mut worker_events_rx) = mpsc::unbounded_channel::<WorkerExit>();
         let mut live_services: Vec<LiveService> = Vec::new();
         let total_services = self.service_defs.len();
@@ -155,7 +158,7 @@ impl NatsApp {
             {
                 Ok(svc) => svc,
                 Err(err) => {
-                    let _ = shutdown_tx.send(true);
+                    let _ = shutdown_tx.send(ShutdownState::requested(shutdown_drain_timeout));
                     for live_service in live_services {
                         let _ = live_service.shutdown(None).await;
                     }
@@ -222,7 +225,7 @@ impl NatsApp {
             );
         }
 
-        let _ = shutdown_tx.send(true);
+        let _ = shutdown_tx.send(ShutdownState::requested(shutdown_drain_timeout));
 
         let shutdown_hook_result = if self.shutdown_hook.is_some() {
             info!("running pre-shutdown hook");
@@ -239,7 +242,10 @@ impl NatsApp {
             service_count = live_services.len(),
             "waiting for workers to drain"
         );
-        let drain_deadline = shutdown_deadline(self.config.shutdown_drain_timeout());
+        let drain_deadline = shutdown_deadline(shutdown_drain_timeout);
+        if let Some(deadline) = drain_deadline {
+            let _ = shutdown_tx.send(ShutdownState::draining(shutdown_drain_timeout, deadline));
+        }
         let mut worker_shutdown_result = Ok(());
         for live_service in live_services {
             if let Err(err) = live_service.shutdown(drain_deadline).await
@@ -272,7 +278,7 @@ impl NatsApp {
     async fn spawn_service(
         &self,
         svc_def: ServiceDefinition,
-        shutdown_rx: watch::Receiver<bool>,
+        shutdown_rx: watch::Receiver<ShutdownState>,
         worker_events: mpsc::UnboundedSender<WorkerExit>,
     ) -> Result<LiveService> {
         let service_name = svc_def.metadata.name.clone();
@@ -377,7 +383,7 @@ impl NatsApp {
         &self,
         service_name: &str,
         consumers: &[ConsumerDefinition],
-        shutdown_rx: watch::Receiver<bool>,
+        shutdown_rx: watch::Receiver<ShutdownState>,
         worker_events: mpsc::UnboundedSender<WorkerExit>,
     ) -> Result<Vec<JoinHandle<()>>> {
         if consumers.is_empty() {

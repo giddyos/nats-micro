@@ -16,6 +16,8 @@ use tokio::{
 };
 use tracing::{error, warn};
 
+use crate::shutdown_signal::ShutdownState;
+
 pub(super) type ShutdownHookFuture = Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>;
 pub(super) type ShutdownHook = Arc<dyn Fn() -> ShutdownHookFuture + Send + Sync>;
 
@@ -51,9 +53,9 @@ impl LiveService {
 
 pub(super) fn shutdown_requested(
     changed: Result<(), watch::error::RecvError>,
-    shutdown_rx: &watch::Receiver<bool>,
+    shutdown_rx: &watch::Receiver<ShutdownState>,
 ) -> bool {
-    changed.is_err() || *shutdown_rx.borrow()
+    changed.is_err() || shutdown_rx.borrow().requested
 }
 
 pub(super) fn spawn_supervised_worker<Fut>(
