@@ -9,7 +9,7 @@ use crate::consumer::ConsumerArgs;
 use crate::endpoint::{
     EndpointArgs, PayloadEncoding, PayloadMeta, ResponseEncoding, ResponseMeta, build_handler_body,
     classify_return_type, extract_client_meta, extract_param_info, parse_subject_template,
-    validate_template_bindings,
+    requires_auth, validate_template_bindings,
 };
 
 #[derive(Debug, FromMeta)]
@@ -234,7 +234,7 @@ fn process_endpoint_method(
     let args = parse_attr::<EndpointArgs>(attr)?;
     let subject = &args.subject;
     let group = args.group.as_deref().unwrap_or("");
-    let auth_required = args.auth;
+    let auth_required = requires_auth(&method.sig);
     let concurrency_limit = args.concurrency_limit;
     let fn_name = &method.sig.ident;
 
@@ -368,7 +368,7 @@ fn process_consumer_method(
     let fn_name = &method.sig.ident;
     let stream = args.stream.as_deref().unwrap_or("DEFAULT");
     let durable = args.durable.unwrap_or_else(|| fn_name.to_string());
-    let auth_required = args.auth;
+    let auth_required = requires_auth(&method.sig);
     let concurrency_limit = args.concurrency_limit;
     let concurrency_limit_tokens = match concurrency_limit {
         Some(limit) => quote! { Some(#limit) },

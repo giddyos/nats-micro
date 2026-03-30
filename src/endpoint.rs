@@ -10,8 +10,6 @@ pub(crate) struct EndpointArgs {
     pub subject: String,
     pub group: Option<String>,
     pub queue_group: Option<String>,
-    #[darling(default)]
-    pub auth: bool,
     pub concurrency_limit: Option<u64>,
 }
 
@@ -57,7 +55,7 @@ pub(crate) fn build_handler_body(
         };
 
         extractors.push(quote! {
-            let #ident: #ty = match <#ty as ::nats_micro::__macros::FromRequest>::from_request(#ctx_expr) {
+            let #ident: #ty = match <#ty as ::nats_micro::__macros::FromRequest>::from_request(#ctx_expr).await {
                 Ok(value) => value,
                 Err(err) => return Err(err),
             };
@@ -114,6 +112,20 @@ pub(crate) fn extract_param_info(sig: &Signature) -> Result<Vec<TokenStream>, To
 
 pub(crate) fn is_subject_param(ty: &Type) -> bool {
     subject_param_inner_type(ty).is_some()
+}
+
+pub(crate) fn is_auth_type(ty: &Type) -> bool {
+    last_segment_ident(ty).as_deref() == Some("Auth")
+}
+
+pub(crate) fn requires_auth(sig: &Signature) -> bool {
+    sig.inputs.iter().any(|input| {
+        let FnArg::Typed(pat_type) = input else {
+            return false;
+        };
+        let ty = pat_type.ty.as_ref();
+        is_auth_type(ty) && !is_option_auth(ty)
+    })
 }
 
 pub(crate) fn parse_subject_template(

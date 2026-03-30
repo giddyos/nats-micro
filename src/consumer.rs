@@ -15,8 +15,6 @@ impl FromMeta for ConsumerConfigExpr {
 pub(crate) struct ConsumerArgs {
     pub stream: Option<String>,
     pub durable: Option<String>,
-    #[darling(default)]
-    pub auth: bool,
     pub concurrency_limit: Option<u64>,
     pub config: Option<ConsumerConfigExpr>,
 }
