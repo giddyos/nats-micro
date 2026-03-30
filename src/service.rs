@@ -899,8 +899,11 @@ fn generate_client_module(
 
 #[cfg(test)]
 mod tests {
-    use super::{ServiceArgs, expand_service, generate_client_module};
-    use syn::parse_quote;
+    use super::{
+        ServiceArgs, expand_service, generate_client_module, process_consumer_method,
+        process_endpoint_method,
+    };
+    use syn::{ImplItemFn, parse_quote};
 
     #[test]
     fn service_metadata_includes_prefix_when_present() {
@@ -936,5 +939,86 @@ mod tests {
             assert!(!expanded.contains("# [cfg (feature = \"encryption\") ]"));
         }
         assert!(!expanded.contains("# [cfg (feature = \"macros_encryption_feature\") ]"));
+    }
+
+    #[test]
+    fn generated_endpoint_handlers_only_enable_shutdown_support_when_requested() {
+        let struct_ident = parse_quote!(DemoService);
+        let idle_method: ImplItemFn = parse_quote! {
+            #[endpoint(subject = "status", group = "demo")]
+            async fn status() -> Result<&'static str, nats_micro::NatsErrorResponse> {
+                Ok("ok")
+            }
+        };
+        let idle_attr = idle_method
+            .attrs
+            .iter()
+            .find(|attr| attr.path().is_ident("endpoint"))
+            .unwrap();
+        let (idle_result, _) =
+            process_endpoint_method(&struct_ident, &idle_method, idle_attr).unwrap();
+        let idle_tokens = idle_result.def_fn.to_string();
+
+        assert!(idle_tokens.contains("new_with_shutdown_signal_support (false"));
+
+        let shutdown_method: ImplItemFn = parse_quote! {
+            #[endpoint(subject = "cleanup", group = "demo")]
+            async fn cleanup(
+                mut shutdown: nats_micro::ShutdownSignal,
+            ) -> Result<&'static str, nats_micro::NatsErrorResponse> {
+                shutdown.wait_for_shutdown().await;
+                Ok("ok")
+            }
+        };
+        let shutdown_attr = shutdown_method
+            .attrs
+            .iter()
+            .find(|attr| attr.path().is_ident("endpoint"))
+            .unwrap();
+        let (shutdown_result, _) =
+            process_endpoint_method(&struct_ident, &shutdown_method, shutdown_attr).unwrap();
+        let shutdown_tokens = shutdown_result.def_fn.to_string();
+
+        assert!(shutdown_tokens.contains("new_with_shutdown_signal_support (true"));
+    }
+
+    #[test]
+    fn generated_consumer_handlers_only_enable_shutdown_support_when_requested() {
+        let struct_ident = parse_quote!(DemoService);
+        let idle_method: ImplItemFn = parse_quote! {
+            #[consumer(stream = "DEMO", durable = "jobs")]
+            async fn jobs() -> Result<(), nats_micro::NatsErrorResponse> {
+                Ok(())
+            }
+        };
+        let idle_attr = idle_method
+            .attrs
+            .iter()
+            .find(|attr| attr.path().is_ident("consumer"))
+            .unwrap();
+        let idle_result = process_consumer_method(&struct_ident, &idle_method, idle_attr).unwrap();
+        let idle_tokens = idle_result.def_fn.to_string();
+
+        assert!(idle_tokens.contains("new_with_shutdown_signal_support (false"));
+
+        let shutdown_method: ImplItemFn = parse_quote! {
+            #[consumer(stream = "DEMO", durable = "cleanup-jobs")]
+            async fn cleanup_jobs(
+                mut shutdown: nats_micro::ShutdownSignal,
+            ) -> Result<(), nats_micro::NatsErrorResponse> {
+                shutdown.wait_for_shutdown().await;
+                Ok(())
+            }
+        };
+        let shutdown_attr = shutdown_method
+            .attrs
+            .iter()
+            .find(|attr| attr.path().is_ident("consumer"))
+            .unwrap();
+        let shutdown_result =
+            process_consumer_method(&struct_ident, &shutdown_method, shutdown_attr).unwrap();
+        let shutdown_tokens = shutdown_result.def_fn.to_string();
+
+        assert!(shutdown_tokens.contains("new_with_shutdown_signal_support (true"));
     }
 }

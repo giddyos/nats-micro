@@ -66,7 +66,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
                         if is_internal {
                             quote! { None }
                         } else {
-                            quote! { Some(::serde_json::Value::String(__value.clone())) }
+                            quote! { Some(#nats_micro::serde_json::Value::String(__value.clone())) }
                         },
                         quote! {
                             (#code, #v_name) => #nats_micro::ServiceErrorMatch::Typed(
@@ -178,7 +178,7 @@ fn build_unnamed_variant_tokens(
         quote! { None }
     } else {
         let serialize_value = tuple_value(&bindings);
-        quote! { ::serde_json::to_value(#serialize_value).ok() }
+        quote! { #nats_micro::serde_json::to_value(#serialize_value).ok() }
     };
     let tuple_type = tuple_type(&types);
     let deserialize_pattern = tuple_pattern(&bindings);
@@ -190,7 +190,7 @@ fn build_unnamed_variant_tokens(
             (#code, #variant_name) => match response
                 .details
                 .clone()
-                .and_then(|details| ::serde_json::from_value::<#tuple_type>(details).ok())
+                .and_then(|details| #nats_micro::serde_json::from_value::<#tuple_type>(details).ok())
             {
                 Some(#deserialize_pattern) => {
                     #nats_micro::ServiceErrorMatch::Typed(#enum_ident::#variant_ident(#(#bindings),*))
@@ -227,7 +227,7 @@ fn build_named_variant_tokens(
         quote! { None }
     } else {
         let serialize_value = tuple_value(&bindings);
-        quote! { ::serde_json::to_value(#serialize_value).ok() }
+        quote! { #nats_micro::serde_json::to_value(#serialize_value).ok() }
     };
     let tuple_type = tuple_type(&types);
     let deserialize_pattern = tuple_pattern(&bindings);
@@ -239,7 +239,7 @@ fn build_named_variant_tokens(
             (#code, #variant_name) => match response
                 .details
                 .clone()
-                .and_then(|details| ::serde_json::from_value::<#tuple_type>(details).ok())
+                .and_then(|details| #nats_micro::serde_json::from_value::<#tuple_type>(details).ok())
             {
                 Some(#deserialize_pattern) => {
                     #nats_micro::ServiceErrorMatch::Typed(#enum_ident::#variant_ident { #(#field_idents: #bindings),* })

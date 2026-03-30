@@ -29,6 +29,7 @@ pub(crate) fn build_handler_body(
     sig: &Signature,
 ) -> Result<TokenStream, TokenStream> {
     let nats_micro = nats_micro_path();
+    let requires_shutdown_signal = requires_shutdown_signal(sig);
     let mut extractors = Vec::new();
     let mut args = Vec::new();
 
@@ -67,7 +68,7 @@ pub(crate) fn build_handler_body(
     }
 
     Ok(quote! {
-        #nats_micro::HandlerFn::new(move |ctx: #nats_micro::__macros::RequestContext| {
+        #nats_micro::HandlerFn::new_with_shutdown_signal_support(#requires_shutdown_signal, move |ctx: #nats_micro::__macros::RequestContext| {
             ::std::boxed::Box::pin(async move {
                 let __request_id = ctx.request.request_id.clone();
                 #(#extractors)*
@@ -129,6 +130,19 @@ pub(crate) fn requires_auth(sig: &Signature) -> bool {
         };
         let ty = pat_type.ty.as_ref();
         is_auth_type(ty) && !is_option_auth(ty)
+    })
+}
+
+pub(crate) fn is_shutdown_signal_type(ty: &Type) -> bool {
+    last_segment_ident(ty).as_deref() == Some("ShutdownSignal")
+}
+
+pub(crate) fn requires_shutdown_signal(sig: &Signature) -> bool {
+    sig.inputs.iter().any(|input| {
+        let FnArg::Typed(pat_type) = input else {
+            return false;
+        };
+        is_shutdown_signal_type(pat_type.ty.as_ref())
     })
 }
 
