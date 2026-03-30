@@ -223,6 +223,32 @@ impl IntoNatsError for anyhow::Error {
     }
 }
 
+// Helper utilities for deserializing error responses coming from services.
+pub fn deserialize_error_response_payload(payload: &[u8]) -> Option<NatsErrorResponse> {
+    serde_json::from_slice::<NatsErrorResponse>(payload).ok()
+}
+
+pub fn invalid_response(message: impl Into<String>) -> NatsErrorResponse {
+    NatsErrorResponse::internal("INVALID_RESPONSE", message.into())
+}
+
+pub fn deserialize_error_response<
+    E: FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
+>(
+    payload: &[u8],
+) -> Result<NatsErrorResponse, ClientError<E>> {
+    deserialize_error_response_payload(payload).ok_or_else(|| {
+        ClientError::invalid_response(invalid_response(format!(
+            "expected serialized NatsErrorResponse payload when {}=false",
+            crate::X_SUCCESS_HEADER,
+        )))
+    })
+}
+
+pub fn try_deserialize_error_response(payload: &[u8]) -> Option<NatsErrorResponse> {
+    deserialize_error_response_payload(payload).filter(|error| error.code >= 400)
+}
+
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("startup error: {0}")]
