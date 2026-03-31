@@ -577,10 +577,12 @@ fn generate_client_module(
         let payload_type = ep.payload.as_ref().map(|p| &p.inner_type);
         let payload_encoding = ep.payload.as_ref().map(|p| &p.encoding);
         let payload_encrypted = ep.payload.as_ref().is_some_and(|p| p.encrypted);
+        let payload_optional = ep.payload.as_ref().is_some_and(|p| p.optional);
 
         let response_type = ep.response.inner_type.as_ref();
         let response_encoding = &ep.response.encoding;
         let response_encrypted = ep.response.encrypted;
+        let response_optional = ep.response.optional;
 
         let payload_fn_args: Vec<TokenStream> = if has_payload {
             let pt = payload_type.unwrap();
@@ -588,17 +590,22 @@ fn generate_client_module(
                 PayloadEncoding::Raw => {
                     let raw_ident = crate::endpoint::last_segment_ident(pt);
                     match raw_ident.as_deref() {
+                        Some("String") if payload_optional => {
+                            vec![quote! { payload: Option<&str> }]
+                        }
                         Some("String") => vec![quote! { payload: &str }],
+                        _ if payload_optional => vec![quote! { payload: Option<&[u8]> }],
                         _ => vec![quote! { payload: &[u8] }],
                     }
                 }
+                _ if payload_optional => vec![quote! { payload: Option<&#pt> }],
                 _ => vec![quote! { payload: &#pt }],
             }
         } else {
             vec![]
         };
 
-        let serialize_payload = if has_payload {
+        let serialize_payload = if has_payload && !payload_optional {
             let pt = payload_type.unwrap();
             match payload_encoding.unwrap() {
                 PayloadEncoding::Json | PayloadEncoding::Serde => {
@@ -621,7 +628,29 @@ fn generate_client_module(
             quote! { let __body = #nats_micro::Bytes::new(); }
         };
 
-        let return_type: TokenStream = match response_encoding {
+        let serialize_optional_payload = if has_payload && payload_optional {
+            Some(match payload_encoding.unwrap() {
+                PayloadEncoding::Json | PayloadEncoding::Serde => {
+                    quote! {
+                        let __body = #nats_micro::__macros::serialize_serde_payload(payload)
+                            .map_err(#nats_micro::ClientError::<#error_type>::serialize)?;
+                    }
+                }
+                PayloadEncoding::Proto => {
+                    quote! {
+                        let __body = #nats_micro::__macros::serialize_proto_payload(payload)
+                            .map_err(#nats_micro::ClientError::<#error_type>::serialize)?;
+                    }
+                }
+                PayloadEncoding::Raw => {
+                    quote! { let __body = #nats_micro::Bytes::copy_from_slice(payload.as_ref()); }
+                }
+            })
+        } else {
+            None
+        };
+
+        let response_value_type: TokenStream = match response_encoding {
             ResponseEncoding::Unit => quote! { () },
             ResponseEncoding::Raw => {
                 if let Some(rt) = response_type {
@@ -645,33 +674,110 @@ fn generate_client_module(
             }
         };
 
-        let deserialize_response = match response_encoding {
-            ResponseEncoding::Unit => {
-                quote! { #nats_micro::__macros::deserialize_unit_response::<#error_type>(__response_headers, &__response_payload) }
-            }
-            ResponseEncoding::Json | ResponseEncoding::Serde => {
-                quote! { #nats_micro::__macros::deserialize_response::<#return_type, #error_type>(__response_headers, &__response_payload) }
-            }
-            ResponseEncoding::Proto => {
-                quote! { #nats_micro::__macros::deserialize_proto_response::<#return_type, #error_type>(__response_headers, &__response_payload) }
-            }
-            ResponseEncoding::Raw => {
-                if let Some(rt) = response_type {
-                    let ident = crate::endpoint::last_segment_ident(rt);
-                    let is_str_ref = matches!(rt, Type::Reference(r) if matches!(&*r.elem, Type::Path(p) if p.path.is_ident("str")));
-                    match ident.as_deref() {
-                        Some("String") => {
-                            quote! { #nats_micro::__macros::raw_response_to_string::<#error_type>(__response_headers, &__response_payload) }
+        let return_type: TokenStream = if response_optional {
+            quote! { Option<#response_value_type> }
+        } else {
+            quote! { #response_value_type }
+        };
+
+        let deserialize_response = if response_optional {
+            match response_encoding {
+                ResponseEncoding::Unit => {
+                    quote! { #nats_micro::__macros::deserialize_optional_unit_response::<#error_type>(__response_headers, &__response_payload) }
+                }
+                ResponseEncoding::Json | ResponseEncoding::Serde => {
+                    quote! { #nats_micro::__macros::deserialize_optional_response::<#response_value_type, #error_type>(__response_headers, &__response_payload) }
+                }
+                ResponseEncoding::Proto => {
+                    quote! { #nats_micro::__macros::deserialize_optional_proto_response::<#response_value_type, #error_type>(__response_headers, &__response_payload) }
+                }
+                ResponseEncoding::Raw => {
+                    if let Some(rt) = response_type {
+                        let ident = crate::endpoint::last_segment_ident(rt);
+                        let is_str_ref = matches!(rt, Type::Reference(r) if matches!(&*r.elem, Type::Path(p) if p.path.is_ident("str")));
+                        match ident.as_deref() {
+                            Some("String") => {
+                                quote! { #nats_micro::__macros::raw_response_to_optional_string::<#error_type>(__response_headers, &__response_payload) }
+                            }
+                            _ if is_str_ref => {
+                                quote! { #nats_micro::__macros::raw_response_to_optional_string::<#error_type>(__response_headers, &__response_payload) }
+                            }
+                            _ => {
+                                quote! { #nats_micro::__macros::raw_response_to_optional_bytes::<#error_type>(__response_headers, &__response_payload) }
+                            }
                         }
-                        _ if is_str_ref => {
-                            quote! { #nats_micro::__macros::raw_response_to_string::<#error_type>(__response_headers, &__response_payload) }
-                        }
-                        _ => {
-                            quote! { #nats_micro::__macros::raw_response_to_bytes::<#error_type>(__response_headers, &__response_payload) }
-                        }
+                    } else {
+                        quote! { #nats_micro::__macros::raw_response_to_optional_bytes::<#error_type>(__response_headers, &__response_payload) }
                     }
-                } else {
-                    quote! { #nats_micro::__macros::raw_response_to_bytes::<#error_type>(__response_headers, &__response_payload) }
+                }
+            }
+        } else {
+            match response_encoding {
+                ResponseEncoding::Unit => {
+                    quote! { #nats_micro::__macros::deserialize_unit_response::<#error_type>(__response_headers, &__response_payload) }
+                }
+                ResponseEncoding::Json | ResponseEncoding::Serde => {
+                    quote! { #nats_micro::__macros::deserialize_response::<#response_value_type, #error_type>(__response_headers, &__response_payload) }
+                }
+                ResponseEncoding::Proto => {
+                    quote! { #nats_micro::__macros::deserialize_proto_response::<#response_value_type, #error_type>(__response_headers, &__response_payload) }
+                }
+                ResponseEncoding::Raw => {
+                    if let Some(rt) = response_type {
+                        let ident = crate::endpoint::last_segment_ident(rt);
+                        let is_str_ref = matches!(rt, Type::Reference(r) if matches!(&*r.elem, Type::Path(p) if p.path.is_ident("str")));
+                        match ident.as_deref() {
+                            Some("String") => {
+                                quote! { #nats_micro::__macros::raw_response_to_string::<#error_type>(__response_headers, &__response_payload) }
+                            }
+                            _ if is_str_ref => {
+                                quote! { #nats_micro::__macros::raw_response_to_string::<#error_type>(__response_headers, &__response_payload) }
+                            }
+                            _ => {
+                                quote! { #nats_micro::__macros::raw_response_to_bytes::<#error_type>(__response_headers, &__response_payload) }
+                            }
+                        }
+                    } else {
+                        quote! { #nats_micro::__macros::raw_response_to_bytes::<#error_type>(__response_headers, &__response_payload) }
+                    }
+                }
+            }
+        };
+
+        let plain_request_body = |body: TokenStream| {
+            if response_encrypted {
+                quote! {
+                    let __subject = self.build_subject(#group, &#endpoint_subject_expr);
+                    let options = self.apply_encryption_recipient(options);
+                    let (__msg, __eph_ctx) = options
+                        .into_request_with_context(&self.client, __subject, #body)
+                        .await
+                        .map_err(#nats_micro::ClientError::<#error_type>::request)?;
+                    let __response_headers = __msg.headers.as_ref();
+                    let __eph_ctx = __eph_ctx.as_ref().ok_or_else(|| {
+                        #nats_micro::ClientError::<#error_type>::invalid_response(
+                            #nats_micro::__macros::invalid_response(
+                                "encrypted response requested without encryption context",
+                            ),
+                        )
+                    })?;
+                    let __response_payload = #nats_micro::__macros::decrypt_client_response::<#error_type>(
+                        __response_headers,
+                        __eph_ctx,
+                        &__msg.payload,
+                    )?;
+                    #deserialize_response
+                }
+            } else {
+                quote! {
+                    let __subject = self.build_subject(#group, &#endpoint_subject_expr);
+                    let __msg = options
+                        .into_request(&self.client, __subject, #body)
+                        .await
+                        .map_err(#nats_micro::ClientError::<#error_type>::request)?;
+                    let __response_headers = __msg.headers.as_ref();
+                    let __response_payload = __msg.payload.to_vec();
+                    #deserialize_response
                 }
             }
         };
@@ -696,8 +802,60 @@ fn generate_client_module(
             })
             .collect();
 
-        let with_body = if payload_encrypted || response_encrypted {
-            if payload_encrypted && response_encrypted {
+        let with_body = if payload_optional {
+            let serialize_optional_payload = serialize_optional_payload
+                .expect("optional payloads should always provide optional serialization");
+            let some_body = if payload_encrypted {
+                if response_encrypted {
+                    quote! {
+                        #serialize_optional_payload
+                        let __subject = self.build_subject(#group, &#endpoint_subject_expr);
+                        let options = self.apply_encryption_recipient(options);
+                        let (__msg, __eph_ctx) = options
+                            .into_encrypted_request(&self.client, __subject, __body.to_vec())
+                            .await
+                            .map_err(#nats_micro::ClientError::<#error_type>::request)?;
+                        let __response_headers = __msg.headers.as_ref();
+                        let __response_payload = #nats_micro::__macros::decrypt_client_response::<#error_type>(
+                            __response_headers,
+                            &__eph_ctx,
+                            &__msg.payload,
+                        )?;
+                        #deserialize_response
+                    }
+                } else {
+                    quote! {
+                        #serialize_optional_payload
+                        let __subject = self.build_subject(#group, &#endpoint_subject_expr);
+                        let options = self.apply_encryption_recipient(options);
+                        let (__msg, _) = options
+                            .into_encrypted_request(&self.client, __subject, __body.to_vec())
+                            .await
+                            .map_err(#nats_micro::ClientError::<#error_type>::request)?;
+                        let __response_headers = __msg.headers.as_ref();
+                        let __response_payload = __msg.payload.to_vec();
+                        #deserialize_response
+                    }
+                }
+            } else {
+                let request_body = plain_request_body(quote! { __body });
+                quote! {
+                    #serialize_optional_payload
+                    #request_body
+                }
+            };
+
+            let none_body = plain_request_body(quote! { #nats_micro::Bytes::new() });
+
+            quote! {
+                if let Some(payload) = payload {
+                    #some_body
+                } else {
+                    #none_body
+                }
+            }
+        } else if payload_encrypted {
+            if response_encrypted {
                 quote! {
                     #serialize_payload
                     let __subject = self.build_subject(#group, &#endpoint_subject_expr);
@@ -714,7 +872,7 @@ fn generate_client_module(
                     )?;
                     #deserialize_response
                 }
-            } else if payload_encrypted {
+            } else {
                 quote! {
                     #serialize_payload
                     let __subject = self.build_subject(#group, &#endpoint_subject_expr);
@@ -727,30 +885,12 @@ fn generate_client_module(
                     let __response_payload = __msg.payload.to_vec();
                     #deserialize_response
                 }
-            } else {
-                quote! {
-                    #serialize_payload
-                    let __subject = self.build_subject(#group, &#endpoint_subject_expr);
-                    let __msg = options
-                        .into_request(&self.client, __subject, __body)
-                        .await
-                        .map_err(#nats_micro::ClientError::<#error_type>::request)?;
-                    let __response_headers = __msg.headers.as_ref();
-                    let __response_payload = __msg.payload.to_vec();
-                    #deserialize_response
-                }
             }
         } else {
+            let request_body = plain_request_body(quote! { __body });
             quote! {
                 #serialize_payload
-                let __subject = self.build_subject(#group, &#endpoint_subject_expr);
-                let __msg = options
-                    .into_request(&self.client, __subject, __body)
-                    .await
-                    .map_err(#nats_micro::ClientError::<#error_type>::request)?;
-                let __response_headers = __msg.headers.as_ref();
-                let __response_payload = __msg.payload.to_vec();
-                #deserialize_response
+                #request_body
             }
         };
 
@@ -939,6 +1079,275 @@ mod tests {
             assert!(!expanded.contains("# [cfg (feature = \"encryption\") ]"));
         }
         assert!(!expanded.contains("# [cfg (feature = \"macros_encryption_feature\") ]"));
+    }
+
+    #[test]
+    fn optional_payloads_preserve_marker_metadata_for_clients() {
+        let struct_ident = parse_quote!(DemoService);
+
+        let payload_for = |method: ImplItemFn| {
+            let attr = method
+                .attrs
+                .iter()
+                .find(|attr| attr.path().is_ident("endpoint"))
+                .unwrap();
+            let (_, client_data) = process_endpoint_method(&struct_ident, &method, attr).unwrap();
+            client_data.payload.unwrap()
+        };
+
+        let json_payload = payload_for(parse_quote! {
+            #[endpoint(subject = "maybe-json")]
+            async fn maybe_json(
+                payload: nats_micro::Payload<Option<nats_micro::Json<JsonRequest>>>,
+            ) -> Result<(), nats_micro::NatsErrorResponse> {
+                let _ = payload;
+                Ok(())
+            }
+        });
+        assert!(json_payload.optional);
+        assert!(!json_payload.encrypted);
+        assert!(matches!(
+            json_payload.encoding,
+            crate::endpoint::PayloadEncoding::Json
+        ));
+        assert_eq!(
+            crate::endpoint::last_segment_ident(&json_payload.inner_type).as_deref(),
+            Some("JsonRequest")
+        );
+
+        let proto_payload = payload_for(parse_quote! {
+            #[endpoint(subject = "maybe-proto")]
+            async fn maybe_proto(
+                payload: nats_micro::Payload<Option<nats_micro::Proto<ProtoRequest>>>,
+            ) -> Result<(), nats_micro::NatsErrorResponse> {
+                let _ = payload;
+                Ok(())
+            }
+        });
+        assert!(proto_payload.optional);
+        assert!(!proto_payload.encrypted);
+        assert!(matches!(
+            proto_payload.encoding,
+            crate::endpoint::PayloadEncoding::Proto
+        ));
+        assert_eq!(
+            crate::endpoint::last_segment_ident(&proto_payload.inner_type).as_deref(),
+            Some("ProtoRequest")
+        );
+
+        let encrypted_payload = payload_for(parse_quote! {
+            #[endpoint(subject = "maybe-secret")]
+            async fn maybe_secret(
+                payload: nats_micro::Payload<Option<nats_micro::Encrypted<String>>>,
+            ) -> Result<(), nats_micro::NatsErrorResponse> {
+                let _ = payload;
+                Ok(())
+            }
+        });
+        assert!(encrypted_payload.optional);
+        assert!(encrypted_payload.encrypted);
+        assert!(matches!(
+            encrypted_payload.encoding,
+            crate::endpoint::PayloadEncoding::Raw
+        ));
+        assert_eq!(
+            crate::endpoint::last_segment_ident(&encrypted_payload.inner_type).as_deref(),
+            Some("String")
+        );
+    }
+
+    #[test]
+    fn optional_payloads_reject_nested_options_after_markers() {
+        let struct_ident = parse_quote!(DemoService);
+        let method: ImplItemFn = parse_quote! {
+            #[endpoint(subject = "bad-payload")]
+            async fn bad_payload(
+                payload: nats_micro::Payload<Option<nats_micro::Json<Option<String>>>>,
+            ) -> Result<(), nats_micro::NatsErrorResponse> {
+                let _ = payload;
+                Ok(())
+            }
+        };
+        let attr = method
+            .attrs
+            .iter()
+            .find(|attr| attr.path().is_ident("endpoint"))
+            .unwrap();
+
+        let error = match process_endpoint_method(&struct_ident, &method, attr) {
+            Ok(_) => panic!("expected nested optional payload to be rejected"),
+            Err(error) => error.to_string(),
+        };
+
+        assert!(error.contains("nested `Option` payloads"));
+    }
+
+    #[test]
+    fn optional_responses_preserve_marker_metadata_for_clients() {
+        let struct_ident = parse_quote!(DemoService);
+
+        let response_for = |method: ImplItemFn| {
+            let attr = method
+                .attrs
+                .iter()
+                .find(|attr| attr.path().is_ident("endpoint"))
+                .unwrap();
+            let (_, client_data) = process_endpoint_method(&struct_ident, &method, attr).unwrap();
+            client_data.response
+        };
+
+        let json_response = response_for(parse_quote! {
+            #[endpoint(subject = "maybe-json")]
+            async fn maybe_json() -> Result<Option<nats_micro::Json<JsonResponse>>, nats_micro::NatsErrorResponse> {
+                Ok(None)
+            }
+        });
+        assert!(json_response.optional);
+        assert!(!json_response.encrypted);
+        assert!(matches!(
+            json_response.encoding,
+            crate::endpoint::ResponseEncoding::Json
+        ));
+        assert_eq!(
+            crate::endpoint::last_segment_ident(json_response.inner_type.as_ref().unwrap())
+                .as_deref(),
+            Some("JsonResponse")
+        );
+
+        let proto_response = response_for(parse_quote! {
+            #[endpoint(subject = "maybe-proto")]
+            async fn maybe_proto() -> Result<Option<nats_micro::Proto<ProtoResponse>>, nats_micro::NatsErrorResponse> {
+                Ok(None)
+            }
+        });
+        assert!(proto_response.optional);
+        assert!(!proto_response.encrypted);
+        assert!(matches!(
+            proto_response.encoding,
+            crate::endpoint::ResponseEncoding::Proto
+        ));
+        assert_eq!(
+            crate::endpoint::last_segment_ident(proto_response.inner_type.as_ref().unwrap())
+                .as_deref(),
+            Some("ProtoResponse")
+        );
+
+        let encrypted_response = response_for(parse_quote! {
+            #[endpoint(subject = "maybe-secret")]
+            async fn maybe_secret() -> Result<Option<nats_micro::Encrypted<String>>, nats_micro::NatsErrorResponse> {
+                Ok(None)
+            }
+        });
+        assert!(encrypted_response.optional);
+        assert!(encrypted_response.encrypted);
+        assert!(matches!(
+            encrypted_response.encoding,
+            crate::endpoint::ResponseEncoding::Raw
+        ));
+        assert_eq!(
+            crate::endpoint::last_segment_ident(encrypted_response.inner_type.as_ref().unwrap())
+                .as_deref(),
+            Some("String")
+        );
+    }
+
+    #[test]
+    fn optional_responses_reject_nested_options_after_markers() {
+        let struct_ident = parse_quote!(DemoService);
+        let method: ImplItemFn = parse_quote! {
+            #[endpoint(subject = "bad-response")]
+            async fn bad_response() -> Result<Option<nats_micro::Json<Option<String>>>, nats_micro::NatsErrorResponse> {
+                Ok(None)
+            }
+        };
+        let attr = method
+            .attrs
+            .iter()
+            .find(|attr| attr.path().is_ident("endpoint"))
+            .unwrap();
+
+        let error = match process_endpoint_method(&struct_ident, &method, attr) {
+            Ok(_) => panic!("expected nested optional response to be rejected"),
+            Err(error) => error.to_string(),
+        };
+
+        assert!(error.contains("optional responses do not support nested `Option` types"));
+    }
+
+    #[test]
+    fn generated_client_branches_optional_encrypted_payloads() {
+        let struct_ident = parse_quote!(DemoService);
+        let method: ImplItemFn = parse_quote! {
+            #[endpoint(subject = "maybe-secret", group = "demo")]
+            async fn maybe_secret(
+                payload: nats_micro::Payload<Option<nats_micro::Encrypted<String>>>,
+            ) -> Result<String, nats_micro::NatsErrorResponse> {
+                let _ = payload;
+                Ok(String::new())
+            }
+        };
+        let attr = method
+            .attrs
+            .iter()
+            .find(|attr| attr.path().is_ident("endpoint"))
+            .unwrap();
+        let (_, client_data) = process_endpoint_method(&struct_ident, &method, attr).unwrap();
+        let tokens = generate_client_module(&struct_ident, "DemoService", &[client_data]);
+        let expanded = tokens.to_string();
+
+        assert!(expanded.contains("payload : Option < & str >"));
+        assert!(expanded.contains("if let Some (payload) = payload"));
+        assert!(expanded.contains("into_encrypted_request"));
+        assert!(expanded.contains("into_request"));
+        assert!(expanded.contains("Bytes :: new ()"));
+    }
+
+    #[test]
+    fn generated_client_decodes_optional_responses() {
+        let struct_ident = parse_quote!(DemoService);
+        let methods: [ImplItemFn; 3] = [
+            parse_quote! {
+                #[endpoint(subject = "maybe-json", group = "demo")]
+                async fn maybe_json() -> Result<Option<nats_micro::Json<JsonResponse>>, nats_micro::NatsErrorResponse> {
+                    Ok(None)
+                }
+            },
+            parse_quote! {
+                #[endpoint(subject = "maybe-proto", group = "demo")]
+                async fn maybe_proto() -> Result<Option<nats_micro::Proto<ProtoResponse>>, nats_micro::NatsErrorResponse> {
+                    Ok(None)
+                }
+            },
+            parse_quote! {
+                #[endpoint(subject = "maybe-secret", group = "demo")]
+                async fn maybe_secret() -> Result<Option<nats_micro::Encrypted<String>>, nats_micro::NatsErrorResponse> {
+                    Ok(None)
+                }
+            },
+        ];
+
+        let client_data = methods
+            .iter()
+            .map(|method| {
+                let attr = method
+                    .attrs
+                    .iter()
+                    .find(|attr| attr.path().is_ident("endpoint"))
+                    .unwrap();
+                let (_, client_data) =
+                    process_endpoint_method(&struct_ident, method, attr).unwrap();
+                client_data
+            })
+            .collect::<Vec<_>>();
+        let tokens = generate_client_module(&struct_ident, "DemoService", &client_data);
+        let expanded = tokens.to_string();
+
+        assert!(expanded.contains("Result < Option < JsonResponse >"));
+        assert!(expanded.contains("deserialize_optional_response"));
+        assert!(expanded.contains("deserialize_optional_proto_response"));
+        assert!(expanded.contains("raw_response_to_optional_string"));
+        assert!(expanded.contains("into_request_with_context"));
+        assert!(expanded.contains("decrypt_client_response"));
     }
 
     #[test]
