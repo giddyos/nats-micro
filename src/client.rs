@@ -100,6 +100,62 @@ impl ClientCallOptions {
     }
 
     #[cfg(feature = "encryption")]
+    #[doc(hidden)]
+    pub async fn into_request_with_context(
+        self,
+        client: &async_nats::Client,
+        subject: String,
+        payload: Bytes,
+    ) -> Result<
+        (
+            async_nats::Message,
+            Option<crate::encryption::EphemeralContext>,
+        ),
+        NatsErrorResponse,
+    > {
+        if self.recipient.is_some() || !self.encrypted_headers.is_empty() {
+            let recipient = self.recipient.ok_or_else(|| {
+                NatsErrorResponse::internal(
+                    "MISSING_RECIPIENT",
+                    "encrypted headers require a recipient",
+                )
+            })?;
+            let recipient = recipient.with_client(client.clone());
+            let mut builder = recipient.request_builder();
+            for (name, values) in self.plaintext_headers.iter() {
+                let name_str: &str = name.as_ref();
+                for val in values {
+                    builder = builder.header(name_str, val.as_str());
+                }
+            }
+            for (k, v) in self.encrypted_headers {
+                builder = builder.encrypted_header(k, v);
+            }
+            builder = builder.payload(payload.to_vec());
+
+            let (msg, eph_ctx) = builder
+                .nats_request(subject)
+                .await
+                .map_err(|e| NatsErrorResponse::internal("NATS_REQUEST_FAILED", e.to_string()))?;
+            return Ok((msg, Some(eph_ctx)));
+        }
+
+        let msg = if self.plaintext_headers.is_empty() {
+            client
+                .request(subject, payload)
+                .await
+                .map_err(|e| NatsErrorResponse::internal("NATS_REQUEST_FAILED", e.to_string()))?
+        } else {
+            client
+                .request_with_headers(subject, self.plaintext_headers, payload)
+                .await
+                .map_err(|e| NatsErrorResponse::internal("NATS_REQUEST_FAILED", e.to_string()))?
+        };
+
+        Ok((msg, None))
+    }
+
+    #[cfg(feature = "encryption")]
     pub async fn into_encrypted_request(
         self,
         client: &async_nats::Client,

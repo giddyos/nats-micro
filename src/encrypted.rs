@@ -81,8 +81,6 @@ impl<T: IntoNatsResponse> IntoNatsResponse for Encrypted<T> {
                     .with_request_id(ctx.request.request_id.clone())
             })?;
 
-        Ok(NatsResponse {
-            payload: ciphertext.into(),
-        })
+        Ok(NatsResponse::new(ciphertext))
     }
 }

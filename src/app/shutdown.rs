@@ -1,11 +1,4 @@
-use std::{
-    any::Any,
-    future::Future,
-    panic::AssertUnwindSafe,
-    pin::Pin,
-    sync::Arc,
-    time::Duration,
-};
+use std::{any::Any, future::Future, panic::AssertUnwindSafe, pin::Pin, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use futures::FutureExt;
@@ -71,10 +64,9 @@ pub(super) fn spawn_supervised_worker<Fut>(
         let exit = match AssertUnwindSafe(worker).catch_unwind().await {
             Ok(Ok(())) => WorkerExit::completed(label),
             Ok(Err(err)) => WorkerExit::failed(label, err.to_string()),
-            Err(panic) => WorkerExit::failed(
-                label,
-                format!("task panicked: {}", panic_payload(panic)),
-            ),
+            Err(panic) => {
+                WorkerExit::failed(label, format!("task panicked: {}", panic_payload(panic)))
+            }
         };
         let _ = worker_events.send(exit);
     }));

@@ -25,8 +25,8 @@ use crate::{
 
 use self::{
     limits::{
-        resolve_consumer_concurrency_limit,
-        resolve_endpoint_concurrency_limit, validate_consumer_concurrency_limit,
+        resolve_consumer_concurrency_limit, resolve_endpoint_concurrency_limit,
+        validate_consumer_concurrency_limit,
     },
     prepare::{PreparedRequest, prepare_request_for_dispatch_with_state},
     shutdown::{

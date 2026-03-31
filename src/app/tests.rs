@@ -71,7 +71,10 @@ fn explicit_consumer_concurrency_limit_is_preserved() {
 fn app_config_defaults_are_explicit() {
     let config = NatsAppConfig::default();
 
-    assert_eq!(config.default_concurrency_limit(), DEFAULT_CONCURRENCY_LIMIT);
+    assert_eq!(
+        config.default_concurrency_limit(),
+        DEFAULT_CONCURRENCY_LIMIT
+    );
     assert_eq!(config.shutdown_drain_timeout(), None);
     assert_eq!(
         config.worker_failure_policy(),

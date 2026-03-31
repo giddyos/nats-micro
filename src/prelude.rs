@@ -1,5 +1,5 @@
 pub use crate::ConsumerConfig;
-pub use crate::{NatsApp, NatsAppConfig, WorkerFailurePolicy};
+pub use crate::ShutdownSignal;
 pub use crate::auth::{Auth, FromAuthRequest};
 pub use crate::consumer::ConsumerDefinition;
 pub use crate::error::{IntoNatsError, NatsError, NatsErrorResponse};
@@ -15,4 +15,4 @@ pub use crate::service::{
     ConsumerInfo, EndpointDefinition, EndpointInfo, NatsService, ParamInfo, ServiceDefinition,
     ServiceMetadata,
 };
-pub use crate::ShutdownSignal;
+pub use crate::{NatsApp, NatsAppConfig, WorkerFailurePolicy};

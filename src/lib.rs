@@ -27,7 +27,6 @@ pub use app::{NatsApp, NatsAppConfig, WorkerFailurePolicy};
 pub use async_nats;
 pub use async_nats::jetstream::consumer::push::Config as ConsumerConfig;
 pub use auth::{Auth, AuthError, FromAuthRequest};
-pub use prost;
 pub use consumer::{ConsumerDefinition, ConsumerHandlerFn};
 pub use error::{
     ClientError, ClientTransportError, FromNatsErrorResponse, IntoNatsError, NatsError,
@@ -38,14 +37,15 @@ pub use extractors::{
     SubjectParam,
 };
 pub use handler::{HandlerFn, RequestContext};
+pub use prost;
 pub use request::{Header, Headers, NatsRequest};
 pub use response::{IntoNatsResponse, NatsResponse, X_SUCCESS_HEADER};
+pub use serde;
+pub use serde_json;
 pub use service::{
     ConsumerInfo, EndpointDefinition, EndpointInfo, NatsService, ParamInfo, PayloadEncoding,
     PayloadMeta, ResponseEncoding, ResponseMeta, ServiceDefinition, ServiceMetadata,
 };
-pub use serde;
-pub use serde_json;
 pub use shutdown_signal::ShutdownSignal;
 pub use state::StateMap;
 
@@ -104,10 +104,16 @@ pub mod __macros {
     pub use crate::error::try_deserialize_error_response;
 
     // Response / client helpers
+    pub use crate::response::deserialize_optional_proto_response;
+    pub use crate::response::deserialize_optional_response;
+    pub use crate::response::deserialize_optional_unit_response;
     pub use crate::response::deserialize_proto_response;
     pub use crate::response::deserialize_response;
     pub use crate::response::deserialize_unit_response;
+    pub use crate::response::optional_response_from_headers;
     pub use crate::response::raw_response_to_bytes;
+    pub use crate::response::raw_response_to_optional_bytes;
+    pub use crate::response::raw_response_to_optional_string;
     pub use crate::response::raw_response_to_string;
     pub use crate::response::response_success_from_headers;
     pub use crate::response::serialize_proto_payload;

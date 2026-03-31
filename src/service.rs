@@ -54,6 +54,16 @@ impl EndpointDefinition {
     pub fn full_subject(&self) -> String {
         build_subject(self.subject_prefix.as_deref(), &self.group, &self.subject)
     }
+
+    pub fn full_subject_template(&self) -> Option<String> {
+        self.subject_template.as_deref().map(|subject_template| {
+            build_subject(
+                self.subject_prefix.as_deref(),
+                &self.group,
+                subject_template,
+            )
+        })
+    }
 }
 
 #[derive(Debug, Clone)]

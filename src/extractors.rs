@@ -143,6 +143,22 @@ impl FromRequest for ShutdownSignal {
     }
 }
 
+impl<T> FromPayload for Option<T>
+where
+    T: FromPayload,
+{
+    fn from_payload(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
+        if ctx.request.payload.is_empty() {
+            return Ok(None);
+        }
+
+        match T::from_payload(ctx) {
+            Ok(value) => Ok(Some(value)),
+            Err(_) => Ok(None),
+        }
+    }
+}
+
 impl<T> FromPayload for Json<T>
 where
     T: DeserializeOwned + Send + 'static,
