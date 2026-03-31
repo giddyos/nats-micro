@@ -2,20 +2,25 @@ use std::{
     collections::BTreeSet,
     future::pending,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
-        Mutex,
     },
     time::Duration,
 };
 
 use anyhow::{Context, Result};
 use futures::StreamExt;
+#[cfg(feature = "client")]
+use nats_micro::{ClientCallOptions, Json, NatsService, Proto, SubjectParam};
 use nats_micro::{
     ConsumerDefinition, EndpointDefinition, NatsApp, NatsErrorResponse, Payload, ServiceDefinition,
     ServiceMetadata, ShutdownSignal, State, WorkerFailurePolicy, async_nats, service,
     service_handlers,
 };
+#[cfg(all(feature = "client", feature = "encryption"))]
+use nats_micro::{Encrypted, ServiceKeyPair};
+#[cfg(feature = "client")]
+use serde::{Deserialize, Serialize};
 use tokio::{
     sync::{Notify, oneshot},
     task::JoinHandle,
@@ -53,6 +58,120 @@ impl LiveSupervisionService {
     #[endpoint(subject = "status", group = "live")]
     async fn status() -> Result<&'static str, NatsErrorResponse> {
         Ok("ok")
+    }
+}
+
+#[cfg(feature = "client")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct LiveClientSumRequest {
+    numbers: Vec<i64>,
+}
+
+#[cfg(feature = "client")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct LiveClientSumResponse {
+    total: i64,
+}
+
+#[cfg(feature = "client")]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct LiveOptionalJsonPayload {
+    value: String,
+}
+
+#[cfg(feature = "client")]
+#[derive(Clone, PartialEq, nats_micro::prost::Message)]
+struct LiveOptionalProtoPayload {
+    #[prost(string, tag = "1")]
+    value: String,
+}
+
+#[cfg(feature = "client")]
+#[service(name = "live-generated-client")]
+struct LiveGeneratedClientService;
+
+#[cfg(feature = "client")]
+#[service_handlers]
+impl LiveGeneratedClientService {
+    #[endpoint(subject = "health", group = "live-client")]
+    async fn health() -> Result<&'static str, NatsErrorResponse> {
+        Ok("ok")
+    }
+
+    #[endpoint(subject = "sum", group = "live-client")]
+    async fn sum(
+        payload: Payload<Json<LiveClientSumRequest>>,
+    ) -> Result<Json<LiveClientSumResponse>, NatsErrorResponse> {
+        Ok(Json(LiveClientSumResponse {
+            total: payload.0.numbers.iter().sum(),
+        }))
+    }
+
+    #[endpoint(subject = "users.{user_id}.profile", group = "live-client")]
+    async fn get_user_profile(user_id: SubjectParam<String>) -> Result<String, NatsErrorResponse> {
+        Ok(format!("profile:{}", user_id.0))
+    }
+
+    #[endpoint(subject = "maybe-json", group = "live-client")]
+    async fn maybe_json(
+        payload: Payload<Option<Json<LiveOptionalJsonPayload>>>,
+    ) -> Result<String, NatsErrorResponse> {
+        Ok(payload
+            .0
+            .map(|payload| payload.0.value)
+            .unwrap_or_else(|| "none".to_string()))
+    }
+
+    #[endpoint(subject = "maybe-proto", group = "live-client")]
+    async fn maybe_proto(
+        payload: Payload<Option<Proto<LiveOptionalProtoPayload>>>,
+    ) -> Result<String, NatsErrorResponse> {
+        Ok(payload
+            .0
+            .map(|payload| payload.0.value)
+            .unwrap_or_else(|| "none".to_string()))
+    }
+
+    #[endpoint(subject = "maybe-string-response", group = "live-client")]
+    async fn maybe_string_response(
+        payload: Payload<Option<String>>,
+    ) -> Result<Option<String>, NatsErrorResponse> {
+        Ok(payload.0)
+    }
+
+    #[endpoint(subject = "maybe-json-response", group = "live-client")]
+    async fn maybe_json_response(
+        payload: Payload<Option<Json<LiveOptionalJsonPayload>>>,
+    ) -> Result<Option<Json<LiveOptionalJsonPayload>>, NatsErrorResponse> {
+        Ok(payload.0)
+    }
+
+    #[endpoint(subject = "maybe-proto-response", group = "live-client")]
+    async fn maybe_proto_response(
+        payload: Payload<Option<Proto<LiveOptionalProtoPayload>>>,
+    ) -> Result<Option<Proto<LiveOptionalProtoPayload>>, NatsErrorResponse> {
+        Ok(payload.0)
+    }
+
+    #[cfg(feature = "encryption")]
+    #[endpoint(subject = "maybe-encrypted", group = "live-client")]
+    async fn maybe_encrypted(
+        payload: Payload<Option<Encrypted<String>>>,
+        _shutdown: ShutdownSignal,
+    ) -> Result<String, NatsErrorResponse> {
+        Ok(payload
+            .0
+            .map(|payload| payload.0)
+            .unwrap_or_else(|| "none".to_string()))
+    }
+
+    #[cfg(feature = "encryption")]
+    #[endpoint(subject = "maybe-encrypted-response", group = "live-client")]
+    async fn maybe_encrypted_response(
+        payload: Payload<Option<Encrypted<String>>>,
+        _shutdown: ShutdownSignal,
+    ) -> Result<Option<Encrypted<String>>, NatsErrorResponse> {
+        Ok(payload.0)
     }
 }
 
@@ -180,18 +299,26 @@ impl LiveShutdownConsumerService {
 
 #[test]
 fn macro_generated_handlers_only_enable_shutdown_support_when_needed() {
-    assert!(!LiveQueueAlphaService::jobs_endpoint()
-        .handler
-        .requires_shutdown_signal());
-    assert!(!LiveConsumerFlowService::jobs_consumer()
-        .handler
-        .requires_shutdown_signal());
-    assert!(LiveShutdownEndpointService::cleanup_endpoint()
-        .handler
-        .requires_shutdown_signal());
-    assert!(LiveShutdownConsumerService::jobs_consumer()
-        .handler
-        .requires_shutdown_signal());
+    assert!(
+        !LiveQueueAlphaService::jobs_endpoint()
+            .handler
+            .requires_shutdown_signal()
+    );
+    assert!(
+        !LiveConsumerFlowService::jobs_consumer()
+            .handler
+            .requires_shutdown_signal()
+    );
+    assert!(
+        LiveShutdownEndpointService::cleanup_endpoint()
+            .handler
+            .requires_shutdown_signal()
+    );
+    assert!(
+        LiveShutdownConsumerService::jobs_consumer()
+            .handler
+            .requires_shutdown_signal()
+    );
 }
 
 #[tokio::test]
@@ -210,10 +337,11 @@ async fn live_queue_groups_receive_independent_copies() -> Result<()> {
     let mut beta_endpoint = LiveQueueBetaService::jobs_endpoint();
     beta_endpoint.group = group.clone();
 
-    let (alpha_shutdown, alpha_handle) = spawn_app_until_shutdown(
-        NatsApp::new(client.clone())
-            .service_def(endpoint_service(unique_name("alpha-service"), alpha_endpoint)),
-    );
+    let (alpha_shutdown, alpha_handle) =
+        spawn_app_until_shutdown(NatsApp::new(client.clone()).service_def(endpoint_service(
+            unique_name("alpha-service"),
+            alpha_endpoint,
+        )));
     let (beta_shutdown, beta_handle) = spawn_app_until_shutdown(
         NatsApp::new(client.clone())
             .service_def(endpoint_service(unique_name("beta-service"), beta_endpoint)),
@@ -255,7 +383,10 @@ async fn live_client_drain_triggers_supervised_shutdown() -> Result<()> {
     let app_handle = tokio::spawn(
         NatsApp::new(client.clone())
             .with_worker_failure_policy(WorkerFailurePolicy::ShutdownApp)
-            .service_def(endpoint_service(unique_name("supervision-service"), endpoint))
+            .service_def(endpoint_service(
+                unique_name("supervision-service"),
+                endpoint,
+            ))
             .run_until(async {
                 pending::<()>().await;
                 Ok(())
@@ -263,7 +394,10 @@ async fn live_client_drain_triggers_supervised_shutdown() -> Result<()> {
     );
 
     let readiness = request_expected_replies(&client, &full_subject, 1).await;
-    client.drain().await.context("failed to drain the shared client")?;
+    client
+        .drain()
+        .await
+        .context("failed to drain the shared client")?;
     let app_result = timeout(Duration::from_secs(5), app_handle)
         .await
         .context("timed out waiting for supervised shutdown")?
@@ -272,6 +406,222 @@ async fn live_client_drain_triggers_supervised_shutdown() -> Result<()> {
     readiness?;
     let err = app_result.expect_err("client drain should trigger supervised shutdown");
     assert!(err.to_string().contains("worker `endpoint"));
+    Ok(())
+}
+
+#[cfg(feature = "client")]
+#[tokio::test]
+async fn live_generated_client_round_trips_standard_endpoints() -> Result<()> {
+    let Some(client) = connect_live_nats().await else {
+        return Ok(());
+    };
+
+    let (shutdown_tx, app_handle, service_client) =
+        spawn_live_generated_client_service(client.clone()).await?;
+
+    let standard_result = async {
+        let health = service_client
+            .health()
+            .await
+            .context("generated client health call failed")?;
+        assert_eq!(health, "ok");
+
+        let health_with = service_client
+            .health_with(ClientCallOptions::new().header("x-trace-id", "health-1"))
+            .await
+            .context("generated client health_with call failed")?;
+        assert_eq!(health_with, "ok");
+
+        let sum = service_client
+            .sum(&LiveClientSumRequest {
+                numbers: vec![1, 2, 3, 4],
+            })
+            .await
+            .context("generated client sum call failed")?;
+        assert_eq!(sum, LiveClientSumResponse { total: 10 });
+
+        let sum_with = service_client
+            .sum_with(
+                &LiveClientSumRequest {
+                    numbers: vec![9, 1],
+                },
+                ClientCallOptions::new().header("x-trace-id", "sum-1"),
+            )
+            .await
+            .context("generated client sum_with call failed")?;
+        assert_eq!(sum_with.total, 10);
+
+        let profile = service_client
+            .get_user_profile(&"alice".to_string())
+            .await
+            .context("generated client subject-param call failed")?;
+        assert_eq!(profile, "profile:alice");
+
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+
+    let shutdown_result = shutdown_app(shutdown_tx, app_handle, "generated client standard").await;
+
+    standard_result?;
+    shutdown_result?;
+    Ok(())
+}
+
+#[cfg(feature = "client")]
+#[tokio::test]
+async fn live_generated_client_optional_payload_variants_round_trip() -> Result<()> {
+    let Some(client) = connect_live_nats().await else {
+        return Ok(());
+    };
+
+    let (shutdown_tx, app_handle, service_client) =
+        spawn_live_generated_client_service(client.clone()).await?;
+
+    let optional_result = async {
+        let json_some = service_client
+            .maybe_json(Some(&LiveOptionalJsonPayload {
+                value: "json-value".to_string(),
+            }))
+            .await
+            .context("generated client optional json Some call failed")?;
+        assert_eq!(json_some, "json-value");
+
+        let json_none = service_client
+            .maybe_json(None)
+            .await
+            .context("generated client optional json None call failed")?;
+        assert_eq!(json_none, "none");
+
+        let proto_some = service_client
+            .maybe_proto(Some(&LiveOptionalProtoPayload {
+                value: "proto-value".to_string(),
+            }))
+            .await
+            .context("generated client optional proto Some call failed")?;
+        assert_eq!(proto_some, "proto-value");
+
+        let proto_none = service_client
+            .maybe_proto(None)
+            .await
+            .context("generated client optional proto None call failed")?;
+        assert_eq!(proto_none, "none");
+
+        #[cfg(feature = "encryption")]
+        {
+            let encrypted_some = service_client
+                .maybe_encrypted(Some("secret-value"))
+                .await
+                .context("generated client optional encrypted Some call failed")?;
+            assert_eq!(encrypted_some, "secret-value");
+
+            let encrypted_none = service_client
+                .maybe_encrypted(None)
+                .await
+                .context("generated client optional encrypted None call failed")?;
+            assert_eq!(encrypted_none, "none");
+        }
+
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+
+    let shutdown_result = shutdown_app(shutdown_tx, app_handle, "generated client optional").await;
+
+    optional_result?;
+    shutdown_result?;
+    Ok(())
+}
+
+#[cfg(feature = "client")]
+#[tokio::test]
+async fn live_generated_client_optional_response_variants_round_trip() -> Result<()> {
+    let Some(client) = connect_live_nats().await else {
+        return Ok(());
+    };
+
+    let (shutdown_tx, app_handle, service_client) =
+        spawn_live_generated_client_service(client.clone()).await?;
+
+    let optional_result = async {
+        let string_some = service_client
+            .maybe_string_response(Some("plain-value"))
+            .await
+            .context("generated client optional string response Some call failed")?;
+        assert_eq!(string_some, Some("plain-value".to_string()));
+
+        let string_none = service_client
+            .maybe_string_response(None)
+            .await
+            .context("generated client optional string response None call failed")?;
+        assert_eq!(string_none, None);
+
+        let json_some = service_client
+            .maybe_json_response(Some(&LiveOptionalJsonPayload {
+                value: "json-response".to_string(),
+            }))
+            .await
+            .context("generated client optional json response Some call failed")?;
+        assert_eq!(
+            json_some,
+            Some(LiveOptionalJsonPayload {
+                value: "json-response".to_string(),
+            })
+        );
+
+        let json_none = service_client
+            .maybe_json_response(None)
+            .await
+            .context("generated client optional json response None call failed")?;
+        assert_eq!(json_none, None);
+
+        let proto_some = service_client
+            .maybe_proto_response(Some(&LiveOptionalProtoPayload {
+                value: "proto-response".to_string(),
+            }))
+            .await
+            .context("generated client optional proto response Some call failed")?;
+        assert_eq!(
+            proto_some,
+            Some(LiveOptionalProtoPayload {
+                value: "proto-response".to_string(),
+            })
+        );
+
+        let proto_none = service_client
+            .maybe_proto_response(None)
+            .await
+            .context("generated client optional proto response None call failed")?;
+        assert_eq!(proto_none, None);
+
+        #[cfg(feature = "encryption")]
+        {
+            let encrypted_some = service_client
+                .maybe_encrypted_response(Some("secret-response"))
+                .await
+                .context("generated client optional encrypted response Some call failed")?;
+            assert_eq!(encrypted_some, Some("secret-response".to_string()));
+
+            let encrypted_none = service_client
+                .maybe_encrypted_response(None)
+                .await
+                .context("generated client optional encrypted response None call failed")?;
+            assert_eq!(encrypted_none, None);
+        }
+
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+
+    let shutdown_result = shutdown_app(
+        shutdown_tx,
+        app_handle,
+        "generated client optional response",
+    )
+    .await;
+
+    optional_result?;
+    shutdown_result?;
     Ok(())
 }
 
@@ -497,13 +847,15 @@ async fn live_consumer_handlers_observe_shutdown_signal_and_timeout() -> Result<
 }
 
 async fn connect_live_nats() -> Option<async_nats::Client> {
-    let nats_url = std::env::var("NATS_URL")
-        .unwrap_or_else(|_| "nats://127.0.0.1:4222".to_string());
+    let nats_url =
+        std::env::var("NATS_URL").unwrap_or_else(|_| "nats://127.0.0.1:4222".to_string());
 
     match async_nats::connect(&nats_url).await {
         Ok(client) => Some(client),
         Err(err) => {
-            eprintln!("skipping live runtime tests because NATS is unavailable at {nats_url}: {err}");
+            eprintln!(
+                "skipping live runtime tests because NATS is unavailable at {nats_url}: {err}"
+            );
             None
         }
     }
@@ -614,7 +966,8 @@ async fn live_consumer_configured_concurrency_exceeding_max_ack_pending_errors()
     consumer.concurrency_limit = Some(5);
 
     let (_shutdown_tx, app_handle) = spawn_app_until_shutdown(
-        NatsApp::new(client.clone()).service_def(consumer_service(unique_name("consumer-service"), consumer)),
+        NatsApp::new(client.clone())
+            .service_def(consumer_service(unique_name("consumer-service"), consumer)),
     );
 
     let app_result = timeout(Duration::from_secs(5), app_handle)
@@ -626,7 +979,10 @@ async fn live_consumer_configured_concurrency_exceeding_max_ack_pending_errors()
     let err = app_result
         .expect_err("app should have errored due to invalid configured concurrency limit");
     let err_str = err.to_string();
-    assert!(err_str.contains("invalid configured concurrency limit"), "unexpected error: {err_str}");
+    assert!(
+        err_str.contains("invalid configured concurrency limit"),
+        "unexpected error: {err_str}"
+    );
 
     let _ = jetstream.delete_stream(&stream_name).await;
     Ok(())
@@ -666,6 +1022,103 @@ fn service_definition(
     }
 }
 
+#[cfg(feature = "client")]
+fn live_generated_client_service_definition(prefix: String) -> ServiceDefinition {
+    let mut definition = LiveGeneratedClientService::definition();
+    let service_name = unique_name("generated-client-service");
+
+    definition.metadata.name = service_name.clone();
+    definition.metadata.subject_prefix = Some(prefix.clone());
+
+    for endpoint in &mut definition.endpoints {
+        endpoint.service_name = service_name.clone();
+        endpoint.subject_prefix = Some(prefix.clone());
+    }
+
+    definition
+}
+
+#[cfg(feature = "client")]
+fn build_live_generated_client(
+    client: async_nats::Client,
+    prefix: String,
+    #[cfg(feature = "encryption")] recipient: [u8; 32],
+) -> live_generated_client_service_client::LiveGeneratedClientServiceClient {
+    #[cfg(feature = "encryption")]
+    {
+        live_generated_client_service_client::LiveGeneratedClientServiceClient::with_prefix(
+            client, prefix, recipient,
+        )
+    }
+
+    #[cfg(not(feature = "encryption"))]
+    {
+        live_generated_client_service_client::LiveGeneratedClientServiceClient::with_prefix(
+            client, prefix,
+        )
+    }
+}
+
+#[cfg(feature = "client")]
+async fn wait_for_generated_client_service(
+    client: &async_nats::Client,
+    prefix: &str,
+) -> Result<()> {
+    let health_subject = format!("{prefix}.live-client.health");
+    let _ = request_expected_replies(client, &health_subject, 1).await?;
+    Ok(())
+}
+
+#[cfg(feature = "client")]
+async fn spawn_live_generated_client_service(
+    client: async_nats::Client,
+) -> Result<(
+    oneshot::Sender<()>,
+    JoinHandle<Result<()>>,
+    live_generated_client_service_client::LiveGeneratedClientServiceClient,
+)> {
+    let prefix = unique_name("generated-client-prefix");
+    let service_def = live_generated_client_service_definition(prefix.clone());
+
+    #[cfg(feature = "encryption")]
+    let keypair = ServiceKeyPair::generate();
+    #[cfg(feature = "encryption")]
+    let recipient = keypair.public_key_bytes();
+
+    let mut app = NatsApp::new(client.clone()).service_def(service_def);
+
+    #[cfg(feature = "encryption")]
+    {
+        app = app.state(keypair);
+    }
+
+    let (shutdown_tx, app_handle) = spawn_app_until_shutdown(app);
+    wait_for_generated_client_service(&client, &prefix).await?;
+
+    let service_client = build_live_generated_client(
+        client,
+        prefix,
+        #[cfg(feature = "encryption")]
+        recipient,
+    );
+
+    Ok((shutdown_tx, app_handle, service_client))
+}
+
+async fn shutdown_app(
+    shutdown_tx: oneshot::Sender<()>,
+    app_handle: JoinHandle<Result<()>>,
+    label: &str,
+) -> Result<()> {
+    let _ = shutdown_tx.send(());
+    let app_result = timeout(Duration::from_secs(5), app_handle)
+        .await
+        .with_context(|| format!("timed out waiting for {label} app shutdown"))?
+        .with_context(|| format!("{label} app task failed"))?;
+    app_result?;
+    Ok(())
+}
+
 async fn request_expected_replies(
     client: &async_nats::Client,
     subject: &str,
@@ -680,9 +1133,7 @@ async fn request_expected_replies(
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
-    anyhow::bail!(
-        "timed out waiting for {expected} replies on subject `{subject}`"
-    )
+    anyhow::bail!("timed out waiting for {expected} replies on subject `{subject}`")
 }
 
 async fn request_replies_once(
@@ -700,7 +1151,10 @@ async fn request_replies_once(
         .publish_with_reply(subject.to_string(), inbox, "".into())
         .await
         .with_context(|| format!("failed to publish test request to `{subject}`"))?;
-    client.flush().await.context("failed to flush live test request")?;
+    client
+        .flush()
+        .await
+        .context("failed to flush live test request")?;
 
     let deadline = tokio::time::Instant::now() + Duration::from_millis(300);
     let mut payloads = Vec::new();
