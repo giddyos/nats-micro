@@ -7,11 +7,11 @@ use crate::error::NatsErrorResponse;
 
 #[derive(Default)]
 pub struct ClientCallOptions {
-    pub(crate) plaintext_headers: HeaderMap,
+    pub plaintext_headers: HeaderMap,
     #[cfg(feature = "encryption")]
-    pub(crate) encrypted_headers: Vec<(String, String)>,
+    pub encrypted_headers: Vec<(String, String)>,
     #[cfg(feature = "encryption")]
-    pub(crate) recipient: Option<crate::encryption::ServiceRecipient>,
+    recipient: Option<crate::encryption::ServiceRecipient>,
 }
 
 impl ClientCallOptions {
