@@ -4,6 +4,7 @@ use darling::{FromMeta, ast::NestedMeta};
 use proc_macro::TokenStream;
 use syn::{DeriveInput, ItemFn, ItemImpl, ItemStruct, parse_macro_input};
 
+mod client;
 mod consumer;
 mod endpoint;
 mod service;
