@@ -10,12 +10,14 @@ use std::{
 
 use anyhow::{Context, Result};
 use futures::StreamExt;
+#[cfg(feature = "napi")]
+use nats_micro::napi;
 #[cfg(feature = "client")]
 use nats_micro::{ClientCallOptions, Json, NatsService, Proto, SubjectParam};
 use nats_micro::{
     ConsumerDefinition, EndpointDefinition, NatsApp, NatsErrorResponse, Payload, ServiceDefinition,
     ServiceMetadata, ShutdownSignal, State, WorkerFailurePolicy, async_nats, service,
-    service_handlers,
+    service_error, service_handlers,
 };
 #[cfg(all(feature = "client", feature = "encryption"))]
 use nats_micro::{Encrypted, ServiceKeyPair};
@@ -62,32 +64,45 @@ impl LiveSupervisionService {
 }
 
 #[cfg(feature = "client")]
+#[cfg_attr(feature = "napi", nats_micro::object)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-struct LiveClientSumRequest {
-    numbers: Vec<i64>,
+pub struct LiveClientSumRequest {
+    pub numbers: Vec<i64>,
 }
 
 #[cfg(feature = "client")]
+#[cfg_attr(feature = "napi", nats_micro::object)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-struct LiveClientSumResponse {
-    total: i64,
+pub struct LiveClientSumResponse {
+    pub total: i64,
 }
 
 #[cfg(feature = "client")]
+#[cfg_attr(feature = "napi", nats_micro::object)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-struct LiveOptionalJsonPayload {
-    value: String,
+pub struct LiveOptionalJsonPayload {
+    pub value: String,
 }
 
 #[cfg(feature = "client")]
+#[cfg_attr(feature = "napi", nats_micro::object)]
 #[derive(Clone, PartialEq, nats_micro::prost::Message)]
-struct LiveOptionalProtoPayload {
+pub struct LiveOptionalProtoPayload {
     #[prost(string, tag = "1")]
-    value: String,
+    pub value: String,
 }
 
 #[cfg(feature = "client")]
-#[service(name = "live-generated-client")]
+#[service_error]
+#[derive(Debug, thiserror::Error)]
+enum LiveGeneratedClientError {
+    #[error("consumer event kind was empty")]
+    InvalidEvent,
+}
+
+#[cfg(feature = "client")]
+#[cfg_attr(feature = "napi", service(name = "live-generated-client", napi = true))]
+#[cfg_attr(not(feature = "napi"), service(name = "live-generated-client"))]
 struct LiveGeneratedClientService;
 
 #[cfg(feature = "client")]
@@ -103,13 +118,13 @@ impl LiveGeneratedClientService {
         payload: Payload<Json<LiveClientSumRequest>>,
     ) -> Result<Json<LiveClientSumResponse>, NatsErrorResponse> {
         Ok(Json(LiveClientSumResponse {
-            total: payload.0.numbers.iter().sum(),
+            total: payload.numbers.iter().sum(),
         }))
     }
 
     #[endpoint(subject = "users.{user_id}.profile", group = "live-client")]
     async fn get_user_profile(user_id: SubjectParam<String>) -> Result<String, NatsErrorResponse> {
-        Ok(format!("profile:{}", user_id.0))
+        Ok(format!("profile:{}", user_id.as_str()))
     }
 
     #[endpoint(subject = "maybe-json", group = "live-client")]
@@ -117,8 +132,8 @@ impl LiveGeneratedClientService {
         payload: Payload<Option<Json<LiveOptionalJsonPayload>>>,
     ) -> Result<String, NatsErrorResponse> {
         Ok(payload
-            .0
-            .map(|payload| payload.0.value)
+            .as_deref()
+            .map(|payload| payload.value.clone())
             .unwrap_or_else(|| "none".to_string()))
     }
 
@@ -127,8 +142,8 @@ impl LiveGeneratedClientService {
         payload: Payload<Option<Proto<LiveOptionalProtoPayload>>>,
     ) -> Result<String, NatsErrorResponse> {
         Ok(payload
-            .0
-            .map(|payload| payload.0.value)
+            .as_deref()
+            .map(|payload| payload.value.clone())
             .unwrap_or_else(|| "none".to_string()))
     }
 
@@ -136,21 +151,26 @@ impl LiveGeneratedClientService {
     async fn maybe_string_response(
         payload: Payload<Option<String>>,
     ) -> Result<Option<String>, NatsErrorResponse> {
-        Ok(payload.0)
+        Ok(payload.into_inner())
     }
 
     #[endpoint(subject = "maybe-json-response", group = "live-client")]
     async fn maybe_json_response(
         payload: Payload<Option<Json<LiveOptionalJsonPayload>>>,
     ) -> Result<Option<Json<LiveOptionalJsonPayload>>, NatsErrorResponse> {
-        Ok(payload.0)
+        Ok(payload.into_inner())
     }
 
     #[endpoint(subject = "maybe-proto-response", group = "live-client")]
     async fn maybe_proto_response(
         payload: Payload<Option<Proto<LiveOptionalProtoPayload>>>,
     ) -> Result<Option<Proto<LiveOptionalProtoPayload>>, NatsErrorResponse> {
-        Ok(payload.0)
+        Ok(payload.into_inner())
+    }
+
+    #[endpoint(subject = "service-error", group = "live-client")]
+    async fn service_error() -> Result<(), LiveGeneratedClientError> {
+        Err(LiveGeneratedClientError::InvalidEvent)
     }
 
     #[cfg(feature = "encryption")]
@@ -160,8 +180,8 @@ impl LiveGeneratedClientService {
         _shutdown: ShutdownSignal,
     ) -> Result<String, NatsErrorResponse> {
         Ok(payload
-            .0
-            .map(|payload| payload.0)
+            .as_deref()
+            .cloned()
             .unwrap_or_else(|| "none".to_string()))
     }
 
@@ -171,7 +191,7 @@ impl LiveGeneratedClientService {
         payload: Payload<Option<Encrypted<String>>>,
         _shutdown: ShutdownSignal,
     ) -> Result<Option<Encrypted<String>>, NatsErrorResponse> {
-        Ok(payload.0)
+        Ok(payload.into_inner())
     }
 }
 
@@ -625,6 +645,378 @@ async fn live_generated_client_optional_response_variants_round_trip() -> Result
     Ok(())
 }
 
+#[cfg(feature = "client")]
+#[tokio::test]
+async fn live_generated_client_preserves_service_error_metadata() -> Result<()> {
+    let Some(client) = connect_live_nats().await else {
+        return Ok(());
+    };
+
+    let (shutdown_tx, app_handle, service_client) =
+        spawn_live_generated_client_service(client.clone()).await?;
+
+    let service_result = async {
+        let error = service_client
+            .service_error()
+            .await
+            .expect_err("generated client service_error call should fail");
+        let response = error.into_nats_error_response();
+
+        assert_eq!(response.kind, "INVALID_EVENT");
+        assert_eq!(response.message, "consumer event kind was empty");
+        assert!(!response.request_id.is_empty());
+
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+
+    let shutdown_result =
+        shutdown_app(shutdown_tx, app_handle, "generated client service error").await;
+
+    service_result?;
+    shutdown_result?;
+    Ok(())
+}
+
+#[cfg(all(feature = "client", feature = "napi"))]
+#[tokio::test]
+async fn live_generated_napi_client_round_trips_endpoints() -> Result<()> {
+    let Some(client) = connect_live_nats().await else {
+        return Ok(());
+    };
+
+    let server = std::env::var("NATS_URL").unwrap_or_else(|_| "nats://127.0.0.1:4222".to_string());
+    let spawned = spawn_live_generated_client_service_app(client).await?;
+
+    let napi_result = async {
+        let service_client = build_live_generated_napi_client(
+            server,
+            spawned.prefix.clone(),
+            #[cfg(feature = "encryption")]
+            spawned.recipient,
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("generated N-API client connect failed: {err}"))?;
+
+        let health = service_client
+            .health()
+            .await
+            .map_err(|err| anyhow::anyhow!("generated N-API client health call failed: {err}"))?;
+        assert_eq!(health, "ok");
+
+        let sum = service_client
+            .sum(LiveClientSumRequest {
+                numbers: vec![3, 4, 5],
+            })
+            .await
+            .map_err(|err| anyhow::anyhow!("generated N-API client sum call failed: {err}"))?;
+        assert_eq!(sum, LiveClientSumResponse { total: 12 });
+
+        let profile = service_client
+            .get_user_profile(LiveGeneratedClientServiceGetUserProfileArgs {
+                user_id: "alice".to_string(),
+            })
+            .await
+            .map_err(|err| {
+                anyhow::anyhow!("generated N-API client subject-param call failed: {err}")
+            })?;
+        assert_eq!(profile, "profile:alice");
+
+        let json_some = service_client
+            .maybe_json(Some(LiveOptionalJsonPayload {
+                value: "json-value".to_string(),
+            }))
+            .await
+            .map_err(|err| {
+                anyhow::anyhow!("generated N-API client optional json Some call failed: {err}")
+            })?;
+        assert_eq!(json_some, "json-value");
+
+        let json_none = service_client.maybe_json(None).await.map_err(|err| {
+            anyhow::anyhow!("generated N-API client optional json None call failed: {err}")
+        })?;
+        assert_eq!(json_none, "none");
+
+        let proto_some = service_client
+            .maybe_proto(Some(LiveOptionalProtoPayload {
+                value: "proto-value".to_string(),
+            }))
+            .await
+            .map_err(|err| {
+                anyhow::anyhow!("generated N-API client optional proto Some call failed: {err}")
+            })?;
+        assert_eq!(proto_some, "proto-value");
+
+        let proto_none = service_client.maybe_proto(None).await.map_err(|err| {
+            anyhow::anyhow!("generated N-API client optional proto None call failed: {err}")
+        })?;
+        assert_eq!(proto_none, "none");
+
+        let string_some = service_client
+            .maybe_string_response(Some("plain-value".to_string()))
+            .await
+            .map_err(|err| {
+                anyhow::anyhow!(
+                    "generated N-API client optional string response Some call failed: {err}"
+                )
+            })?;
+        assert_eq!(string_some, Some("plain-value".to_string()));
+
+        let string_none = service_client
+            .maybe_string_response(None)
+            .await
+            .map_err(|err| {
+                anyhow::anyhow!(
+                    "generated N-API client optional string response None call failed: {err}"
+                )
+            })?;
+        assert_eq!(string_none, None);
+
+        let json_response_some = service_client
+            .maybe_json_response(Some(LiveOptionalJsonPayload {
+                value: "json-response".to_string(),
+            }))
+            .await
+            .map_err(|err| {
+                anyhow::anyhow!(
+                    "generated N-API client optional json response Some call failed: {err}"
+                )
+            })?;
+        assert_eq!(
+            json_response_some,
+            Some(LiveOptionalJsonPayload {
+                value: "json-response".to_string(),
+            })
+        );
+
+        let json_response_none = service_client
+            .maybe_json_response(None)
+            .await
+            .map_err(|err| {
+                anyhow::anyhow!(
+                    "generated N-API client optional json response None call failed: {err}"
+                )
+            })?;
+        assert_eq!(json_response_none, None);
+
+        let proto_response_some = service_client
+            .maybe_proto_response(Some(LiveOptionalProtoPayload {
+                value: "proto-response".to_string(),
+            }))
+            .await
+            .map_err(|err| {
+                anyhow::anyhow!(
+                    "generated N-API client optional proto response Some call failed: {err}"
+                )
+            })?;
+        assert_eq!(
+            proto_response_some,
+            Some(LiveOptionalProtoPayload {
+                value: "proto-response".to_string(),
+            })
+        );
+
+        let proto_response_none =
+            service_client
+                .maybe_proto_response(None)
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "generated N-API client optional proto response None call failed: {err}"
+                    )
+                })?;
+        assert_eq!(proto_response_none, None);
+
+        let service_error = service_client
+            .service_error()
+            .await
+            .expect_err("generated N-API client service_error call should fail");
+        assert_eq!(service_error.status, "INVALID_EVENT");
+        assert_eq!(service_error.reason, "consumer event kind was empty");
+
+        assert_eq!(
+            JsLiveGeneratedClientError::INVALID_EVENT.as_ref(),
+            "INVALID_EVENT"
+        );
+
+        #[cfg(feature = "encryption")]
+        {
+            let encrypted_some = service_client
+                .maybe_encrypted(Some("secret-value".to_string()))
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "generated N-API client optional encrypted Some call failed: {err}"
+                    )
+                })?;
+            assert_eq!(encrypted_some, "secret-value");
+
+            let encrypted_none = service_client.maybe_encrypted(None).await.map_err(|err| {
+                anyhow::anyhow!("generated N-API client optional encrypted None call failed: {err}")
+            })?;
+            assert_eq!(encrypted_none, "none");
+
+            let encrypted_response_some = service_client
+                .maybe_encrypted_response(Some("secret-response".to_string()))
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "generated N-API client optional encrypted response Some call failed: {err}"
+                    )
+                })?;
+            assert_eq!(encrypted_response_some, Some("secret-response".to_string()));
+
+            let encrypted_response_none = service_client
+                .maybe_encrypted_response(None)
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "generated N-API client optional encrypted response None call failed: {err}"
+                    )
+                })?;
+            assert_eq!(encrypted_response_none, None);
+        }
+
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+
+    let shutdown_result = shutdown_app(
+        spawned.shutdown_tx,
+        spawned.app_handle,
+        "generated N-API client",
+    )
+    .await;
+
+    napi_result?;
+    shutdown_result?;
+    Ok(())
+}
+
+#[cfg(all(feature = "client", feature = "napi", feature = "encryption"))]
+#[tokio::test]
+async fn live_generated_napi_client_surfaces_framework_errors() -> Result<()> {
+    let Some(client) = connect_live_nats().await else {
+        return Ok(());
+    };
+
+    let server = std::env::var("NATS_URL").unwrap_or_else(|_| "nats://127.0.0.1:4222".to_string());
+    let spawned = spawn_live_generated_client_service_app(client).await?;
+
+    let napi_result = async {
+        let service_client =
+            build_live_generated_napi_client_without_recipient(server, spawned.prefix.clone())
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "generated N-API client connect without recipient failed: {err}"
+                    )
+                })?;
+
+        let error = service_client
+            .maybe_encrypted(Some("secret-value".to_string()))
+            .await
+            .expect_err("generated N-API client encrypted call should fail without recipient");
+        assert_eq!(error.status, "MISSING_RECIPIENT");
+        assert!(error.reason.contains("recipient"));
+
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+
+    let shutdown_result = shutdown_app(
+        spawned.shutdown_tx,
+        spawned.app_handle,
+        "generated N-API framework error client",
+    )
+    .await;
+
+    napi_result?;
+    shutdown_result?;
+    Ok(())
+}
+
+#[cfg(all(feature = "client", feature = "napi"))]
+#[tokio::test]
+async fn live_generated_napi_client_connect_surfaces_auth_mode_conflict() -> Result<()> {
+    let error = match JsLiveGeneratedClientServiceClient::connect(
+        "nats://127.0.0.1:4222".to_string(),
+        Some(LiveGeneratedClientServiceClientConnectOptions {
+            auth: Some(LiveGeneratedClientServiceClientAuthOptions {
+                token: Some("token".to_string()),
+                username: Some("user".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+    )
+    .await
+    {
+        Ok(_) => {
+            anyhow::bail!("generated N-API client connect should reject conflicting auth modes")
+        }
+        Err(error) => error,
+    };
+
+    assert_eq!(error.status, "AUTH_MODE_CONFLICT");
+    assert!(error.reason.contains("choose only one auth mode"));
+
+    Ok(())
+}
+
+#[cfg(all(feature = "client", feature = "napi"))]
+#[tokio::test]
+async fn live_generated_napi_client_connect_surfaces_missing_auth_password() -> Result<()> {
+    let error = match JsLiveGeneratedClientServiceClient::connect(
+        "nats://127.0.0.1:4222".to_string(),
+        Some(LiveGeneratedClientServiceClientConnectOptions {
+            auth: Some(LiveGeneratedClientServiceClientAuthOptions {
+                username: Some("user".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }),
+    )
+    .await
+    {
+        Ok(_) => anyhow::bail!(
+            "generated N-API client connect should require a password with username auth"
+        ),
+        Err(error) => error,
+    };
+
+    assert_eq!(error.status, "AUTH_PASSWORD_REQUIRED");
+    assert!(error.reason.contains("password is required"));
+
+    Ok(())
+}
+
+#[cfg(all(feature = "client", feature = "napi", feature = "encryption"))]
+#[tokio::test]
+async fn live_generated_napi_client_connect_surfaces_invalid_recipient_public_key() -> Result<()> {
+    let error = match JsLiveGeneratedClientServiceClient::connect(
+        "nats://127.0.0.1:4222".to_string(),
+        Some(LiveGeneratedClientServiceClientConnectOptions {
+            recipient_public_key: Some(nats_micro::napi::bindgen_prelude::Buffer::from(vec![
+                1, 2, 3,
+            ])),
+            ..Default::default()
+        }),
+    )
+    .await
+    {
+        Ok(_) => anyhow::bail!(
+            "generated N-API client connect should reject invalid recipient public keys"
+        ),
+        Err(error) => error,
+    };
+
+    assert_eq!(error.status, "MISSING_RECIPIENT_PUBKEY");
+    assert!(error.reason.contains("exactly 32 bytes"));
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn live_jetstream_consumer_processes_messages() -> Result<()> {
     let Some(client) = connect_live_nats().await else {
@@ -1023,6 +1415,15 @@ fn service_definition(
 }
 
 #[cfg(feature = "client")]
+struct SpawnedLiveGeneratedClientService {
+    shutdown_tx: oneshot::Sender<()>,
+    app_handle: JoinHandle<Result<()>>,
+    prefix: String,
+    #[cfg(feature = "encryption")]
+    recipient: [u8; 32],
+}
+
+#[cfg(feature = "client")]
 fn live_generated_client_service_definition(prefix: String) -> ServiceDefinition {
     let mut definition = LiveGeneratedClientService::definition();
     let service_name = unique_name("generated-client-service");
@@ -1047,8 +1448,9 @@ fn build_live_generated_client(
     #[cfg(feature = "encryption")]
     {
         live_generated_client_service_client::LiveGeneratedClientServiceClient::with_prefix(
-            client, prefix, recipient,
+            client, prefix,
         )
+        .with_recipient(recipient)
     }
 
     #[cfg(not(feature = "encryption"))]
@@ -1057,6 +1459,37 @@ fn build_live_generated_client(
             client, prefix,
         )
     }
+}
+
+#[cfg(all(feature = "client", feature = "napi"))]
+async fn build_live_generated_napi_client(
+    server: String,
+    prefix: String,
+    #[cfg(feature = "encryption")] recipient: [u8; 32],
+) -> nats_micro::napi::Result<JsLiveGeneratedClientServiceClient, String> {
+    let options = LiveGeneratedClientServiceClientConnectOptions {
+        subject_prefix: Some(prefix),
+        #[cfg(feature = "encryption")]
+        recipient_public_key: Some(nats_micro::napi::bindgen_prelude::Buffer::from(
+            recipient.to_vec(),
+        )),
+        ..Default::default()
+    };
+
+    JsLiveGeneratedClientServiceClient::connect(server, Some(options)).await
+}
+
+#[cfg(all(feature = "client", feature = "napi", feature = "encryption"))]
+async fn build_live_generated_napi_client_without_recipient(
+    server: String,
+    prefix: String,
+) -> nats_micro::napi::Result<JsLiveGeneratedClientServiceClient, String> {
+    let options = LiveGeneratedClientServiceClientConnectOptions {
+        subject_prefix: Some(prefix),
+        ..Default::default()
+    };
+
+    JsLiveGeneratedClientServiceClient::connect(server, Some(options)).await
 }
 
 #[cfg(feature = "client")]
@@ -1070,13 +1503,9 @@ async fn wait_for_generated_client_service(
 }
 
 #[cfg(feature = "client")]
-async fn spawn_live_generated_client_service(
+async fn spawn_live_generated_client_service_app(
     client: async_nats::Client,
-) -> Result<(
-    oneshot::Sender<()>,
-    JoinHandle<Result<()>>,
-    live_generated_client_service_client::LiveGeneratedClientServiceClient,
-)> {
+) -> Result<SpawnedLiveGeneratedClientService> {
     let prefix = unique_name("generated-client-prefix");
     let service_def = live_generated_client_service_definition(prefix.clone());
 
@@ -1095,14 +1524,32 @@ async fn spawn_live_generated_client_service(
     let (shutdown_tx, app_handle) = spawn_app_until_shutdown(app);
     wait_for_generated_client_service(&client, &prefix).await?;
 
-    let service_client = build_live_generated_client(
-        client,
+    Ok(SpawnedLiveGeneratedClientService {
+        shutdown_tx,
+        app_handle,
         prefix,
         #[cfg(feature = "encryption")]
         recipient,
+    })
+}
+
+#[cfg(feature = "client")]
+async fn spawn_live_generated_client_service(
+    client: async_nats::Client,
+) -> Result<(
+    oneshot::Sender<()>,
+    JoinHandle<Result<()>>,
+    live_generated_client_service_client::LiveGeneratedClientServiceClient,
+)> {
+    let spawned = spawn_live_generated_client_service_app(client.clone()).await?;
+    let service_client = build_live_generated_client(
+        client,
+        spawned.prefix.clone(),
+        #[cfg(feature = "encryption")]
+        spawned.recipient,
     );
 
-    Ok((shutdown_tx, app_handle, service_client))
+    Ok((spawned.shutdown_tx, spawned.app_handle, service_client))
 }
 
 async fn shutdown_app(

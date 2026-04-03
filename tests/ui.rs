@@ -21,4 +21,11 @@ fn macro_ui_validation() {
     tests.pass("tests/ui/service_subject_prefix.rs");
     tests.pass("tests/ui/service_client_metadata.rs");
     tests.pass("tests/ui/service_client_generation.rs");
+
+    #[cfg(feature = "napi")]
+    {
+        tests.compile_fail("tests/ui/object_private_field.rs");
+        tests.compile_fail("tests/ui/service_napi_missing_object.rs");
+        tests.pass("tests/ui/service_napi_generation.rs");
+    }
 }

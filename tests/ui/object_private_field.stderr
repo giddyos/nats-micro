@@ -1,0 +1,5 @@
+error: #[nats_micro::object] requires all fields to be pub
+ --> tests/ui/object_private_field.rs:7:5
+  |
+7 |     value: String,
+  |     ^^^^^

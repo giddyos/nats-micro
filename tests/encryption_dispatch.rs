@@ -171,8 +171,11 @@ fn prepare_request_for_dispatch_rejects_headers_for_wrong_service() {
     .expect_err("wrong service key should fail");
 
     assert_eq!(err.code, 400);
-    assert_eq!(err.error, "SIGNATURE_INVALID");
-    assert_eq!(err.message, "request signature verification failed");
+    assert_eq!(err.kind, "SIGNATURE_INVALID");
+    assert_eq!(
+        err.message,
+        "Request signature verification failed. Please ensure that the service public key is correct."
+    );
     assert_eq!(err.request_id, "req-header-only");
 }
 
@@ -200,7 +203,7 @@ fn tampered_payload_fails_signature_verification() {
     .expect_err("tampered payload should fail");
 
     assert_eq!(err.code, 400);
-    assert_eq!(err.error, "SIGNATURE_INVALID");
+    assert_eq!(err.kind, "SIGNATURE_INVALID");
 }
 
 #[test]
@@ -232,7 +235,7 @@ fn missing_signature_fails_when_eph_pub_key_present() {
     .expect_err("missing signature should fail");
 
     assert_eq!(err.code, 400);
-    assert_eq!(err.error, "SIGNATURE_MISSING");
+    assert_eq!(err.kind, "SIGNATURE_MISSING");
 }
 
 #[test]
@@ -344,5 +347,5 @@ fn encrypted_payload_rejects_mismatched_header_ephemeral_key() {
     .expect_err("mismatched payload should fail signature");
 
     assert_eq!(err.code, 400);
-    assert_eq!(err.error, "SIGNATURE_INVALID");
+    assert_eq!(err.kind, "SIGNATURE_INVALID");
 }

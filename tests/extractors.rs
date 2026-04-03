@@ -123,7 +123,7 @@ fn invalid_protobuf_payloads_return_bad_request() {
     let error = Proto::<ExampleProto>::from_payload(&ctx).expect_err("invalid payload should fail");
 
     assert_eq!(error.code, 400);
-    assert_eq!(error.error, "BAD_PROTOBUF");
+    assert_eq!(error.kind, "BAD_PROTOBUF");
     assert_eq!(error.request_id, "req-proto-1");
     assert!(!error.message.is_empty());
 }
@@ -159,7 +159,7 @@ async fn missing_subject_params_return_bad_request() {
         .expect_err("missing subject param should fail");
 
     assert_eq!(error.code, 400);
-    assert_eq!(error.error, "SUBJECT_PARAM_MISSING");
+    assert_eq!(error.kind, "SUBJECT_PARAM_MISSING");
     assert_eq!(error.request_id, "req-subject-1");
     assert!(!error.message.is_empty());
 }
@@ -183,7 +183,7 @@ async fn shutdown_signal_extractor_requires_runtime_wiring() {
     };
 
     assert_eq!(err.code, 500);
-    assert_eq!(err.error, "SHUTDOWN_SIGNAL_UNAVAILABLE");
+    assert_eq!(err.kind, "SHUTDOWN_SIGNAL_UNAVAILABLE");
     assert_eq!(err.request_id, "req-proto-1");
 }
 
@@ -248,6 +248,6 @@ async fn optional_auth_preserves_non_missing_auth_failures() {
     };
 
     assert_eq!(error.code, 403);
-    assert_eq!(error.error, "FORBIDDEN");
+    assert_eq!(error.kind, "FORBIDDEN");
     assert_eq!(error.request_id, "req-proto-1");
 }

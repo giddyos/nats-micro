@@ -31,6 +31,7 @@ struct ProtoResponse {
 #[test]
 fn service_error_round_trips_from_nats_error_response() {
     let response = ClientTestError::EmptyNumbers.into_nats_error("req-typed".to_string());
+    assert_eq!(response.kind, "EMPTY_NUMBERS");
     let error = ClientTestError::from_nats_error_response(response);
 
     assert!(matches!(
@@ -53,7 +54,10 @@ fn proto_deserializer_maps_service_error_payloads() {
 
     assert!(matches!(
         result,
-        Err(ClientError::Service(ClientTestError::EmptyNumbers))
+        Err(ClientError::Service {
+            error: ClientTestError::EmptyNumbers,
+            ..
+        })
     ));
 }
 
@@ -100,12 +104,47 @@ fn structured_named_service_errors_round_trip() {
 
 #[test]
 fn structured_service_errors_without_details_stay_untyped() {
-    let response = NatsErrorResponse::new(422, "InvalidRange", "invalid range 4..9", "req-missing");
+    let response =
+        NatsErrorResponse::new(422, "INVALID_RANGE", "invalid range 4..9", "req-missing");
 
     assert!(matches!(
         ClientTestError::from_nats_error_response(response),
         ServiceErrorMatch::Untyped(_)
     ));
+}
+
+#[test]
+fn typed_client_errors_preserve_original_response_metadata() {
+    let response = ClientTestError::RetryAfter(30).into_nats_error("req-typed".to_string());
+    let wrapped = ClientError::<ClientTestError>::from_service_response(response.clone())
+        .into_nats_error_response();
+
+    assert_eq!(wrapped.code, response.code);
+    assert_eq!(wrapped.kind, response.kind);
+    assert_eq!(wrapped.message, response.message);
+    assert_eq!(wrapped.request_id, "req-typed");
+    assert_eq!(wrapped.details, response.details);
+}
+
+#[cfg(feature = "napi")]
+#[test]
+fn service_errors_map_to_custom_js_codes() {
+    let js_code = JsClientTestError::RETRY_AFTER;
+    assert_eq!(js_code.as_ref(), "RETRY_AFTER");
+
+    let wrapped = ClientError::<ClientTestError>::from_service_response(
+        ClientTestError::EmptyNumbers.into_nats_error("req-js".to_string()),
+    )
+    .into_nats_error_response();
+    assert_eq!(wrapped.kind, "EMPTY_NUMBERS");
+    assert_eq!(wrapped.message, "numbers must not be empty");
+    assert_eq!(wrapped.request_id, "req-js");
+
+    let response = NatsErrorResponse::bad_request("BAD_PROTOBUF", "payload was invalid");
+    let transport =
+        ClientError::<NatsErrorResponse>::deserialize(response).into_nats_error_response();
+    assert_eq!(transport.kind, "BAD_PROTOBUF");
+    assert_eq!(transport.message, "payload was invalid");
 }
 
 #[cfg(feature = "encryption")]
@@ -139,7 +178,10 @@ fn encrypted_response_falls_back_to_plain_service_error_payloads() {
 
     assert!(matches!(
         result,
-        Err(ClientError::Service(ClientTestError::EmptyNumbers))
+        Err(ClientError::Service {
+            error: ClientTestError::EmptyNumbers,
+            ..
+        })
     ));
 }
 
