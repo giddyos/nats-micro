@@ -1,4 +1,5 @@
 #![cfg(feature = "encryption")]
+#![allow(clippy::redundant_closure_for_method_calls)]
 
 use async_nats::HeaderMap;
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -118,6 +119,26 @@ fn invalid_encrypted_headers_report_context() {
         error
             .to_string()
             .contains("decoding x-encrypted-headers header from base64")
+    );
+}
+
+#[test]
+fn invalid_encrypted_headers_json_reports_context() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+    let eph_ctx = recipient.begin();
+    let encrypted_blob = eph_ctx.encrypt(b"not-json").unwrap();
+    let shared_key = keypair.derive_shared_key(&eph_ctx.ephemeral_pub_bytes());
+
+    let mut headers = HeaderMap::new();
+    headers.insert("x-encrypted-headers", STANDARD.encode(&encrypted_blob));
+
+    let error = encrypted_headers_decrypt(&headers, &shared_key)
+        .expect_err("non-json encrypted headers should fail");
+    assert!(
+        error
+            .to_string()
+            .contains("deserializing decrypted headers JSON")
     );
 }
 

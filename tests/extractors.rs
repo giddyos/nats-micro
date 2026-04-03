@@ -1,3 +1,5 @@
+#![allow(clippy::manual_let_else, clippy::redundant_closure_for_method_calls)]
+
 use async_nats::HeaderMap;
 use bytes::Bytes;
 use nats_micro::{

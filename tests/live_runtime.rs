@@ -1,3 +1,13 @@
+#![allow(
+    clippy::assigning_clones,
+    clippy::manual_let_else,
+    clippy::map_unwrap_or,
+    clippy::needless_pass_by_value,
+    clippy::too_many_lines,
+    clippy::unused_async,
+    clippy::used_underscore_binding
+)]
+
 use std::{
     collections::BTreeSet,
     future::pending,

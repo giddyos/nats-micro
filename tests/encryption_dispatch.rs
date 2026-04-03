@@ -1,10 +1,11 @@
 #![cfg(feature = "encryption")]
+#![allow(clippy::redundant_closure_for_method_calls)]
 
 use async_nats::HeaderMap;
 use nats_micro::{
-    __test_support, Auth, AuthError, BuiltRequest, Encrypted, FromAuthRequest, FromRequest,
-    Headers, IntoNatsResponse, NatsRequest, RequestContext, ServiceKeyPair, ServiceRecipient,
-    StateMap,
+    __test_support, Auth, AuthError, BuiltRequest, Encrypted, FromAuthRequest, FromPayload,
+    FromRequest, Headers, IntoNatsResponse, NatsRequest, RequestContext, ServiceKeyPair,
+    ServiceRecipient, StateMap,
 };
 
 struct DemoUser {
@@ -239,6 +240,52 @@ fn missing_signature_fails_when_eph_pub_key_present() {
 }
 
 #[test]
+fn invalid_ephemeral_public_key_encoding_fails_fast() {
+    let keypair = ServiceKeyPair::generate();
+    let mut headers = HeaderMap::new();
+    headers.insert("x-request-id", "req-invalid-eph");
+    headers.insert("x-ephemeral-pub-key", "not-base64");
+
+    let err = __test_support::prepare_request_for_dispatch_with_state(
+        &state_with_keypair(keypair),
+        request_with_headers(headers, b"plain payload"),
+    )
+    .expect_err("invalid ephemeral public key should fail");
+
+    assert_eq!(err.code, 400);
+    assert_eq!(err.kind, "DECRYPT_FAILED");
+    assert!(
+        err.message
+            .contains("failed to decode ephemeral public key")
+    );
+}
+
+#[test]
+fn invalid_signature_encoding_is_rejected() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+    let built = recipient
+        .request_builder()
+        .header("x-request-id", "req-invalid-signature")
+        .payload(b"plain payload".to_vec())
+        .build()
+        .expect("build request");
+
+    let mut headers = built.headers;
+    headers.insert("x-signature", "***not-base64***");
+
+    let err = __test_support::prepare_request_for_dispatch_with_state(
+        &state_with_keypair(keypair),
+        request_with_headers(headers, &built.payload),
+    )
+    .expect_err("invalid signature encoding should fail");
+
+    assert_eq!(err.code, 400);
+    assert_eq!(err.kind, "SIGNATURE_INVALID");
+    assert_eq!(err.message, "invalid signature encoding");
+}
+
+#[test]
 fn plain_request_without_encryption_passes_through() {
     let keypair = ServiceKeyPair::generate();
     let headers = {
@@ -348,4 +395,45 @@ fn encrypted_payload_rejects_mismatched_header_ephemeral_key() {
 
     assert_eq!(err.code, 400);
     assert_eq!(err.kind, "SIGNATURE_INVALID");
+}
+
+#[test]
+fn encrypted_response_requires_encrypted_request_context() {
+    let ctx = RequestContext::new(
+        request_with_headers(HeaderMap::new(), b"plain payload"),
+        state_with_keypair(ServiceKeyPair::generate()),
+        None,
+    );
+
+    let err = Encrypted(String::from("secret response"))
+        .into_response(&ctx)
+        .expect_err("plain request context should not support encrypted responses");
+
+    assert_eq!(err.code, 400);
+    assert_eq!(err.kind, "ENCRYPT_REQUIRED");
+}
+
+#[test]
+fn encrypted_payload_requires_registered_service_key() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+    let built = recipient
+        .request_builder()
+        .encrypted_payload(b"secret payload".to_vec())
+        .build()
+        .expect("build request");
+
+    let ctx = RequestContext::new(
+        request_with_headers(built.headers, &built.payload),
+        StateMap::new(),
+        None,
+    )
+    .__with_ephemeral_pub(Some(built.context.ephemeral_pub_bytes()));
+
+    let Err(err) = Encrypted::<String>::from_payload(&ctx) else {
+        panic!("missing key material should fail extraction");
+    };
+
+    assert_eq!(err.code, 500);
+    assert_eq!(err.kind, "NO_ENCRYPTION_KEY");
 }
