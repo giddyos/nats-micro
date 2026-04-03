@@ -15,7 +15,7 @@ fn endpoint_args(subject: &str, group: Option<&str>) -> EndpointArgs {
 }
 
 fn endpoint_spec_for(
-    method: ImplItemFn,
+    method: &ImplItemFn,
     subject: &str,
     group: Option<&str>,
 ) -> crate::client::ClientEndpointSpec {
@@ -25,23 +25,20 @@ fn endpoint_spec_for(
         .filter(|attr| attr.path().is_ident("cfg") || attr.path().is_ident("cfg_attr"))
         .cloned()
         .collect();
-    build_endpoint_client_spec(&method, &endpoint_args(subject, group), attrs).unwrap()
+    build_endpoint_client_spec(method, &endpoint_args(subject, group), attrs).unwrap()
 }
 
 #[test]
 fn generated_napi_asserts_cover_payload_and_response_dtos() {
-    let endpoint = endpoint_spec_for(
-        parse_quote! {
-            async fn sum(
-                payload: nats_micro::Payload<nats_micro::Json<SumRequest>>,
-            ) -> Result<nats_micro::Json<SumResponse>, nats_micro::NatsErrorResponse> {
-                let _ = payload;
-                Ok(nats_micro::Json(SumResponse))
-            }
-        },
-        "sum",
-        Some("math"),
-    );
+    let method: ImplItemFn = parse_quote! {
+        async fn sum(
+            payload: nats_micro::Payload<nats_micro::Json<SumRequest>>,
+        ) -> Result<nats_micro::Json<SumResponse>, nats_micro::NatsErrorResponse> {
+            let _ = payload;
+            Ok(nats_micro::Json(SumResponse))
+        }
+    };
+    let endpoint = endpoint_spec_for(&method, "sum", Some("math"));
 
     let expanded = gen_napi_asserts(&[endpoint]).to_string();
 
@@ -54,7 +51,7 @@ fn generated_napi_module_wraps_generated_rust_client() {
     let service_ident = parse_quote!(DemoService);
     let endpoints = vec![
         endpoint_spec_for(
-            parse_quote! {
+            &parse_quote! {
                 async fn get_profile(
                     user_id: nats_micro::SubjectParam<String>,
                 ) -> Result<nats_micro::Json<UserProfile>, nats_micro::NatsErrorResponse> {
@@ -66,7 +63,7 @@ fn generated_napi_module_wraps_generated_rust_client() {
             Some("accounts"),
         ),
         endpoint_spec_for(
-            parse_quote! {
+            &parse_quote! {
                 async fn echo(
                     payload: nats_micro::Payload<Vec<u8>>,
                 ) -> Result<Vec<u8>, nats_micro::NatsErrorResponse> {
@@ -98,7 +95,7 @@ fn generated_napi_module_emits_service_error_interface() {
     let service_ident = parse_quote!(DemoService);
     let endpoints = vec![
         endpoint_spec_for(
-            parse_quote! {
+            &parse_quote! {
                 async fn first() -> Result<(), DemoDomainError> {
                     Ok(())
                 }
@@ -107,7 +104,7 @@ fn generated_napi_module_emits_service_error_interface() {
             Some("demo"),
         ),
         endpoint_spec_for(
-            parse_quote! {
+            &parse_quote! {
                 async fn second() -> Result<(), AnotherDemoError> {
                     Ok(())
                 }
@@ -116,7 +113,7 @@ fn generated_napi_module_emits_service_error_interface() {
             Some("demo"),
         ),
         endpoint_spec_for(
-            parse_quote! {
+            &parse_quote! {
                 async fn third() -> Result<(), nats_micro::NatsErrorResponse> {
                     Ok(())
                 }
@@ -151,7 +148,7 @@ fn generated_napi_module_supports_optional_call_headers() {
     let service_ident = parse_quote!(DemoService);
     let endpoints = vec![
         endpoint_spec_for(
-            parse_quote! {
+            &parse_quote! {
                 async fn health() -> Result<String, nats_micro::NatsErrorResponse> {
                     Ok("ok".to_string())
                 }
@@ -160,7 +157,7 @@ fn generated_napi_module_supports_optional_call_headers() {
             None,
         ),
         endpoint_spec_for(
-            parse_quote! {
+            &parse_quote! {
                 async fn get_profile(
                     user_id: nats_micro::SubjectParam<String>,
                 ) -> Result<nats_micro::Json<UserProfile>, nats_micro::NatsErrorResponse> {
@@ -172,7 +169,7 @@ fn generated_napi_module_supports_optional_call_headers() {
             Some("accounts"),
         ),
         endpoint_spec_for(
-            parse_quote! {
+            &parse_quote! {
                 async fn echo(
                     payload: nats_micro::Payload<Vec<u8>>,
                 ) -> Result<Vec<u8>, nats_micro::NatsErrorResponse> {

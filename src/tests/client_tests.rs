@@ -15,7 +15,7 @@ fn endpoint_args(subject: &str, group: Option<&str>) -> EndpointArgs {
 }
 
 fn endpoint_spec_for(
-    method: ImplItemFn,
+    method: &ImplItemFn,
     subject: &str,
     group: Option<&str>,
 ) -> super::ClientEndpointSpec {
@@ -25,7 +25,7 @@ fn endpoint_spec_for(
         .filter(|attr| attr.path().is_ident("cfg") || attr.path().is_ident("cfg_attr"))
         .cloned()
         .collect();
-    build_endpoint_client_spec(&method, &endpoint_args(subject, group), attrs).unwrap()
+    build_endpoint_client_spec(method, &endpoint_args(subject, group), attrs).unwrap()
 }
 
 #[test]
@@ -56,21 +56,22 @@ fn generated_client_uses_service_metadata_prefix() {
 #[test]
 fn client_module_spec_exposes_endpoint_shapes_for_future_emitters() {
     let struct_ident = parse_quote!(DemoService);
-    let endpoint = endpoint_spec_for(
-        parse_quote! {
-            async fn maybe_secret(
-                user_id: nats_micro::SubjectParam<String>,
-                payload: nats_micro::Payload<Option<nats_micro::Encrypted<String>>>,
-            ) -> Result<Option<nats_micro::Json<JsonResponse>>, nats_micro::NatsErrorResponse> {
-                let _ = user_id;
-                let _ = payload;
-                Ok(None)
-            }
-        },
-        "users.{user_id}.secret",
-        Some("demo"),
+    let method: ImplItemFn = parse_quote! {
+        async fn maybe_secret(
+            user_id: nats_micro::SubjectParam<String>,
+            payload: nats_micro::Payload<Option<nats_micro::Encrypted<String>>>,
+        ) -> Result<Option<nats_micro::Json<JsonResponse>>, nats_micro::NatsErrorResponse> {
+            let _ = user_id;
+            let _ = payload;
+            Ok(None)
+        }
+    };
+    let endpoint = endpoint_spec_for(&method, "users.{user_id}.secret", Some("demo"));
+    let module_spec = build_client_module_spec(
+        &struct_ident,
+        "DemoService",
+        std::slice::from_ref(&endpoint),
     );
-    let module_spec = build_client_module_spec(&struct_ident, "DemoService", &[endpoint.clone()]);
     let endpoint = &module_spec.endpoints[0];
 
     assert_eq!(endpoint.subject.template, "users.{user_id}.secret");
@@ -101,18 +102,15 @@ fn client_module_spec_exposes_endpoint_shapes_for_future_emitters() {
 
 #[test]
 fn optional_payloads_preserve_marker_metadata_for_clients() {
-    let json_payload = endpoint_spec_for(
-        parse_quote! {
-            async fn maybe_json(
-                payload: nats_micro::Payload<Option<nats_micro::Json<JsonRequest>>>,
-            ) -> Result<(), nats_micro::NatsErrorResponse> {
-                let _ = payload;
-                Ok(())
-            }
-        },
-        "maybe-json",
-        None,
-    );
+    let json_method: ImplItemFn = parse_quote! {
+        async fn maybe_json(
+            payload: nats_micro::Payload<Option<nats_micro::Json<JsonRequest>>>,
+        ) -> Result<(), nats_micro::NatsErrorResponse> {
+            let _ = payload;
+            Ok(())
+        }
+    };
+    let json_payload = endpoint_spec_for(&json_method, "maybe-json", None);
     assert!(matches!(
         json_payload.payload.as_ref().map(|payload| &payload.shape),
         Some(ClientPayloadShape::Json(_))
@@ -130,18 +128,15 @@ fn optional_payloads_preserve_marker_metadata_for_clients() {
             .is_some_and(|payload| !payload.encrypted)
     );
 
-    let proto_payload = endpoint_spec_for(
-        parse_quote! {
-            async fn maybe_proto(
-                payload: nats_micro::Payload<Option<nats_micro::Proto<ProtoRequest>>>,
-            ) -> Result<(), nats_micro::NatsErrorResponse> {
-                let _ = payload;
-                Ok(())
-            }
-        },
-        "maybe-proto",
-        None,
-    );
+    let proto_method: ImplItemFn = parse_quote! {
+        async fn maybe_proto(
+            payload: nats_micro::Payload<Option<nats_micro::Proto<ProtoRequest>>>,
+        ) -> Result<(), nats_micro::NatsErrorResponse> {
+            let _ = payload;
+            Ok(())
+        }
+    };
+    let proto_payload = endpoint_spec_for(&proto_method, "maybe-proto", None);
     assert!(matches!(
         proto_payload.payload.as_ref().map(|payload| &payload.shape),
         Some(ClientPayloadShape::Proto(_))
@@ -159,18 +154,15 @@ fn optional_payloads_preserve_marker_metadata_for_clients() {
             .is_some_and(|payload| !payload.encrypted)
     );
 
-    let encrypted_payload = endpoint_spec_for(
-        parse_quote! {
-            async fn maybe_secret(
-                payload: nats_micro::Payload<Option<nats_micro::Encrypted<String>>>,
-            ) -> Result<(), nats_micro::NatsErrorResponse> {
-                let _ = payload;
-                Ok(())
-            }
-        },
-        "maybe-secret",
-        None,
-    );
+    let encrypted_method: ImplItemFn = parse_quote! {
+        async fn maybe_secret(
+            payload: nats_micro::Payload<Option<nats_micro::Encrypted<String>>>,
+        ) -> Result<(), nats_micro::NatsErrorResponse> {
+            let _ = payload;
+            Ok(())
+        }
+    };
+    let encrypted_payload = endpoint_spec_for(&encrypted_method, "maybe-secret", None);
     assert!(matches!(
         encrypted_payload
             .payload
@@ -213,15 +205,12 @@ fn optional_payloads_reject_nested_options_after_markers() {
 
 #[test]
 fn optional_responses_preserve_marker_metadata_for_clients() {
-    let json_response = endpoint_spec_for(
-        parse_quote! {
-            async fn maybe_json() -> Result<Option<nats_micro::Json<JsonResponse>>, nats_micro::NatsErrorResponse> {
-                Ok(None)
-            }
-        },
-        "maybe-json",
-        None,
-    );
+    let json_method: ImplItemFn = parse_quote! {
+        async fn maybe_json() -> Result<Option<nats_micro::Json<JsonResponse>>, nats_micro::NatsErrorResponse> {
+            Ok(None)
+        }
+    };
+    let json_response = endpoint_spec_for(&json_method, "maybe-json", None);
     assert!(matches!(
         &json_response.response.shape,
         ClientResponseShape::Json(_)
@@ -229,15 +218,12 @@ fn optional_responses_preserve_marker_metadata_for_clients() {
     assert!(json_response.response.optional);
     assert!(!json_response.response.encrypted);
 
-    let proto_response = endpoint_spec_for(
-        parse_quote! {
-            async fn maybe_proto() -> Result<Option<nats_micro::Proto<ProtoResponse>>, nats_micro::NatsErrorResponse> {
-                Ok(None)
-            }
-        },
-        "maybe-proto",
-        None,
-    );
+    let proto_method: ImplItemFn = parse_quote! {
+        async fn maybe_proto() -> Result<Option<nats_micro::Proto<ProtoResponse>>, nats_micro::NatsErrorResponse> {
+            Ok(None)
+        }
+    };
+    let proto_response = endpoint_spec_for(&proto_method, "maybe-proto", None);
     assert!(matches!(
         &proto_response.response.shape,
         ClientResponseShape::Proto(_)
@@ -245,15 +231,12 @@ fn optional_responses_preserve_marker_metadata_for_clients() {
     assert!(proto_response.response.optional);
     assert!(!proto_response.response.encrypted);
 
-    let encrypted_response = endpoint_spec_for(
-        parse_quote! {
-            async fn maybe_secret() -> Result<Option<nats_micro::Encrypted<String>>, nats_micro::NatsErrorResponse> {
-                Ok(None)
-            }
-        },
-        "maybe-secret",
-        None,
-    );
+    let encrypted_method: ImplItemFn = parse_quote! {
+        async fn maybe_secret() -> Result<Option<nats_micro::Encrypted<String>>, nats_micro::NatsErrorResponse> {
+            Ok(None)
+        }
+    };
+    let encrypted_response = endpoint_spec_for(&encrypted_method, "maybe-secret", None);
     assert!(matches!(
         &encrypted_response.response.shape,
         ClientResponseShape::Raw(RawValueKind::String)
@@ -281,18 +264,15 @@ fn optional_responses_reject_nested_options_after_markers() {
 #[test]
 fn generated_client_branches_optional_encrypted_payloads() {
     let struct_ident = parse_quote!(DemoService);
-    let client_endpoint = endpoint_spec_for(
-        parse_quote! {
-            async fn maybe_secret(
-                payload: nats_micro::Payload<Option<nats_micro::Encrypted<String>>>,
-            ) -> Result<String, nats_micro::NatsErrorResponse> {
-                let _ = payload;
-                Ok(String::new())
-            }
-        },
-        "maybe-secret",
-        Some("demo"),
-    );
+    let method: ImplItemFn = parse_quote! {
+        async fn maybe_secret(
+            payload: nats_micro::Payload<Option<nats_micro::Encrypted<String>>>,
+        ) -> Result<String, nats_micro::NatsErrorResponse> {
+            let _ = payload;
+            Ok(String::new())
+        }
+    };
+    let client_endpoint = endpoint_spec_for(&method, "maybe-secret", Some("demo"));
     let expanded =
         generate_client_module(&struct_ident, "DemoService", &[client_endpoint]).to_string();
 
@@ -308,7 +288,7 @@ fn generated_client_decodes_optional_responses() {
     let struct_ident = parse_quote!(DemoService);
     let client_data = vec![
         endpoint_spec_for(
-            parse_quote! {
+            &parse_quote! {
                 async fn maybe_json() -> Result<Option<nats_micro::Json<JsonResponse>>, nats_micro::NatsErrorResponse> {
                     Ok(None)
                 }
@@ -317,7 +297,7 @@ fn generated_client_decodes_optional_responses() {
             Some("demo"),
         ),
         endpoint_spec_for(
-            parse_quote! {
+            &parse_quote! {
                 async fn maybe_proto() -> Result<Option<nats_micro::Proto<ProtoResponse>>, nats_micro::NatsErrorResponse> {
                     Ok(None)
                 }
@@ -326,7 +306,7 @@ fn generated_client_decodes_optional_responses() {
             Some("demo"),
         ),
         endpoint_spec_for(
-            parse_quote! {
+            &parse_quote! {
                 async fn maybe_secret() -> Result<Option<nats_micro::Encrypted<String>>, nats_micro::NatsErrorResponse> {
                     Ok(None)
                 }
