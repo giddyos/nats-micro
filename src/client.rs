@@ -63,7 +63,7 @@ impl ClientCallOptions {
         if self.recipient.is_some() || !self.encrypted_headers.is_empty() {
             let recipient = self.recipient.ok_or_else(|| {
                 NatsErrorResponse::framework(
-                    FrameworkError::MissingRecipient,
+                    FrameworkError::MissingRecipientPubkey,
                     "encrypted headers require a recipient",
                 )
             })?;
@@ -120,7 +120,7 @@ impl ClientCallOptions {
         if self.recipient.is_some() || !self.encrypted_headers.is_empty() {
             let recipient = self.recipient.ok_or_else(|| {
                 NatsErrorResponse::framework(
-                    FrameworkError::MissingRecipient,
+                    FrameworkError::MissingRecipientPubkey,
                     "encrypted headers require a recipient",
                 )
             })?;
@@ -171,7 +171,7 @@ impl ClientCallOptions {
     ) -> Result<(async_nats::Message, crate::encryption::EphemeralContext), NatsErrorResponse> {
         let recipient = self.recipient.ok_or_else(|| {
             NatsErrorResponse::framework(
-                FrameworkError::MissingRecipient,
+                FrameworkError::MissingRecipientPubkey,
                 "encrypted payloads require a recipient",
             )
         })?;

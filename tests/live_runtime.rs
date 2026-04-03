@@ -917,7 +917,7 @@ async fn live_generated_napi_client_surfaces_framework_errors() -> Result<()> {
             .maybe_encrypted(Some("secret-value".to_string()))
             .await
             .expect_err("generated N-API client encrypted call should fail without recipient");
-        assert_eq!(error.status, "MISSING_RECIPIENT");
+        assert_eq!(error.status, "MISSING_RECIPIENT_PUBKEY");
         assert!(error.reason.contains("recipient"));
 
         Ok::<_, anyhow::Error>(())

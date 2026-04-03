@@ -84,6 +84,10 @@ async fn handle_endpoint_request(
         "received endpoint request"
     );
 
+    println!("Received request for subject: {}", raw_req.message.subject);
+    println!("Request headers: {:#?}", raw_req.message.headers);
+    println!("Request payload string: {} |", String::from_utf8_lossy(&raw_req.message.payload));
+
     let req = NatsRequest {
         subject: raw_req.message.subject.to_string(),
         payload: raw_req.message.payload.clone(),

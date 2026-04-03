@@ -432,7 +432,7 @@ mod tests {
     #[test]
     fn napi_client_error_classifies_framework_responses() {
         let response =
-            NatsErrorResponse::framework(FrameworkError::MissingRecipient, "recipient required");
+            NatsErrorResponse::framework(FrameworkError::MissingRecipientPubkey, "recipient required");
         assert!(matches!(
             NapiClientError::from_response(response),
             NapiClientError::Framework(_)
