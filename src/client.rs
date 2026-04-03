@@ -23,101 +23,12 @@ impl ClientModuleSpec {
         let nats_micro = nats_micro_path();
         let module_name = &self.module_name;
         let client_struct_name = &self.client_struct_name;
-        let service_ident = &self.service_ident;
         let methods: Vec<_> = self.endpoints.iter().map(render_client_method).collect();
-
-        let recipient_field = if self.encryption_enabled {
-            quote! {
-                recipient: Option<#nats_micro::ServiceRecipient>,
-            }
-        } else {
-            quote! {}
-        };
-
-        let new_fn = if self.encryption_enabled {
-            quote! {
-                pub fn new(client: #nats_micro::async_nats::Client) -> Self {
-                    Self {
-                        client,
-                        prefix: #service_ident::__nats_micro_service_meta().subject_prefix,
-                        recipient: None,
-                    }
-                }
-            }
-        } else {
-            quote! {
-                pub fn new(client: #nats_micro::async_nats::Client) -> Self {
-                    Self {
-                        client,
-                        prefix: #service_ident::__nats_micro_service_meta().subject_prefix,
-                    }
-                }
-            }
-        };
-
-        let with_prefix_fn = if self.encryption_enabled {
-            quote! {
-                pub fn with_prefix(
-                    client: #nats_micro::async_nats::Client,
-                    prefix: impl Into<String>,
-                ) -> Self {
-                    Self {
-                        client,
-                        prefix: Some(prefix.into()),
-                        recipient: None,
-                    }
-                }
-            }
-        } else {
-            quote! {
-                pub fn with_prefix(
-                    client: #nats_micro::async_nats::Client,
-                    prefix: impl Into<String>,
-                ) -> Self {
-                    Self {
-                        client,
-                        prefix: Some(prefix.into()),
-                    }
-                }
-            }
-        };
-
-        let with_recipient_fn = if self.encryption_enabled {
-            quote! {
-                pub fn with_recipient(
-                    mut self,
-                    recipient: impl Into<#nats_micro::ServiceRecipient>,
-                ) -> Self {
-                    self.recipient = Some(recipient.into());
-                    self
-                }
-            }
-        } else {
-            quote! {}
-        };
-
-        let apply_encryption_recipient_fn = if self.encryption_enabled {
-            quote! {
-                fn apply_encryption_recipient(
-                    &self,
-                    options: #nats_micro::ClientCallOptions,
-                ) -> #nats_micro::ClientCallOptions {
-                    match &self.recipient {
-                        Some(recipient) => options.with_default_recipient(recipient.clone()),
-                        None => options,
-                    }
-                }
-            }
-        } else {
-            quote! {
-                fn apply_encryption_recipient(
-                    &self,
-                    options: #nats_micro::ClientCallOptions,
-                ) -> #nats_micro::ClientCallOptions {
-                    options
-                }
-            }
-        };
+        let recipient_field = self.recipient_field_tokens(&nats_micro);
+        let new_fn = self.new_fn_tokens(&nats_micro);
+        let with_prefix_fn = self.with_prefix_fn_tokens(&nats_micro);
+        let with_recipient_fn = self.with_recipient_fn_tokens(&nats_micro);
+        let apply_encryption_recipient_fn = self.apply_encryption_recipient_fn_tokens(&nats_micro);
 
         quote! {
             pub mod #module_name {
@@ -149,6 +60,110 @@ impl ClientModuleSpec {
                     #apply_encryption_recipient_fn
 
                     #(#methods)*
+                }
+            }
+        }
+    }
+
+    fn recipient_field_tokens(&self, nats_micro: &syn::Path) -> TokenStream {
+        if self.encryption_enabled {
+            quote! {
+                recipient: Option<#nats_micro::ServiceRecipient>,
+            }
+        } else {
+            quote! {}
+        }
+    }
+
+    fn new_fn_tokens(&self, nats_micro: &syn::Path) -> TokenStream {
+        let service_ident = &self.service_ident;
+        if self.encryption_enabled {
+            quote! {
+                pub fn new(client: #nats_micro::async_nats::Client) -> Self {
+                    Self {
+                        client,
+                        prefix: #service_ident::__nats_micro_service_meta().subject_prefix,
+                        recipient: None,
+                    }
+                }
+            }
+        } else {
+            quote! {
+                pub fn new(client: #nats_micro::async_nats::Client) -> Self {
+                    Self {
+                        client,
+                        prefix: #service_ident::__nats_micro_service_meta().subject_prefix,
+                    }
+                }
+            }
+        }
+    }
+
+    fn with_prefix_fn_tokens(&self, nats_micro: &syn::Path) -> TokenStream {
+        if self.encryption_enabled {
+            quote! {
+                pub fn with_prefix(
+                    client: #nats_micro::async_nats::Client,
+                    prefix: impl Into<String>,
+                ) -> Self {
+                    Self {
+                        client,
+                        prefix: Some(prefix.into()),
+                        recipient: None,
+                    }
+                }
+            }
+        } else {
+            quote! {
+                pub fn with_prefix(
+                    client: #nats_micro::async_nats::Client,
+                    prefix: impl Into<String>,
+                ) -> Self {
+                    Self {
+                        client,
+                        prefix: Some(prefix.into()),
+                    }
+                }
+            }
+        }
+    }
+
+    fn with_recipient_fn_tokens(&self, nats_micro: &syn::Path) -> TokenStream {
+        if self.encryption_enabled {
+            quote! {
+                pub fn with_recipient(
+                    mut self,
+                    recipient: impl Into<#nats_micro::ServiceRecipient>,
+                ) -> Self {
+                    self.recipient = Some(recipient.into());
+                    self
+                }
+            }
+        } else {
+            quote! {}
+        }
+    }
+
+    fn apply_encryption_recipient_fn_tokens(&self, nats_micro: &syn::Path) -> TokenStream {
+        if self.encryption_enabled {
+            quote! {
+                fn apply_encryption_recipient(
+                    &self,
+                    options: #nats_micro::ClientCallOptions,
+                ) -> #nats_micro::ClientCallOptions {
+                    match &self.recipient {
+                        Some(recipient) => options.with_default_recipient(recipient.clone()),
+                        None => options,
+                    }
+                }
+            }
+        } else {
+            quote! {
+                fn apply_encryption_recipient(
+                    &self,
+                    options: #nats_micro::ClientCallOptions,
+                ) -> #nats_micro::ClientCallOptions {
+                    options
                 }
             }
         }
@@ -636,9 +651,10 @@ fn render_with_body(endpoint: &ClientEndpointSpec) -> TokenStream {
     match endpoint.payload.as_ref() {
         Some(payload) if payload.optional => {
             let serialize_payload = payload.serialize_tokens(error_type);
-            let some_request =
-                render_request_execution(endpoint, quote! { __body }, payload.encrypted);
-            let none_request = render_request_execution(endpoint, empty_body_expr(), false);
+            let some_body = quote! { __body };
+            let none_body = empty_body_expr();
+            let some_request = render_request_execution(endpoint, &some_body, payload.encrypted);
+            let none_request = render_request_execution(endpoint, &none_body, false);
             quote! {
                 if let Some(payload) = payload {
                     #serialize_payload
@@ -650,19 +666,23 @@ fn render_with_body(endpoint: &ClientEndpointSpec) -> TokenStream {
         }
         Some(payload) => {
             let serialize_payload = payload.serialize_tokens(error_type);
-            let request = render_request_execution(endpoint, quote! { __body }, payload.encrypted);
+            let body = quote! { __body };
+            let request = render_request_execution(endpoint, &body, payload.encrypted);
             quote! {
                 #serialize_payload
                 #request
             }
         }
-        None => render_request_execution(endpoint, empty_body_expr(), false),
+        None => {
+            let body = empty_body_expr();
+            render_request_execution(endpoint, &body, false)
+        }
     }
 }
 
 fn render_request_execution(
     endpoint: &ClientEndpointSpec,
-    body_expr: TokenStream,
+    body_expr: &TokenStream,
     request_encrypted: bool,
 ) -> TokenStream {
     let nats_micro = nats_micro_path();
@@ -671,10 +691,7 @@ fn render_request_execution(
     let endpoint_subject_expr = endpoint.subject.endpoint_expr();
     let deserialize_response = endpoint.response.deserialize_tokens(error_type);
     let response_encrypted = endpoint.response.encrypted;
-    let encrypted_body_expr = {
-        let body_expr = body_expr.clone();
-        quote! { (#body_expr).to_vec() }
-    };
+    let encrypted_body_expr = quote! { (#body_expr).to_vec() };
 
     match (request_encrypted, response_encrypted) {
         (true, true) => quote! {

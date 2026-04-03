@@ -2,10 +2,14 @@ use std::collections::BTreeSet;
 
 use darling::FromMeta;
 use proc_macro2::TokenStream;
-use quote::quote;
-use syn::{FnArg, GenericArgument, ItemFn, Pat, PathArguments, ReturnType, Signature, Type};
+use quote::{format_ident, quote};
+use syn::{FnArg, GenericArgument, ImplItemFn, Pat, PathArguments, ReturnType, Signature, Type};
 
-use crate::utils::nats_micro_path;
+use crate::{
+    client::{ClientEndpointSpec, build_endpoint_client_spec},
+    service::GeneratedHandlerItem,
+    utils::{conditional_attrs, nats_micro_path, parse_attr},
+};
 
 #[derive(Debug, FromMeta)]
 pub(crate) struct EndpointArgs {
@@ -15,13 +19,160 @@ pub(crate) struct EndpointArgs {
     pub concurrency_limit: Option<u64>,
 }
 
-pub fn expand_endpoint(args: EndpointArgs, func: ItemFn) -> TokenStream {
-    let _ = args;
-    crate::utils::error_stream(
-        func.sig.ident.span(),
-        "#[endpoint] may only be used on methods inside a #[service_handlers] impl block",
-        func,
-    )
+pub(crate) fn process_endpoint_method(
+    struct_ident: &syn::Ident,
+    method: &ImplItemFn,
+    attr: &syn::Attribute,
+) -> Result<(GeneratedHandlerItem, ClientEndpointSpec), TokenStream> {
+    let args = parse_attr::<EndpointArgs>(attr)?;
+    let attrs = conditional_attrs(method);
+    let client_endpoint = build_endpoint_client_spec(method, &args, attrs.clone())?;
+    let generated = build_endpoint_handler_item(struct_ident, method, &args, &client_endpoint)?;
+    Ok((generated, client_endpoint))
+}
+
+fn build_endpoint_handler_item(
+    struct_ident: &syn::Ident,
+    method: &ImplItemFn,
+    args: &EndpointArgs,
+    client_endpoint: &ClientEndpointSpec,
+) -> Result<GeneratedHandlerItem, TokenStream> {
+    let nats_micro = nats_micro_path();
+    let auth_required = requires_auth(&method.sig);
+    let fn_name = &method.sig.ident;
+    let subject = &client_endpoint.subject.template;
+    let group = &client_endpoint.group;
+    let nats_subject = &client_endpoint.subject.pattern;
+    let subject_template = if client_endpoint.subject.is_templated() {
+        quote! { Some(#subject.to_string()) }
+    } else {
+        quote! { None }
+    };
+    let queue_group = optional_string_tokens(args.queue_group.as_deref());
+    let concurrency_limit = optional_u64_tokens(args.concurrency_limit);
+    let fn_path = quote! { #struct_ident::#fn_name };
+    let handler = build_handler_body(&fn_path, &method.sig)?;
+    let param_infos = extract_param_info(&method.sig)?;
+    let payload_meta = payload_meta_tokens(client_endpoint.payload_meta.as_ref(), &nats_micro);
+    let response_meta = response_meta_tokens(&client_endpoint.response_meta, &nats_micro);
+    let def_method_name = format_ident!("__ep_{}", fn_name);
+    let accessor_name = format_ident!("{}_endpoint", fn_name);
+    let fn_name_str = fn_name.to_string();
+
+    Ok(GeneratedHandlerItem {
+        attrs: conditional_attrs(method),
+        def_fn: quote! {
+            #[doc(hidden)]
+            pub fn #def_method_name() -> #nats_micro::EndpointDefinition {
+                let __meta = Self::__nats_micro_service_meta();
+                #nats_micro::EndpointDefinition {
+                    subject_prefix: __meta.subject_prefix.clone(),
+                    service_name: __meta.name,
+                    service_version: __meta.version,
+                    service_description: __meta.description,
+                    fn_name: #fn_name_str.to_string(),
+                    group: #group.to_string(),
+                    subject: #nats_subject.to_string(),
+                    subject_template: #subject_template,
+                    queue_group: #queue_group,
+                    auth_required: #auth_required,
+                    concurrency_limit: #concurrency_limit,
+                    handler: #handler,
+                }
+            }
+        },
+        accessor_fn: quote! {
+            pub fn #accessor_name() -> #nats_micro::EndpointDefinition {
+                Self::#def_method_name()
+            }
+        },
+        def_call: quote! { Self::#def_method_name() },
+        info_expr: quote! {
+            #nats_micro::__macros::EndpointInfo {
+                fn_name: #fn_name_str.to_string(),
+                subject_template: #subject.to_string(),
+                subject_pattern: #nats_subject.to_string(),
+                group: #group.to_string(),
+                queue_group: #queue_group,
+                auth_required: #auth_required,
+                concurrency_limit: #concurrency_limit,
+                params: vec![#(#param_infos),*],
+                payload_meta: #payload_meta,
+                response_meta: #response_meta,
+            }
+        },
+    })
+}
+
+fn optional_string_tokens(value: Option<&str>) -> TokenStream {
+    if let Some(value) = value {
+        quote! { Some(#value.to_string()) }
+    } else {
+        quote! { None }
+    }
+}
+
+fn optional_u64_tokens(value: Option<u64>) -> TokenStream {
+    if let Some(value) = value {
+        quote! { Some(#value) }
+    } else {
+        quote! { None }
+    }
+}
+
+fn payload_meta_tokens(payload_meta: Option<&PayloadMeta>, nats_micro: &syn::Path) -> TokenStream {
+    if let Some(payload_meta) = payload_meta {
+        let encoding = payload_encoding_tokens(&payload_meta.encoding, nats_micro);
+        let encrypted = payload_meta.encrypted;
+        let inner_type = &payload_meta.inner_type;
+        let inner_type_str = quote!(#inner_type).to_string();
+        quote! {
+            Some(#nats_micro::__macros::PayloadMeta {
+                encoding: #encoding,
+                encrypted: #encrypted,
+                inner_type: #inner_type_str.to_string(),
+            })
+        }
+    } else {
+        quote! { None }
+    }
+}
+
+fn response_meta_tokens(response_meta: &ResponseMeta, nats_micro: &syn::Path) -> TokenStream {
+    let encoding = response_encoding_tokens(&response_meta.encoding, nats_micro);
+    let encrypted = response_meta.encrypted;
+    let inner_type = response_meta
+        .inner_type
+        .as_ref()
+        .map(|inner_type| quote!(#inner_type).to_string())
+        .unwrap_or_default();
+
+    quote! {
+        #nats_micro::__macros::ResponseMeta {
+            encoding: #encoding,
+            encrypted: #encrypted,
+            inner_type: #inner_type.to_string(),
+        }
+    }
+}
+
+fn payload_encoding_tokens(enc: &PayloadEncoding, nats_micro: &syn::Path) -> TokenStream {
+    match enc {
+        PayloadEncoding::Json => quote! { #nats_micro::__macros::PayloadEncoding::Json },
+        PayloadEncoding::Proto => quote! { #nats_micro::__macros::PayloadEncoding::Proto },
+        PayloadEncoding::Serde => quote! { #nats_micro::__macros::PayloadEncoding::Serde },
+        PayloadEncoding::Raw => quote! { #nats_micro::__macros::PayloadEncoding::Raw },
+    }
+}
+
+fn response_encoding_tokens(enc: &ResponseEncoding, nats_micro: &syn::Path) -> TokenStream {
+    match enc {
+        ResponseEncoding::Json => quote! { #nats_micro::__macros::ResponseEncoding::Json },
+        ResponseEncoding::Proto => quote! { #nats_micro::__macros::ResponseEncoding::Proto },
+        ResponseEncoding::Serde => quote! { #nats_micro::__macros::ResponseEncoding::Serde },
+        ResponseEncoding::Raw => quote! { #nats_micro::__macros::ResponseEncoding::Raw },
+        ResponseEncoding::Unit => quote! { #nats_micro::__macros::ResponseEncoding::Unit },
+    }
 }
 
 pub(crate) fn build_handler_body(
@@ -259,8 +410,7 @@ pub(crate) fn validate_template_bindings(
                 syn::Error::new_spanned(
                     &sig.ident,
                     format!(
-                        "endpoint subject template requires handler argument `{0}: SubjectParam<...>` or `_{0}: SubjectParam<...>`",
-                        missing
+                        "endpoint subject template requires handler argument `{missing}: SubjectParam<...>` or `_{missing}: SubjectParam<...>`"
                     ),
                 ),
             );
@@ -636,13 +786,7 @@ fn classify_response_type(ty: &Type) -> ResponseMeta {
             optional: false,
             inner_type: extract_single_generic_arg(ty).cloned(),
         },
-        Some("String") => ResponseMeta {
-            encoding: ResponseEncoding::Raw,
-            encrypted: false,
-            optional: false,
-            inner_type: Some(ty.clone()),
-        },
-        Some("Bytes") => ResponseMeta {
+        Some("String" | "Bytes") => ResponseMeta {
             encoding: ResponseEncoding::Raw,
             encrypted: false,
             optional: false,
@@ -700,13 +844,6 @@ fn classify_response(ty: &Type) -> Result<ResponseMeta, syn::Error> {
     let mut meta = classify_response_type(inner);
     meta.optional = optional;
     Ok(meta)
-}
-
-fn is_server_only_type(ty: &Type) -> bool {
-    matches!(
-        last_segment_ident(ty).as_deref(),
-        Some("State" | "Auth" | "RequestId" | "Subject" | "NatsRequest")
-    ) || is_option_auth(ty)
 }
 
 fn is_option_auth(ty: &Type) -> bool {
@@ -807,11 +944,6 @@ pub(crate) fn extract_client_meta(sig: &Signature) -> Result<EndpointClientMeta,
             if let Some(inner) = extract_single_generic_arg(ty) {
                 payload = Some(classify_payload(inner).map_err(|error| error.to_compile_error())?);
             }
-            continue;
-        }
-
-        if is_server_only_type(ty) {
-            continue;
         }
     }
 
@@ -823,3 +955,7 @@ pub(crate) fn extract_client_meta(sig: &Signature) -> Result<EndpointClientMeta,
         response,
     })
 }
+
+#[cfg(test)]
+#[path = "tests/endpoint_tests.rs"]
+mod tests;

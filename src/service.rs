@@ -1,16 +1,12 @@
 use darling::FromMeta;
-use darling::ast::NestedMeta;
 use heck::ToSnakeCase;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{ImplItem, ImplItemFn, ItemImpl, ItemStruct, Meta, Type};
+use syn::{ImplItem, ImplItemFn, ItemImpl, ItemStruct, Type};
 
-use crate::client::{ClientEndpointSpec, build_endpoint_client_spec, generate_client_module};
-use crate::consumer::ConsumerArgs;
-use crate::endpoint::{
-    EndpointArgs, PayloadEncoding, ResponseEncoding, build_handler_body, extract_param_info,
-    requires_auth,
-};
+use crate::client::{ClientEndpointSpec, generate_client_module};
+use crate::consumer::process_consumer_method;
+use crate::endpoint::process_endpoint_method;
 use crate::napi::{gen_napi_asserts, generate_client_napi_module};
 use crate::utils::nats_micro_path;
 
@@ -25,7 +21,7 @@ pub struct ServiceArgs {
     napi: bool,
 }
 
-pub fn expand_service(args: ServiceArgs, item_struct: ItemStruct) -> TokenStream {
+pub fn expand_service(args: ServiceArgs, item_struct: &ItemStruct) -> TokenStream {
     let nats_micro = nats_micro_path();
     let ident = &item_struct.ident;
     #[cfg(feature = "macros_napi_feature")]
@@ -48,9 +44,10 @@ pub fn expand_service(args: ServiceArgs, item_struct: ItemStruct) -> TokenStream
     let version = version.unwrap_or_else(|| "0.1.0".to_string());
     let description = description.unwrap_or_default();
     let service_config_module = service_config_module_ident(ident);
-    let prefix = match prefix {
-        Some(prefix) => quote! { Some(#prefix.to_string()) },
-        None => quote! { None },
+    let prefix = if let Some(prefix) = prefix {
+        quote! { Some(#prefix.to_string()) }
+    } else {
+        quote! { None }
     };
 
     #[cfg(feature = "macros_napi_feature")]
@@ -101,7 +98,69 @@ pub fn expand_service(args: ServiceArgs, item_struct: ItemStruct) -> TokenStream
     }
 }
 
-pub fn expand_service_handlers(item_impl: ItemImpl) -> TokenStream {
+pub(crate) struct GeneratedHandlerItem {
+    pub attrs: Vec<syn::Attribute>,
+    pub def_fn: TokenStream,
+    pub accessor_fn: TokenStream,
+    pub def_call: TokenStream,
+    pub info_expr: TokenStream,
+}
+
+#[derive(Default)]
+struct ServiceExpansion {
+    cleaned_items: Vec<ImplItem>,
+    endpoint_def_fns: Vec<TokenStream>,
+    endpoint_accessor_fns: Vec<TokenStream>,
+    endpoint_def_calls: Vec<TokenStream>,
+    endpoint_info_exprs: Vec<TokenStream>,
+    consumer_def_fns: Vec<TokenStream>,
+    consumer_accessor_fns: Vec<TokenStream>,
+    consumer_def_calls: Vec<TokenStream>,
+    consumer_info_exprs: Vec<TokenStream>,
+    client_endpoints: Vec<ClientEndpointSpec>,
+}
+
+impl ServiceExpansion {
+    fn push_regular_item(&mut self, item: &ImplItem) {
+        self.cleaned_items.push(item.clone());
+    }
+
+    fn push_endpoint(
+        &mut self,
+        method: &ImplItemFn,
+        attr_index: usize,
+        generated: GeneratedHandlerItem,
+        client_endpoint: ClientEndpointSpec,
+    ) {
+        self.cleaned_items.push(cleaned_method(method, attr_index));
+        push_generated_handler(
+            &mut self.endpoint_def_fns,
+            &mut self.endpoint_accessor_fns,
+            &mut self.endpoint_def_calls,
+            &mut self.endpoint_info_exprs,
+            generated,
+        );
+        self.client_endpoints.push(client_endpoint);
+    }
+
+    fn push_consumer(
+        &mut self,
+        method: &ImplItemFn,
+        attr_index: usize,
+        generated: GeneratedHandlerItem,
+    ) {
+        self.cleaned_items.push(cleaned_method(method, attr_index));
+        push_generated_handler(
+            &mut self.consumer_def_fns,
+            &mut self.consumer_accessor_fns,
+            &mut self.consumer_def_calls,
+            &mut self.consumer_info_exprs,
+            generated,
+        );
+    }
+}
+
+pub fn expand_service_handlers(item_impl: &ItemImpl) -> TokenStream {
     let nats_micro = nats_micro_path();
     let struct_ty = &item_impl.self_ty;
     let Some(struct_ident) = extract_ident_from_type(struct_ty) else {
@@ -109,123 +168,26 @@ pub fn expand_service_handlers(item_impl: ItemImpl) -> TokenStream {
             .to_compile_error();
     };
 
-    let mut cleaned_items: Vec<ImplItem> = Vec::new();
-    let mut endpoint_def_fns = Vec::new();
-    let mut endpoint_accessor_fns = Vec::new();
-    let mut endpoint_def_calls = Vec::new();
-    let mut endpoint_info_exprs = Vec::new();
-    let mut consumer_def_fns = Vec::new();
-    let mut consumer_accessor_fns = Vec::new();
-    let mut consumer_def_calls = Vec::new();
-    let mut consumer_info_exprs = Vec::new();
-    let mut client_endpoints: Vec<ClientEndpointSpec> = Vec::new();
-
-    for item in &item_impl.items {
-        let ImplItem::Fn(method) = item else {
-            cleaned_items.push(item.clone());
-            continue;
-        };
-
-        let ep_idx = method
-            .attrs
-            .iter()
-            .position(|a| a.path().is_ident("endpoint"));
-        let con_idx = method
-            .attrs
-            .iter()
-            .position(|a| a.path().is_ident("consumer"));
-
-        if let Some(idx) = ep_idx {
-            let attr = &method.attrs[idx];
-            match process_endpoint_method(&struct_ident, method, attr) {
-                Ok((result, client_data)) => {
-                    let mut cleaned = method.clone();
-                    cleaned.attrs.remove(idx);
-                    cleaned_items.push(ImplItem::Fn(cleaned));
-                    let attrs = &result.attrs;
-                    let def_fn = &result.def_fn;
-                    let accessor_fn = &result.accessor_fn;
-                    let def_call = &result.def_call;
-                    let info_expr = &result.info_expr;
-                    endpoint_def_fns.push(quote! {
-                        #(#attrs)*
-                        #def_fn
-                    });
-                    endpoint_accessor_fns.push(quote! {
-                        #(#attrs)*
-                        #accessor_fn
-                    });
-                    endpoint_def_calls.push(quote! {
-                        #(#attrs)*
-                        #def_call
-                    });
-                    endpoint_info_exprs.push(quote! {
-                        #(#attrs)*
-                        #info_expr
-                    });
-                    client_endpoints.push(client_data);
-                }
-                Err(err) => return err,
-            }
-        } else if let Some(idx) = con_idx {
-            let attr = &method.attrs[idx];
-            match process_consumer_method(&struct_ident, method, attr) {
-                Ok(result) => {
-                    let mut cleaned = method.clone();
-                    cleaned.attrs.remove(idx);
-                    cleaned_items.push(ImplItem::Fn(cleaned));
-                    let attrs = &result.attrs;
-                    let def_fn = &result.def_fn;
-                    let accessor_fn = &result.accessor_fn;
-                    let def_call = &result.def_call;
-                    let info_expr = &result.info_expr;
-                    consumer_def_fns.push(quote! {
-                        #(#attrs)*
-                        #def_fn
-                    });
-                    consumer_accessor_fns.push(quote! {
-                        #(#attrs)*
-                        #accessor_fn
-                    });
-                    consumer_def_calls.push(quote! {
-                        #(#attrs)*
-                        #def_call
-                    });
-                    consumer_info_exprs.push(quote! {
-                        #(#attrs)*
-                        #info_expr
-                    });
-                }
-                Err(err) => return err,
-            }
-        } else {
-            cleaned_items.push(item.clone());
-        }
-    }
-
+    let expansion = match collect_service_items(&struct_ident, item_impl) {
+        Ok(expansion) => expansion,
+        Err(err) => return err,
+    };
+    let ServiceExpansion {
+        cleaned_items,
+        endpoint_def_fns,
+        endpoint_accessor_fns,
+        endpoint_def_calls,
+        endpoint_info_exprs,
+        consumer_def_fns,
+        consumer_accessor_fns,
+        consumer_def_calls,
+        consumer_info_exprs,
+        client_endpoints,
+    } = expansion;
     let mut cleaned_impl = item_impl.clone();
     cleaned_impl.items = cleaned_items;
-
-    let service_name_str = struct_ident.to_string();
-    let client_module = if cfg!(feature = "macros_client_feature") {
-        generate_client_module(&struct_ident, &service_name_str, &client_endpoints)
-    } else {
-        quote! {}
-    };
-    let napi_items = if cfg!(feature = "macros_napi_feature") {
-        let service_config_module = service_config_module_ident(&struct_ident);
-        let napi_asserts = gen_napi_asserts(&client_endpoints);
-        let napi_client_module =
-            generate_client_napi_module(&struct_ident, &service_name_str, &client_endpoints);
-        quote! {
-            #service_config_module::emit_napi_items! {
-                #napi_asserts
-                #napi_client_module
-            }
-        }
-    } else {
-        quote! {}
-    };
+    let client_module = render_client_module(&struct_ident, &client_endpoints);
+    let napi_items = render_napi_items(&struct_ident, &client_endpoints);
 
     quote! {
         #cleaned_impl
@@ -275,242 +237,116 @@ fn service_config_module_ident(service_ident: &syn::Ident) -> syn::Ident {
     )
 }
 
-struct HandlerResult {
-    attrs: Vec<syn::Attribute>,
-    def_fn: TokenStream,
-    accessor_fn: TokenStream,
-    def_call: TokenStream,
-    info_expr: TokenStream,
-}
-
-fn conditional_attrs(method: &ImplItemFn) -> Vec<syn::Attribute> {
-    method
-        .attrs
-        .iter()
-        .filter(|attr| attr.path().is_ident("cfg") || attr.path().is_ident("cfg_attr"))
-        .cloned()
-        .collect()
-}
-
-fn process_endpoint_method(
+fn collect_service_items(
     struct_ident: &syn::Ident,
-    method: &ImplItemFn,
-    attr: &syn::Attribute,
-) -> Result<(HandlerResult, ClientEndpointSpec), TokenStream> {
-    let nats_micro = nats_micro_path();
-    let args = parse_attr::<EndpointArgs>(attr)?;
-    let auth_required = requires_auth(&method.sig);
-    let concurrency_limit = args.concurrency_limit;
-    let fn_name = &method.sig.ident;
-    let attrs = conditional_attrs(method);
-    let client_endpoint = build_endpoint_client_spec(method, &args, attrs.clone())?;
-    let subject = &client_endpoint.subject.template;
-    let group = &client_endpoint.group;
-    let nats_subject = &client_endpoint.subject.pattern;
-    let subject_template = if client_endpoint.subject.is_templated() {
-        quote! { Some(#subject.to_string()) }
-    } else {
-        quote! { None }
-    };
+    item_impl: &ItemImpl,
+) -> Result<ServiceExpansion, TokenStream> {
+    let mut expansion = ServiceExpansion::default();
 
-    let queue_group = match &args.queue_group {
-        Some(qg) => quote! { Some(#qg.to_string()) },
-        None => quote! { None },
-    };
-    let concurrency_limit_tokens = match concurrency_limit {
-        Some(limit) => quote! { Some(#limit) },
-        None => quote! { None },
-    };
+    for item in &item_impl.items {
+        let ImplItem::Fn(method) = item else {
+            expansion.push_regular_item(item);
+            continue;
+        };
 
-    let fn_path = quote! { #struct_ident::#fn_name };
-    let handler = build_handler_body(&fn_path, &method.sig)?;
-    let param_infos = extract_param_info(&method.sig)?;
-
-    let payload_meta_tokens = match &client_endpoint.payload_meta {
-        Some(pm) => {
-            let enc = payload_encoding_tokens(&pm.encoding);
-            let encrypted = pm.encrypted;
-            let inner_type = &pm.inner_type;
-            let inner_type_str = quote!(#inner_type).to_string();
-            quote! {
-                Some(#nats_micro::__macros::PayloadMeta {
-                    encoding: #enc,
-                    encrypted: #encrypted,
-                    inner_type: #inner_type_str.to_string(),
-                })
-            }
+        if let Some(attr_index) = method
+            .attrs
+            .iter()
+            .position(|attr| attr.path().is_ident("endpoint"))
+        {
+            let attr = &method.attrs[attr_index];
+            let (generated, client_endpoint) = process_endpoint_method(struct_ident, method, attr)?;
+            expansion.push_endpoint(method, attr_index, generated, client_endpoint);
+            continue;
         }
-        None => quote! { None },
-    };
 
-    let response_meta = &client_endpoint.response_meta;
-    let resp_enc = response_encoding_tokens(&response_meta.encoding);
-    let resp_encrypted = response_meta.encrypted;
-    let resp_inner_str = response_meta
-        .inner_type
-        .as_ref()
-        .map(|t| quote!(#t).to_string())
-        .unwrap_or_default();
-    let response_meta_tokens = quote! {
-        #nats_micro::__macros::ResponseMeta {
-            encoding: #resp_enc,
-            encrypted: #resp_encrypted,
-            inner_type: #resp_inner_str.to_string(),
+        if let Some(attr_index) = method
+            .attrs
+            .iter()
+            .position(|attr| attr.path().is_ident("consumer"))
+        {
+            let attr = &method.attrs[attr_index];
+            let generated = process_consumer_method(struct_ident, method, attr)?;
+            expansion.push_consumer(method, attr_index, generated);
+            continue;
         }
-    };
 
-    let def_method_name = format_ident!("__ep_{}", fn_name);
-    let accessor_name = format_ident!("{}_endpoint", fn_name);
-    let fn_name_str = fn_name.to_string();
+        expansion.push_regular_item(item);
+    }
 
-    let handler_result = HandlerResult {
-        attrs: attrs.clone(),
-        def_fn: quote! {
-            #[doc(hidden)]
-            pub fn #def_method_name() -> #nats_micro::EndpointDefinition {
-                let __meta = Self::__nats_micro_service_meta();
-                #nats_micro::EndpointDefinition {
-                    subject_prefix: __meta.subject_prefix.clone(),
-                    service_name: __meta.name,
-                    service_version: __meta.version,
-                    service_description: __meta.description,
-                    fn_name: #fn_name_str.to_string(),
-                    group: #group.to_string(),
-                    subject: #nats_subject.to_string(),
-                    subject_template: #subject_template,
-                    queue_group: #queue_group,
-                    auth_required: #auth_required,
-                    concurrency_limit: #concurrency_limit_tokens,
-                    handler: #handler,
-                }
-            }
-        },
-        accessor_fn: quote! {
-            pub fn #accessor_name() -> #nats_micro::EndpointDefinition {
-                Self::#def_method_name()
-            }
-        },
-        def_call: quote! { Self::#def_method_name() },
-        info_expr: quote! {
-            #nats_micro::__macros::EndpointInfo {
-                fn_name: #fn_name_str.to_string(),
-                subject_template: #subject.to_string(),
-                subject_pattern: #nats_subject.to_string(),
-                group: #group.to_string(),
-                queue_group: #queue_group,
-                auth_required: #auth_required,
-                concurrency_limit: #concurrency_limit_tokens,
-                params: vec![#(#param_infos),*],
-                payload_meta: #payload_meta_tokens,
-                response_meta: #response_meta_tokens,
-            }
-        },
-    };
-
-    Ok((handler_result, client_endpoint))
+    Ok(expansion)
 }
 
-fn process_consumer_method(
-    struct_ident: &syn::Ident,
-    method: &ImplItemFn,
-    attr: &syn::Attribute,
-) -> Result<HandlerResult, TokenStream> {
-    let nats_micro = nats_micro_path();
-    let args = parse_attr::<ConsumerArgs>(attr)?;
-    let fn_name = &method.sig.ident;
-    let stream = args.stream.as_deref().unwrap_or("DEFAULT");
-    let durable = args.durable.unwrap_or_else(|| fn_name.to_string());
-    let auth_required = requires_auth(&method.sig);
-    let concurrency_limit = args.concurrency_limit;
-    let concurrency_limit_tokens = match concurrency_limit {
-        Some(limit) => quote! { Some(#limit) },
-        None => quote! { None },
-    };
+fn cleaned_method(method: &ImplItemFn, attr_index: usize) -> ImplItem {
+    let mut cleaned = method.clone();
+    cleaned.attrs.remove(attr_index);
+    ImplItem::Fn(cleaned)
+}
 
-    let config_tokens = match args.config {
-        Some(config) => {
-            let expr = config.0;
-            quote! {{
-                let __config: #nats_micro::__macros::ConsumerConfig = (#expr);
-                __config
-            }}
-        }
-        None => quote! { #nats_micro::__macros::ConsumerConfig::default() },
-    };
-
-    let fn_path = quote! { #struct_ident::#fn_name };
-    let handler = build_handler_body(&fn_path, &method.sig)?;
-    let param_infos = extract_param_info(&method.sig)?;
-
-    let def_method_name = format_ident!("__con_{}", fn_name);
-    let accessor_name = format_ident!("{}_consumer", fn_name);
-    let fn_name_str = fn_name.to_string();
-    let attrs = conditional_attrs(method);
-
-    Ok(HandlerResult {
+fn push_generated_handler(
+    def_fns: &mut Vec<TokenStream>,
+    accessor_fns: &mut Vec<TokenStream>,
+    def_calls: &mut Vec<TokenStream>,
+    info_exprs: &mut Vec<TokenStream>,
+    generated: GeneratedHandlerItem,
+) {
+    let GeneratedHandlerItem {
         attrs,
-        def_fn: quote! {
-            #[doc(hidden)]
-            pub fn #def_method_name() -> #nats_micro::ConsumerDefinition {
-                #nats_micro::ConsumerDefinition {
-                    stream: #stream.to_string(),
-                    durable: #durable.to_string(),
-                    auth_required: #auth_required,
-                    concurrency_limit: #concurrency_limit_tokens,
-                    config: #config_tokens,
-                    handler: #handler,
-                }
-            }
-        },
-        accessor_fn: quote! {
-            pub fn #accessor_name() -> #nats_micro::ConsumerDefinition {
-                Self::#def_method_name()
-            }
-        },
-        def_call: quote! { Self::#def_method_name() },
-        info_expr: quote! {
-            #nats_micro::__macros::ConsumerInfo {
-                fn_name: #fn_name_str.to_string(),
-                stream: #stream.to_string(),
-                durable: #durable.to_string(),
-                auth_required: #auth_required,
-                concurrency_limit: #concurrency_limit_tokens,
-                params: vec![#(#param_infos),*],
-            }
-        },
-    })
+        def_fn,
+        accessor_fn,
+        def_call,
+        info_expr,
+    } = generated;
+
+    def_fns.push(quote! {
+        #(#attrs)*
+        #def_fn
+    });
+    accessor_fns.push(quote! {
+        #(#attrs)*
+        #accessor_fn
+    });
+    def_calls.push(quote! {
+        #(#attrs)*
+        #def_call
+    });
+    info_exprs.push(quote! {
+        #(#attrs)*
+        #info_expr
+    });
 }
 
-fn parse_attr<T: FromMeta>(attr: &syn::Attribute) -> Result<T, TokenStream> {
-    let Meta::List(meta_list) = &attr.meta else {
-        return Err(
-            syn::Error::new_spanned(attr, "expected attribute arguments in parentheses")
-                .to_compile_error(),
-        );
-    };
-    let nested = NestedMeta::parse_meta_list(meta_list.tokens.clone())
-        .map_err(|e| darling::Error::from(e).write_errors())?;
-    T::from_list(&nested).map_err(|e| e.write_errors())
-}
-
-fn payload_encoding_tokens(enc: &PayloadEncoding) -> TokenStream {
-    let nats_micro = nats_micro_path();
-    match enc {
-        PayloadEncoding::Json => quote! { #nats_micro::__macros::PayloadEncoding::Json },
-        PayloadEncoding::Proto => quote! { #nats_micro::__macros::PayloadEncoding::Proto },
-        PayloadEncoding::Serde => quote! { #nats_micro::__macros::PayloadEncoding::Serde },
-        PayloadEncoding::Raw => quote! { #nats_micro::__macros::PayloadEncoding::Raw },
+fn render_client_module(
+    struct_ident: &syn::Ident,
+    client_endpoints: &[ClientEndpointSpec],
+) -> TokenStream {
+    let service_name = struct_ident.to_string();
+    if cfg!(feature = "macros_client_feature") {
+        generate_client_module(struct_ident, &service_name, client_endpoints)
+    } else {
+        quote! {}
     }
 }
 
-fn response_encoding_tokens(enc: &ResponseEncoding) -> TokenStream {
-    let nats_micro = nats_micro_path();
-    match enc {
-        ResponseEncoding::Json => quote! { #nats_micro::__macros::ResponseEncoding::Json },
-        ResponseEncoding::Proto => quote! { #nats_micro::__macros::ResponseEncoding::Proto },
-        ResponseEncoding::Serde => quote! { #nats_micro::__macros::ResponseEncoding::Serde },
-        ResponseEncoding::Raw => quote! { #nats_micro::__macros::ResponseEncoding::Raw },
-        ResponseEncoding::Unit => quote! { #nats_micro::__macros::ResponseEncoding::Unit },
+fn render_napi_items(
+    struct_ident: &syn::Ident,
+    client_endpoints: &[ClientEndpointSpec],
+) -> TokenStream {
+    if !cfg!(feature = "macros_napi_feature") {
+        return quote! {};
+    }
+
+    let service_name = struct_ident.to_string();
+    let service_config_module = service_config_module_ident(struct_ident);
+    let napi_asserts = gen_napi_asserts(client_endpoints);
+    let napi_client_module =
+        generate_client_napi_module(struct_ident, &service_name, client_endpoints);
+
+    quote! {
+        #service_config_module::emit_napi_items! {
+            #napi_asserts
+            #napi_client_module
+        }
     }
 }
 

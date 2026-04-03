@@ -4,7 +4,7 @@ use syn::{Fields, ItemStruct, Visibility, spanned::Spanned};
 
 use crate::utils::nats_micro_path;
 
-pub(crate) fn expand_object(item: ItemStruct) -> TokenStream {
+pub(crate) fn expand_object(item: &ItemStruct) -> TokenStream {
     if !item.generics.params.is_empty() {
         let span = item.generics.span();
         return quote_spanned! { span =>
@@ -12,14 +12,11 @@ pub(crate) fn expand_object(item: ItemStruct) -> TokenStream {
         };
     }
 
-    let named_fields = match &item.fields {
-        Fields::Named(fields) => fields,
-        _ => {
-            let span = item.span();
-            return quote_spanned! { span =>
-                compile_error!("#[nats_micro::object] only supports structs with named fields");
-            };
-        }
+    let Fields::Named(named_fields) = &item.fields else {
+        let span = item.span();
+        return quote_spanned! { span =>
+            compile_error!("#[nats_micro::object] only supports structs with named fields");
+        };
     };
 
     for field in &named_fields.named {

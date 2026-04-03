@@ -53,7 +53,7 @@ fn is_generic_napi_error_type(ty: &Type) -> bool {
     matches!(
         last_type_ident(ty)
             .as_ref()
-            .map(|ident| ident.to_string())
+            .map(std::string::ToString::to_string)
             .as_deref(),
         Some("NatsErrorResponse" | "NatsError")
     )
@@ -67,7 +67,7 @@ fn napi_service_error_spec(ty: &Type) -> Option<NapiServiceErrorSpec> {
     let ident = last_type_ident(ty)?;
     Some(NapiServiceErrorSpec {
         error_type: ty.clone(),
-        js_enum_name: format!("Js{}", ident),
+        js_enum_name: format!("Js{ident}"),
     })
 }
 
@@ -118,7 +118,7 @@ fn framework_error_kind_values() -> Vec<&'static str> {
                         | FrameworkError::SignatureMissing
                 )
         })
-        .map(|error| error.as_code())
+        .map(FrameworkError::as_code)
         .collect()
 }
 
@@ -126,7 +126,7 @@ fn transport_error_kind_values() -> Vec<&'static str> {
     SharedTransportError::ALL
         .iter()
         .copied()
-        .map(|error| error.as_code())
+        .map(SharedTransportError::as_code)
         .collect()
 }
 
@@ -190,16 +190,16 @@ fn render_framework_and_transport_error_items(
 
     let framework_enum_ident = format_ident!("Js{}FrameworkError", client_base_name);
     let framework_struct_ident = format_ident!("Napi{}FrameworkError", client_base_name);
-    let framework_js_name = format!("{}FrameworkError", client_base_name);
+    let framework_js_name = format!("{client_base_name}FrameworkError");
     let framework_flag_field = format_ident!("is_framework_error");
-    let framework_kind_ts_type = format!("{} | string", framework_enum_ident);
+    let framework_kind_ts_type = format!("{framework_enum_ident} | string");
     let framework_kinds = framework_error_kind_values();
 
     let transport_enum_ident = format_ident!("Js{}TransportError", client_base_name);
     let transport_struct_ident = format_ident!("Napi{}TransportError", client_base_name);
-    let transport_js_name = format!("{}TransportError", client_base_name);
+    let transport_js_name = format!("{client_base_name}TransportError");
     let transport_flag_field = format_ident!("is_transport_error");
-    let transport_kind_ts_type = format!("{} | string", transport_enum_ident);
+    let transport_kind_ts_type = format!("{transport_enum_ident} | string");
     let transport_kinds = transport_error_kind_values();
 
     let framework_enum = render_string_enum(&framework_enum_ident, &framework_kinds, nats_micro);
@@ -248,7 +248,7 @@ fn render_service_error_interface(
     let client_base_name = client_error_base_name(service_name);
 
     let rust_name = format_ident!("Napi{}Error", service_name.to_upper_camel_case());
-    let js_name = format!("{}Error", client_base_name);
+    let js_name = format!("{client_base_name}Error");
     let flag_field = format_ident!("is_service_error");
     let kind_ts_type = service_error_specs
         .iter()
@@ -338,21 +338,26 @@ fn payload_arg_type(
 
 fn payload_forward_expr(
     payload: &crate::client::ClientPayloadSpec,
-    binding: TokenStream,
+    binding: &TokenStream,
 ) -> TokenStream {
     match (&payload.shape, payload.optional) {
-        (ClientPayloadShape::Json(_), true)
-        | (ClientPayloadShape::Proto(_), true)
-        | (ClientPayloadShape::Serde(_), true) => quote! { #binding.as_ref() },
-        (ClientPayloadShape::Json(_), false)
-        | (ClientPayloadShape::Proto(_), false)
-        | (ClientPayloadShape::Serde(_), false) => quote! { &#binding },
-        (ClientPayloadShape::Raw(RawValueKind::String), true)
-        | (ClientPayloadShape::Raw(RawValueKind::Bytes), true) => {
+        (
+            ClientPayloadShape::Json(_)
+            | ClientPayloadShape::Proto(_)
+            | ClientPayloadShape::Serde(_),
+            true,
+        )
+        | (ClientPayloadShape::Raw(RawValueKind::Bytes), false) => quote! { #binding.as_ref() },
+        (
+            ClientPayloadShape::Json(_)
+            | ClientPayloadShape::Proto(_)
+            | ClientPayloadShape::Serde(_)
+            | ClientPayloadShape::Raw(RawValueKind::String),
+            false,
+        ) => quote! { &#binding },
+        (ClientPayloadShape::Raw(RawValueKind::String | RawValueKind::Bytes), true) => {
             quote! { #binding.as_deref() }
         }
-        (ClientPayloadShape::Raw(RawValueKind::String), false) => quote! { &#binding },
-        (ClientPayloadShape::Raw(RawValueKind::Bytes), false) => quote! { #binding.as_ref() },
     }
 }
 
@@ -418,6 +423,7 @@ fn gen_args_struct(
     )
 }
 
+#[allow(clippy::too_many_lines)]
 fn render_connect_support(service_name: &str, nats_micro: &syn::Path) -> TokenStream {
     let (auth_options_name, connect_options_name) = connect_options_names(service_name);
     let header_name = header_type_name(service_name);
@@ -552,6 +558,7 @@ fn render_connect_support(service_name: &str, nats_micro: &syn::Path) -> TokenSt
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn render_method(
     service_name: &str,
     endpoint: &ClientEndpointSpec,
@@ -609,7 +616,8 @@ fn render_method(
             });
 
             let forward_args = if let Some(payload) = payload {
-                let payload_forward = payload_forward_expr(payload, quote! { args.payload });
+                let payload_binding = quote! { args.payload };
+                let payload_forward = payload_forward_expr(payload, &payload_binding);
                 quote! { #(#subject_forward,)* #payload_forward }
             } else {
                 quote! { #(#subject_forward),* }
@@ -623,7 +631,8 @@ fn render_method(
             )
         } else if let Some(payload) = payload {
             let payload_ty = payload_arg_type(payload, nats_micro);
-            let payload_forward = payload_forward_expr(payload, quote! { payload });
+            let payload_binding = quote! { payload };
+            let payload_forward = payload_forward_expr(payload, &payload_binding);
 
             (
                 None,
@@ -747,8 +756,9 @@ fn render_method(
     (helper_struct, rust_method, js_method)
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn generate_client_napi_module(
-    struct_ident: &syn::Ident,
+    _struct_ident: &syn::Ident,
     service_name: &str,
     endpoints: &[ClientEndpointSpec],
 ) -> TokenStream {
@@ -904,7 +914,7 @@ pub(crate) fn generate_client_napi_module(
     let framework_error_attrs = {
         let framework_enum_ident = format_ident!("{}FrameworkError", client_base_name);
 
-        let return_type = format!("err is {}", framework_enum_ident);
+        let return_type = format!("err is {framework_enum_ident}");
         let return_type_lit = LitStr::new(&return_type, Span::call_site());
 
         quote! {
@@ -915,7 +925,7 @@ pub(crate) fn generate_client_napi_module(
     let transport_error_attrs = {
         let transport_enum_ident = format_ident!("{}TransportError", client_base_name);
 
-        let return_type = format!("err is {}", transport_enum_ident);
+        let return_type = format!("err is {transport_enum_ident}");
         let return_type_lit = LitStr::new(&return_type, Span::call_site());
 
         quote! {
@@ -929,7 +939,7 @@ pub(crate) fn generate_client_napi_module(
     let service_error_attrs = {
         let service_enum_ident = format_ident!("{}Error", client_base_name);
 
-        let return_type = format!("err is {}", service_enum_ident);
+        let return_type = format!("err is {service_enum_ident}");
         let return_type_lit = LitStr::new(&return_type, Span::call_site());
 
         quote! {

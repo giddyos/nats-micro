@@ -5,6 +5,7 @@ use syn::{Data, DeriveInput, Fields};
 
 use crate::utils::{error_stream, nats_micro_path};
 
+#[allow(clippy::too_many_lines)]
 pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
     let nats_micro = nats_micro_path();
     let span = input.ident.span();
@@ -144,7 +145,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
     }
 
     if let Data::Enum(ref mut data_enum) = input.data {
-        for variant in data_enum.variants.iter_mut() {
+        for variant in &mut data_enum.variants {
             variant
                 .attrs
                 .retain(|attr| !attr.path().is_ident("internal") && !attr.path().is_ident("code"));
