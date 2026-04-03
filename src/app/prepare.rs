@@ -18,12 +18,9 @@ pub(super) fn prepare_request_for_dispatch_with_state(
 
     #[cfg(feature = "encryption")]
     {
-        use crate::{
-            encrypted_headers::{
-                ENCRYPTED_HEADERS_NAME, RESPONSE_PUB_KEY_NAME, SIGNATURE_HEADER_NAME,
-                decode_response_pub_key, decrypt_headers,
-            },
-            encryption::{ServiceKeyPair, verify_signature},
+        use crate::encryption::{
+            ENCRYPTED_HEADERS_NAME, RESPONSE_PUB_KEY_NAME, SIGNATURE_HEADER_NAME, ServiceKeyPair,
+            decode_response_pub_key, decrypt_headers, verify_signature,
         };
         use base64::{Engine, engine::general_purpose::STANDARD};
 
@@ -44,11 +41,6 @@ pub(super) fn prepare_request_for_dispatch_with_state(
                 .with_request_id(req.request_id.clone())
             })?;
 
-            println!(
-                "Derived shared key for ephemeral public key: {}",
-                STANDARD.encode(eph_pub)
-            );
-
             let shared_key = keypair.derive_shared_key(eph_pub);
 
             let sig_header = req.headers.get(SIGNATURE_HEADER_NAME).ok_or_else(|| {
@@ -67,7 +59,10 @@ pub(super) fn prepare_request_for_dispatch_with_state(
                     )
                     .with_request_id(req.request_id.clone())
                 })?;
-            let enc_hdr_val = req.headers.get(ENCRYPTED_HEADERS_NAME).map(|v| v.as_str());
+            let enc_hdr_val = req
+                .headers
+                .get(ENCRYPTED_HEADERS_NAME)
+                .map(crate::request::Header::as_str);
             verify_signature(&shared_key, &req.payload, enc_hdr_val, &signature).map_err(|_| {
                 NatsErrorResponse::framework(
                     FrameworkError::SignatureInvalid,
@@ -89,7 +84,7 @@ pub(super) fn prepare_request_for_dispatch_with_state(
             };
 
             let mut clean_headers = crate::request::Headers::new();
-            for header in req.headers.iter() {
+            for header in &req.headers {
                 if header.key.eq_ignore_ascii_case(ENCRYPTED_HEADERS_NAME)
                     || header.key.eq_ignore_ascii_case(RESPONSE_PUB_KEY_NAME)
                     || header.key.eq_ignore_ascii_case(SIGNATURE_HEADER_NAME)

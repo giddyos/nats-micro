@@ -1,11 +1,9 @@
 use std::sync::Arc;
 
 use async_nats::{
-    error,
     jetstream::{self, AckKind},
     service::{self, endpoint},
 };
-use bytes::Bytes;
 use futures::StreamExt;
 use tokio::{
     sync::{Semaphore, watch},
@@ -17,7 +15,7 @@ use tracing::{debug, error, info};
 
 use crate::{
     consumer::ConsumerDefinition,
-    error::{IntoNatsError, NatsErrorResponse},
+    error::NatsErrorResponse,
     handler::RequestContext,
     request::NatsRequest,
     service::EndpointDefinition,
@@ -25,11 +23,7 @@ use crate::{
     utils::ensure_request_id,
 };
 
-use super::{
-    NatsApp,
-    limits::{resolve_endpoint_concurrency_limit, semaphore_permits},
-    shutdown::shutdown_requested,
-};
+use super::{NatsApp, limits::semaphore_permits, shutdown::shutdown_requested};
 
 pub fn success_headers(success: bool) -> async_nats::HeaderMap {
     let mut headers = async_nats::HeaderMap::new();
@@ -84,15 +78,15 @@ async fn handle_endpoint_request(
         "received endpoint request"
     );
 
-    println!("Received request for subject: {}", raw_req.message.subject);
-    println!("Request headers: {:#?}", raw_req.message.headers);
-    println!("Request payload string: {} |", String::from_utf8_lossy(&raw_req.message.payload));
-
     let req = NatsRequest {
         subject: raw_req.message.subject.to_string(),
         payload: raw_req.message.payload.clone(),
         headers,
-        reply: raw_req.message.reply.as_ref().map(|s| s.to_string()),
+        reply: raw_req
+            .message
+            .reply
+            .as_ref()
+            .map(std::string::ToString::to_string),
         request_id: request_id.clone(),
     };
 
@@ -159,6 +153,7 @@ async fn handle_endpoint_request(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 pub(super) async fn run_endpoint_worker(
     app: NatsApp,
     endpoint_def: EndpointDefinition,
@@ -187,7 +182,7 @@ pub(super) async fn run_endpoint_worker(
             biased;
 
             changed = shutdown_rx.changed() => {
-                if shutdown_requested(changed, &shutdown_rx) {
+                if shutdown_requested(&changed, &shutdown_rx) {
                     should_stop_endpoint = true;
                     break Ok(());
                 }
@@ -217,7 +212,7 @@ pub(super) async fn run_endpoint_worker(
 
             changed = shutdown_rx.changed() => {
                 drop(permit);
-                if shutdown_requested(changed, &shutdown_rx) {
+                if shutdown_requested(&changed, &shutdown_rx) {
                     should_stop_endpoint = true;
                     break Ok(());
                 }
@@ -287,6 +282,7 @@ pub(super) async fn run_endpoint_worker(
     outcome
 }
 
+#[allow(clippy::too_many_lines)]
 async fn handle_consumer_message(
     app: NatsApp,
     consumer_def: ConsumerDefinition,
@@ -345,7 +341,9 @@ async fn handle_consumer_message(
     let ack_wait = consumer_def.config.ack_wait;
     let cancel = CancellationToken::new();
 
-    let progress_handle = if !ack_wait.is_zero() {
+    let progress_handle = if ack_wait.is_zero() {
+        None
+    } else {
         let tick = ack_wait
             .checked_div(3)
             .filter(|d| !d.is_zero())
@@ -365,9 +363,9 @@ async fn handle_consumer_message(
                 tokio::select! {
                     biased;
 
-                    _ = token.cancelled() => break,
+                    () = token.cancelled() => break,
 
-                    _ = tokio::time::sleep_until(next) => {
+                    () = tokio::time::sleep_until(next) => {
                         next += tick;
 
                         if msg.ack_with(AckKind::Progress).await.is_err() {
@@ -383,8 +381,6 @@ async fn handle_consumer_message(
                 }
             }
         }))
-    } else {
-        None
     };
 
     let result = consumer_def.handler.call(ctx).await;
@@ -431,6 +427,7 @@ async fn handle_consumer_message(
     }
 }
 
+#[allow(clippy::too_many_lines)]
 pub(super) async fn run_consumer_worker(
     app: NatsApp,
     consumer_def: ConsumerDefinition,
@@ -457,7 +454,7 @@ pub(super) async fn run_consumer_worker(
             biased;
 
             changed = shutdown_rx.changed() => {
-                if shutdown_requested(changed, &shutdown_rx) {
+                if shutdown_requested(&changed, &shutdown_rx) {
                     break Ok(());
                 }
                 continue;
@@ -485,7 +482,7 @@ pub(super) async fn run_consumer_worker(
 
             changed = shutdown_rx.changed() => {
                 drop(permit);
-                if shutdown_requested(changed, &shutdown_rx) {
+                if shutdown_requested(&changed, &shutdown_rx) {
                     break Ok(());
                 }
                 continue;

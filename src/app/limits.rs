@@ -32,26 +32,25 @@ pub(super) fn resolve_consumer_concurrency_limit(
     server_max_ack_pending: i64,
     default_limit: u64,
 ) -> ResolvedConsumerConcurrencyLimit {
-    match requested_limit {
-        Some(limit) => ResolvedConsumerConcurrencyLimit {
+    if let Some(limit) = requested_limit {
+        ResolvedConsumerConcurrencyLimit {
             value: limit,
             promoted_from_default: false,
-        },
-        None => {
-            let promoted_limit = u64::try_from(server_max_ack_pending)
-                .ok()
-                .filter(|limit| *limit > default_limit);
+        }
+    } else {
+        let promoted_limit = u64::try_from(server_max_ack_pending)
+            .ok()
+            .filter(|limit| *limit > default_limit);
 
-            match promoted_limit {
-                Some(limit) => ResolvedConsumerConcurrencyLimit {
-                    value: limit,
-                    promoted_from_default: true,
-                },
-                None => ResolvedConsumerConcurrencyLimit {
-                    value: default_limit,
-                    promoted_from_default: false,
-                },
-            }
+        match promoted_limit {
+            Some(limit) => ResolvedConsumerConcurrencyLimit {
+                value: limit,
+                promoted_from_default: true,
+            },
+            None => ResolvedConsumerConcurrencyLimit {
+                value: default_limit,
+                promoted_from_default: false,
+            },
         }
     }
 }

@@ -122,6 +122,7 @@ impl NatsApp {
             .await
     }
 
+    #[allow(clippy::too_many_lines)]
     pub async fn run_until<Fut>(mut self, shutdown_signal: Fut) -> Result<()>
     where
         Fut: Future<Output = Result<()>>,
@@ -358,10 +359,7 @@ impl NatsApp {
             spawn_supervised_worker(
                 &mut workers,
                 worker_events.clone(),
-                format!(
-                    "endpoint `{}` for service `{}`",
-                    endpoint_full_subject, endpoint_service_name
-                ),
+                format!("endpoint `{endpoint_full_subject}` for service `{endpoint_service_name}`"),
                 run_endpoint_worker(
                     app,
                     endpoint_def,
@@ -379,6 +377,7 @@ impl NatsApp {
         })
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn spawn_consumers_for(
         &self,
         service_name: &str,
@@ -483,11 +482,8 @@ impl NatsApp {
                 );
             }
 
-            let mut messages = consumer.messages().await.map_err(|e| {
-                anyhow::anyhow!(
-                    "failed to subscribe JetStream consumer `{}` messages: {e}",
-                    durable
-                )
+            let messages = consumer.messages().await.map_err(|e| {
+                anyhow::anyhow!("failed to subscribe JetStream consumer `{durable}` messages: {e}")
             })?;
 
             let app = self.clone();

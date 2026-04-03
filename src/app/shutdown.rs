@@ -45,7 +45,7 @@ impl LiveService {
 }
 
 pub(super) fn shutdown_requested(
-    changed: Result<(), watch::error::RecvError>,
+    changed: &Result<(), watch::error::RecvError>,
     shutdown_rx: &watch::Receiver<ShutdownState>,
 ) -> bool {
     changed.is_err() || shutdown_rx.borrow().requested
@@ -64,9 +64,10 @@ pub(super) fn spawn_supervised_worker<Fut>(
         let exit = match AssertUnwindSafe(worker).catch_unwind().await {
             Ok(Ok(())) => WorkerExit::completed(label),
             Ok(Err(err)) => WorkerExit::failed(label, err.to_string()),
-            Err(panic) => {
-                WorkerExit::failed(label, format!("task panicked: {}", panic_payload(panic)))
-            }
+            Err(panic) => WorkerExit::failed(
+                label,
+                format!("task panicked: {}", panic_payload(panic.as_ref())),
+            ),
         };
         let _ = worker_events.send(exit);
     }));
@@ -124,7 +125,7 @@ pub(super) async fn wait_for_workers(
     Ok(())
 }
 
-fn panic_payload(panic: Box<dyn Any + Send>) -> String {
+fn panic_payload(panic: &(dyn Any + Send)) -> String {
     if let Some(message) = panic.downcast_ref::<&str>() {
         (*message).to_string()
     } else if let Some(message) = panic.downcast_ref::<String>() {
