@@ -7,6 +7,8 @@ use syn::{DeriveInput, ItemFn, ItemImpl, ItemStruct, parse_macro_input};
 mod client;
 mod consumer;
 mod endpoint;
+mod napi;
+mod object;
 mod service;
 mod service_error;
 mod utils;
@@ -40,6 +42,12 @@ pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
         Ok(args) => service::expand_service(args, item_struct).into(),
         Err(e) => e.write_errors().into(),
     }
+}
+
+#[proc_macro_attribute]
+pub fn object(_attr: TokenStream, item: TokenStream) -> TokenStream {
+    let item_struct = parse_macro_input!(item as ItemStruct);
+    object::expand_object(item_struct).into()
 }
 
 #[proc_macro_attribute]

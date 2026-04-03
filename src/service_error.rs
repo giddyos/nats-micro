@@ -1,5 +1,6 @@
+use heck::AsShoutySnakeCase;
 use proc_macro2::TokenStream;
-use quote::{ToTokens, quote};
+use quote::{ToTokens, format_ident, quote};
 use syn::{Data, DeriveInput, Fields};
 
 use crate::utils::{error_stream, nats_micro_path};
@@ -22,10 +23,16 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
 
     let mut variant_arms = Vec::new();
     let mut from_response_arms = Vec::new();
+    let mut napi_js_variants = Vec::new();
+    let mut napi_as_ref_arms = Vec::new();
+    let mut napi_from_error_arms = Vec::new();
+    let js_enum_ident = format_ident!("Js{}", enum_ident);
 
     for variant in &data_enum.variants {
         let v_ident = &variant.ident;
         let v_name = v_ident.to_string();
+        let v_code = format!("{}", AsShoutySnakeCase(&v_name));
+        let js_variant_ident = format_ident!("{}", v_code);
 
         let is_internal = variant
             .attrs
@@ -46,6 +53,20 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
             quote! { __message }
         };
 
+        let napi_from_pattern = match &variant.fields {
+            Fields::Unit => quote! { #enum_ident::#v_ident },
+            Fields::Unnamed(_) => quote! { #enum_ident::#v_ident(..) },
+            Fields::Named(_) => quote! { #enum_ident::#v_ident { .. } },
+        };
+
+        napi_js_variants.push(quote! { #js_variant_ident });
+        napi_as_ref_arms.push(quote! {
+            Self::#js_variant_ident => #v_code,
+        });
+        napi_from_error_arms.push(quote! {
+            #napi_from_pattern => #js_enum_ident::#js_variant_ident,
+        });
+
         // The generated encoder and decoder are derived from the same field
         // shape so the wire format stays simple and mechanically reversible.
         // When we cannot prove that reversal is lossless, we preserve the
@@ -55,7 +76,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
                 quote! { #enum_ident::#v_ident },
                 quote! { None },
                 quote! {
-                    (#code, #v_name) => #nats_micro::ServiceErrorMatch::Typed(#enum_ident::#v_ident),
+                    (#code, #v_code) => #nats_micro::ServiceErrorMatch::Typed(#enum_ident::#v_ident),
                 },
             ),
             Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
@@ -69,7 +90,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
                             quote! { Some(#nats_micro::serde_json::Value::String(__value.clone())) }
                         },
                         quote! {
-                            (#code, #v_name) => #nats_micro::ServiceErrorMatch::Typed(
+                            (#code, #v_code) => #nats_micro::ServiceErrorMatch::Typed(
                                 #enum_ident::#v_ident(
                                     response
                                         .details
@@ -85,7 +106,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
                         enum_ident,
                         v_ident,
                         code,
-                        &v_name,
+                        &v_code,
                         fields,
                         is_internal,
                     ),
@@ -95,12 +116,12 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
                 enum_ident,
                 v_ident,
                 code,
-                &v_name,
+                &v_code,
                 fields,
                 is_internal,
             ),
             Fields::Named(fields) => {
-                build_named_variant_tokens(enum_ident, v_ident, code, &v_name, fields, is_internal)
+                build_named_variant_tokens(enum_ident, v_ident, code, &v_code, fields, is_internal)
             }
         };
 
@@ -108,7 +129,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
             #pattern => {
                 let __error = #nats_micro::NatsErrorResponse::new(
                     #code,
-                    #v_name,
+                    #v_code,
                     #message,
                     request_id,
                 );
@@ -144,7 +165,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
             fn from_nats_error_response(
                 response: #nats_micro::NatsErrorResponse,
             ) -> #nats_micro::ServiceErrorMatch<Self> {
-                match (response.code, response.error.as_str()) {
+                match (response.code, response.kind.as_str()) {
                     #(#from_response_arms)*
                     _ => #nats_micro::ServiceErrorMatch::Untyped(response),
                 }
@@ -152,9 +173,40 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
         }
     };
 
+    let napi_impl = if cfg!(feature = "macros_napi_feature") {
+        quote! {
+            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+            #[#nats_micro::napi_derive::napi(string_enum)]
+            pub enum #js_enum_ident {
+                #(#napi_js_variants,)*
+            }
+
+            impl ::std::convert::AsRef<str> for #js_enum_ident {
+                fn as_ref(&self) -> &str {
+                    match self {
+                        #(#napi_as_ref_arms)*
+                    }
+                }
+            }
+
+            impl ::std::convert::From<&#enum_ident> for #js_enum_ident {
+                fn from(value: &#enum_ident) -> Self {
+                    match value {
+                        #(#napi_from_error_arms)*
+                    }
+                }
+            }
+
+            impl #nats_micro::__private::NapiServiceError for #enum_ident {}
+        }
+    } else {
+        quote! {}
+    };
+
     let mut out = TokenStream::new();
     out.extend(input.into_token_stream());
     out.extend(enum_impl);
+    out.extend(napi_impl);
     out
 }
 

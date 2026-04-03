@@ -28,7 +28,7 @@ impl ClientModuleSpec {
 
         let recipient_field = if self.encryption_enabled {
             quote! {
-                recipient: #nats_micro::ServiceRecipient,
+                recipient: Option<#nats_micro::ServiceRecipient>,
             }
         } else {
             quote! {}
@@ -36,14 +36,11 @@ impl ClientModuleSpec {
 
         let new_fn = if self.encryption_enabled {
             quote! {
-                pub fn new(
-                    client: #nats_micro::async_nats::Client,
-                    recipient: impl Into<#nats_micro::ServiceRecipient>,
-                ) -> Self {
+                pub fn new(client: #nats_micro::async_nats::Client) -> Self {
                     Self {
                         client,
                         prefix: #service_ident::__nats_micro_service_meta().subject_prefix,
-                        recipient: recipient.into(),
+                        recipient: None,
                     }
                 }
             }
@@ -63,12 +60,11 @@ impl ClientModuleSpec {
                 pub fn with_prefix(
                     client: #nats_micro::async_nats::Client,
                     prefix: impl Into<String>,
-                    recipient: impl Into<#nats_micro::ServiceRecipient>,
                 ) -> Self {
                     Self {
                         client,
                         prefix: Some(prefix.into()),
-                        recipient: recipient.into(),
+                        recipient: None,
                     }
                 }
             }
@@ -92,7 +88,7 @@ impl ClientModuleSpec {
                     mut self,
                     recipient: impl Into<#nats_micro::ServiceRecipient>,
                 ) -> Self {
-                    self.recipient = recipient.into();
+                    self.recipient = Some(recipient.into());
                     self
                 }
             }
@@ -106,7 +102,10 @@ impl ClientModuleSpec {
                     &self,
                     options: #nats_micro::ClientCallOptions,
                 ) -> #nats_micro::ClientCallOptions {
-                    options.with_default_recipient(self.recipient.clone())
+                    match &self.recipient {
+                        Some(recipient) => options.with_default_recipient(recipient.clone()),
+                        None => options,
+                    }
                 }
             }
         } else {
@@ -124,6 +123,7 @@ impl ClientModuleSpec {
             pub mod #module_name {
                 use super::*;
 
+                #[derive(Clone)]
                 pub struct #client_struct_name {
                     client: #nats_micro::async_nats::Client,
                     prefix: Option<String>,

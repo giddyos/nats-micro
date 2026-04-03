@@ -9,6 +9,7 @@ proc-macro = true
 [features]
 macros_client_feature = []
 macros_encryption_feature = []
+macros_napi_feature = ["macros_client_feature"]
 
 [dependencies]
 darling = "0.23"
@@ -17,3 +18,4 @@ proc-macro-crate = "3.5.0"
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full", "extra-traits"] }
+nats-micro-shared = { path = "../nats-micro-shared" }

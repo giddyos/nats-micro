@@ -1,5 +1,6 @@
 use darling::FromMeta;
 use darling::ast::NestedMeta;
+use heck::ToSnakeCase;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{ImplItem, ImplItemFn, ItemImpl, ItemStruct, Meta, Type};
@@ -10,6 +11,7 @@ use crate::endpoint::{
     EndpointArgs, PayloadEncoding, ResponseEncoding, build_handler_body, extract_param_info,
     requires_auth,
 };
+use crate::napi::{gen_napi_asserts, generate_client_napi_module};
 use crate::utils::nats_micro_path;
 
 #[derive(Debug, FromMeta)]
@@ -18,17 +20,64 @@ pub struct ServiceArgs {
     version: Option<String>,
     description: Option<String>,
     prefix: Option<String>,
+    #[cfg(feature = "macros_napi_feature")]
+    #[darling(default)]
+    napi: bool,
 }
 
 pub fn expand_service(args: ServiceArgs, item_struct: ItemStruct) -> TokenStream {
     let nats_micro = nats_micro_path();
     let ident = &item_struct.ident;
-    let service_name = args.name.unwrap_or_else(|| item_struct.ident.to_string());
-    let version = args.version.unwrap_or_else(|| "0.1.0".to_string());
-    let description = args.description.unwrap_or_default();
-    let prefix = match args.prefix {
+    #[cfg(feature = "macros_napi_feature")]
+    let ServiceArgs {
+        name,
+        version,
+        description,
+        prefix,
+        napi,
+    } = args;
+    #[cfg(not(feature = "macros_napi_feature"))]
+    let ServiceArgs {
+        name,
+        version,
+        description,
+        prefix,
+    } = args;
+
+    let service_name = name.unwrap_or_else(|| item_struct.ident.to_string());
+    let version = version.unwrap_or_else(|| "0.1.0".to_string());
+    let description = description.unwrap_or_default();
+    let service_config_module = service_config_module_ident(ident);
+    let prefix = match prefix {
         Some(prefix) => quote! { Some(#prefix.to_string()) },
         None => quote! { None },
+    };
+
+    #[cfg(feature = "macros_napi_feature")]
+    let napi_enabled = napi;
+    #[cfg(not(feature = "macros_napi_feature"))]
+    let napi_enabled = false;
+
+    let emit_napi_items = if napi_enabled {
+        quote! {
+            #[allow(unused_macros)]
+            macro_rules! emit_napi_items {
+                ($($item:item)*) => {
+                    $($item)*
+                };
+            }
+
+            pub(crate) use emit_napi_items;
+        }
+    } else {
+        quote! {
+            #[allow(unused_macros)]
+            macro_rules! emit_napi_items {
+                ($($item:item)*) => {};
+            }
+
+            pub(crate) use emit_napi_items;
+        }
     };
 
     quote! {
@@ -43,6 +92,11 @@ pub fn expand_service(args: ServiceArgs, item_struct: ItemStruct) -> TokenStream
                     #prefix,
                 )
             }
+        }
+
+        #[doc(hidden)]
+        mod #service_config_module {
+            #emit_napi_items
         }
     }
 }
@@ -158,6 +212,20 @@ pub fn expand_service_handlers(item_impl: ItemImpl) -> TokenStream {
     } else {
         quote! {}
     };
+    let napi_items = if cfg!(feature = "macros_napi_feature") {
+        let service_config_module = service_config_module_ident(&struct_ident);
+        let napi_asserts = gen_napi_asserts(&client_endpoints);
+        let napi_client_module =
+            generate_client_napi_module(&struct_ident, &service_name_str, &client_endpoints);
+        quote! {
+            #service_config_module::emit_napi_items! {
+                #napi_asserts
+                #napi_client_module
+            }
+        }
+    } else {
+        quote! {}
+    };
 
     quote! {
         #cleaned_impl
@@ -188,6 +256,7 @@ pub fn expand_service_handlers(item_impl: ItemImpl) -> TokenStream {
         }
 
         #client_module
+        #napi_items
     }
 }
 
@@ -197,6 +266,13 @@ fn extract_ident_from_type(ty: &Type) -> Option<syn::Ident> {
     } else {
         None
     }
+}
+
+fn service_config_module_ident(service_ident: &syn::Ident) -> syn::Ident {
+    format_ident!(
+        "__nats_micro_service_config_{}",
+        service_ident.to_string().to_snake_case()
+    )
 }
 
 struct HandlerResult {
