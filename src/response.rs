@@ -15,6 +15,7 @@ pub struct NatsResponse {
 }
 
 impl NatsResponse {
+    #[must_use]
     pub fn new(payload: impl Into<Bytes>) -> Self {
         Self {
             payload: payload.into(),
@@ -22,6 +23,7 @@ impl NatsResponse {
         }
     }
 
+    #[must_use]
     pub fn with_header(mut self, key: &str, value: impl AsRef<str>) -> Self {
         self.headers.insert(key, value.as_ref());
         self
@@ -29,6 +31,11 @@ impl NatsResponse {
 }
 
 pub trait IntoNatsResponse {
+    /// Converts a handler return value into a transport response.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the value cannot be encoded for transport.
     fn into_response(self, ctx: &RequestContext) -> Result<NatsResponse, NatsErrorResponse>;
 }
 
@@ -113,6 +120,12 @@ where
 }
 
 // Client / response decoding helpers used by generated clients and macros.
+/// Reads the explicit success marker from transport headers.
+///
+/// # Errors
+///
+/// Returns an invalid-response client error when the header is present but not
+/// a valid boolean string.
 pub fn response_success_from_headers<
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
@@ -134,12 +147,18 @@ pub fn response_success_from_headers<
         Err(crate::ClientError::invalid_response(
             NatsErrorResponse::framework(
                 FrameworkError::InvalidResponse,
-                format!("invalid {} header value: {value}", X_SUCCESS_HEADER),
+                format!("invalid {X_SUCCESS_HEADER} header value: {value}"),
             ),
         ))
     }
 }
 
+/// Reads the explicit optional-response marker from transport headers.
+///
+/// # Errors
+///
+/// Returns an invalid-response client error when the header is present but not
+/// a valid boolean string.
 pub fn optional_response_from_headers<
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
@@ -161,10 +180,7 @@ pub fn optional_response_from_headers<
         Err(crate::ClientError::invalid_response(
             NatsErrorResponse::framework(
                 FrameworkError::InvalidResponse,
-                format!(
-                    "invalid {} header value: {value}",
-                    X_OPTIONAL_RESPONSE_HEADER
-                ),
+                format!("invalid {X_OPTIONAL_RESPONSE_HEADER} header value: {value}"),
             ),
         ))
     }
@@ -183,6 +199,12 @@ fn optional_response_is_none<
     }
 }
 
+/// Deserializes a JSON response payload into the requested type.
+///
+/// # Errors
+///
+/// Returns a typed service error for remote failures, or a transport error
+/// when the payload cannot be decoded as the expected success shape.
 pub fn deserialize_response<
     T: crate::serde::de::DeserializeOwned,
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
@@ -223,6 +245,12 @@ pub fn deserialize_response<
     }
 }
 
+/// Deserializes an optional JSON response payload into the requested type.
+///
+/// # Errors
+///
+/// Returns a typed service error for remote failures, or a transport error
+/// when a present payload cannot be decoded as the expected success shape.
 pub fn deserialize_optional_response<
     T: crate::serde::de::DeserializeOwned,
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
@@ -242,6 +270,12 @@ pub fn deserialize_optional_response<
     deserialize_response::<T, E>(headers, payload).map(Some)
 }
 
+/// Deserializes a protobuf response payload into the requested type.
+///
+/// # Errors
+///
+/// Returns a typed service error for remote failures, or a transport error
+/// when the payload cannot be decoded as the expected protobuf message.
 pub fn deserialize_proto_response<
     T: crate::prost::Message + Default,
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
@@ -282,6 +316,12 @@ pub fn deserialize_proto_response<
     }
 }
 
+/// Deserializes an optional protobuf response payload into the requested type.
+///
+/// # Errors
+///
+/// Returns a typed service error for remote failures, or a transport error
+/// when a present payload cannot be decoded as the expected protobuf message.
 pub fn deserialize_optional_proto_response<
     T: crate::prost::Message + Default,
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
@@ -301,6 +341,12 @@ pub fn deserialize_optional_proto_response<
     deserialize_proto_response::<T, E>(headers, payload).map(Some)
 }
 
+/// Validates that a unit response is empty and successful.
+///
+/// # Errors
+///
+/// Returns a typed service error for remote failures, or a transport error
+/// when a successful response includes an unexpected payload.
 pub fn deserialize_unit_response<
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
@@ -340,6 +386,12 @@ pub fn deserialize_unit_response<
     ))
 }
 
+/// Validates that an optional unit response is empty when present.
+///
+/// # Errors
+///
+/// Returns a typed service error for remote failures, or a transport error
+/// when a present successful response includes an unexpected payload.
 pub fn deserialize_optional_unit_response<
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
@@ -358,6 +410,12 @@ pub fn deserialize_optional_unit_response<
     deserialize_unit_response::<E>(headers, payload).map(Some)
 }
 
+/// Converts a successful raw response body into UTF-8 text.
+///
+/// # Errors
+///
+/// Returns a typed service error for remote failures, or a transport error
+/// when the payload is not valid UTF-8.
 pub fn raw_response_to_string<
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
@@ -385,6 +443,12 @@ pub fn raw_response_to_string<
     })
 }
 
+/// Converts an optional successful raw response body into UTF-8 text.
+///
+/// # Errors
+///
+/// Returns a typed service error for remote failures, or a transport error
+/// when a present payload is not valid UTF-8.
 pub fn raw_response_to_optional_string<
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
@@ -403,6 +467,11 @@ pub fn raw_response_to_optional_string<
     raw_response_to_string::<E>(headers, payload).map(Some)
 }
 
+/// Returns the raw bytes from a successful response.
+///
+/// # Errors
+///
+/// Returns a typed service error for remote failures.
 pub fn raw_response_to_bytes<
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
@@ -424,6 +493,11 @@ pub fn raw_response_to_bytes<
     Ok(payload.to_vec())
 }
 
+/// Returns the raw bytes from an optional successful response.
+///
+/// # Errors
+///
+/// Returns a typed service error for remote failures.
 pub fn raw_response_to_optional_bytes<
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
@@ -443,6 +517,12 @@ pub fn raw_response_to_optional_bytes<
 }
 
 #[cfg(feature = "encryption")]
+/// Decrypts a successful encrypted client response.
+///
+/// # Errors
+///
+/// Returns a typed service error for remote failures, or a transport error
+/// when the ciphertext cannot be decrypted.
 pub fn decrypt_client_response<
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
@@ -484,6 +564,11 @@ pub fn decrypt_client_response<
     }
 }
 
+/// Serializes a serde payload into bytes for client transport.
+///
+/// # Errors
+///
+/// Returns a framework error when the payload cannot be serialized to JSON.
 pub fn serialize_serde_payload<T: crate::serde::Serialize>(
     payload: &T,
 ) -> Result<::bytes::Bytes, crate::NatsErrorResponse> {
@@ -494,6 +579,11 @@ pub fn serialize_serde_payload<T: crate::serde::Serialize>(
         })
 }
 
+/// Serializes a protobuf payload into bytes for client transport.
+///
+/// # Errors
+///
+/// Returns a framework error when the payload cannot be encoded as protobuf.
 pub fn serialize_proto_payload<T: crate::prost::Message>(
     payload: &T,
 ) -> Result<::bytes::Bytes, crate::NatsErrorResponse> {

@@ -9,6 +9,7 @@ pub struct Header {
 }
 
 impl Header {
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.value
     }
@@ -18,10 +19,12 @@ impl Header {
 pub struct Headers(Vec<Header>);
 
 impl Headers {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn get(&self, key: &str) -> Option<&Header> {
         self.0
             .iter()
@@ -41,6 +44,7 @@ impl Headers {
         self.0.iter()
     }
 
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -90,6 +94,15 @@ impl std::ops::Deref for Headers {
     }
 }
 
+impl<'a> IntoIterator for &'a Headers {
+    type Item = &'a Header;
+    type IntoIter = std::slice::Iter<'a, Header>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
 impl From<async_nats::HeaderMap> for Headers {
     fn from(headers: async_nats::HeaderMap) -> Self {
         let mut out = Self::new();
@@ -115,18 +128,22 @@ pub struct NatsRequest {
 }
 
 impl NatsRequest {
+    #[must_use]
     pub fn payload(&self) -> &[u8] {
         &self.payload
     }
 
+    #[must_use]
     pub fn headers(&self) -> &Headers {
         &self.headers
     }
 
+    #[must_use]
     pub fn subject(&self) -> &str {
         &self.subject
     }
 
+    #[must_use]
     pub fn request_id(&self) -> &str {
         &self.request_id
     }

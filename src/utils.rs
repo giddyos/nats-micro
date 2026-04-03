@@ -37,7 +37,3 @@ pub fn extract_subject_param(subject_template: &str, subject: &str, name: &str) 
 
     None
 }
-
-pub fn has_auth_headers(headers: &Headers) -> bool {
-    headers.get("authorization").is_some() || headers.get("x-api-key").is_some()
-}

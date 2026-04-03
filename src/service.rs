@@ -1,11 +1,12 @@
 use crate::consumer::ConsumerDefinition;
 use crate::handler::HandlerFn;
 
+#[must_use]
 pub fn build_subject(prefix: Option<&str>, group: &str, subject: &str) -> String {
     match (prefix.filter(|value| !value.is_empty()), group.is_empty()) {
-        (Some(prefix), false) => format!("{}.{}.{}", prefix, group, subject),
-        (Some(prefix), true) => format!("{}.{}", prefix, subject),
-        (None, false) => format!("{}.{}", group, subject),
+        (Some(prefix), false) => format!("{prefix}.{group}.{subject}"),
+        (Some(prefix), true) => format!("{prefix}.{subject}"),
+        (None, false) => format!("{group}.{subject}"),
         (None, true) => subject.to_string(),
     }
 }

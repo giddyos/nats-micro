@@ -19,6 +19,7 @@ pub struct HandlerFn {
 }
 
 impl HandlerFn {
+    #[must_use]
     pub fn new<F>(f: F) -> Self
     where
         F: Fn(RequestContext) -> HandlerFuture + Send + Sync + 'static,
@@ -26,6 +27,7 @@ impl HandlerFn {
         Self::new_with_shutdown_signal_support(false, f)
     }
 
+    #[must_use]
     pub fn new_with_shutdown_signal_support<F>(requires_shutdown_signal: bool, f: F) -> Self
     where
         F: Fn(RequestContext) -> HandlerFuture + Send + Sync + 'static,
@@ -36,10 +38,12 @@ impl HandlerFn {
         }
     }
 
+    #[must_use]
     pub fn call(&self, ctx: RequestContext) -> HandlerFuture {
         (self.inner)(ctx)
     }
 
+    #[must_use]
     pub fn requires_shutdown_signal(&self) -> bool {
         self.requires_shutdown_signal
     }
@@ -70,6 +74,7 @@ impl Clone for RequestContext {
 }
 
 impl RequestContext {
+    #[must_use]
     pub fn new(request: NatsRequest, states: StateMap, subject_template: Option<String>) -> Self {
         Self {
             request,
@@ -82,17 +87,20 @@ impl RequestContext {
         }
     }
 
+    #[must_use]
     pub fn with_param_name(&self, name: impl Into<String>) -> Self {
         let mut next = self.clone();
         next.current_param_name = Some(name.into());
         next
     }
 
+    #[must_use]
     pub fn shutdown_signal(&self) -> Option<ShutdownSignal> {
         self.shutdown_signal.clone()
     }
 
     #[doc(hidden)]
+    #[must_use]
     pub fn __with_shutdown_signal(mut self, shutdown_signal: ShutdownSignal) -> Self {
         self.shutdown_signal = Some(shutdown_signal);
         self
@@ -100,6 +108,7 @@ impl RequestContext {
 
     #[cfg(feature = "encryption")]
     #[doc(hidden)]
+    #[must_use]
     pub fn __with_ephemeral_pub(mut self, ephemeral_pub: Option<[u8; 32]>) -> Self {
         self.ephemeral_pub = ephemeral_pub;
         self

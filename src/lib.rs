@@ -1,14 +1,8 @@
-#![allow(unused)]
-
 mod app;
 mod auth;
 #[cfg(feature = "client")]
 mod client;
 mod consumer;
-#[cfg(feature = "encryption")]
-mod encrypted;
-#[cfg(feature = "encryption")]
-mod encrypted_headers;
 #[cfg(feature = "encryption")]
 pub mod encryption;
 mod error;
@@ -16,7 +10,7 @@ mod extractors;
 mod handler;
 #[cfg(feature = "napi")]
 mod napi_support;
-mod prelude;
+pub mod prelude;
 mod registry;
 mod request;
 mod response;
@@ -30,7 +24,6 @@ pub use nats_micro_shared::{FrameworkError, TransportError};
 pub use thiserror;
 
 pub use app::{NatsApp, NatsAppConfig, WorkerFailurePolicy};
-// pub use async_nats;
 pub use async_nats;
 pub use async_nats::jetstream::consumer::push::Config as ConsumerConfig;
 pub use auth::{Auth, AuthError, FromAuthRequest};
@@ -64,13 +57,9 @@ pub use state::StateMap;
 pub use client::ClientCallOptions;
 
 #[cfg(feature = "encryption")]
-pub use encrypted::Encrypted;
-#[cfg(feature = "encryption")]
-pub use encrypted_headers::decrypt_headers as encrypted_headers_decrypt;
-#[cfg(feature = "encryption")]
 pub use encryption::{
-    BuiltRequest, EncryptionError, EphemeralContext, RequestBuilder, ServiceKeyPair,
-    ServiceRecipient,
+    BuiltRequest, Encrypted, EncryptionError, EphemeralContext, RequestBuilder, ServiceKeyPair,
+    ServiceRecipient, decrypt_headers as encrypted_headers_decrypt,
 };
 
 pub use bytes::Bytes;

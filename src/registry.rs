@@ -5,10 +5,3 @@ pub struct ServiceRegistration {
 }
 
 inventory::collect!(ServiceRegistration);
-
-pub fn registered_services() -> Vec<ServiceDefinition> {
-    inventory::iter::<ServiceRegistration>
-        .into_iter()
-        .map(|registration| (registration.constructor)())
-        .collect()
-}

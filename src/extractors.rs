@@ -8,7 +8,7 @@ use crate::{
     error::{IntoNatsError, NatsErrorResponse},
     handler::RequestContext,
     prost::Message,
-    request::{Header, Headers, NatsRequest},
+    request::{Headers, NatsRequest},
     serde::de::DeserializeOwned,
     shutdown_signal::ShutdownSignal,
     utils::extract_subject_param,
@@ -23,10 +23,22 @@ pub trait FromRequest: Sized + Send + 'static {
 pub trait FromSubjectParam: Sized + Send + 'static {
     type Err: Display + Send;
 
+    /// Parses a typed value from a subject placeholder segment.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the raw subject segment cannot be converted into
+    /// the target type.
     fn from_subject_param(value: &str) -> Result<Self, Self::Err>;
 }
 
 pub trait FromPayload: Sized + Send + 'static {
+    /// Extracts and decodes a handler payload from the request context.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request payload cannot be decoded into the
+    /// target type.
     fn from_payload(ctx: &RequestContext) -> Result<Self, NatsErrorResponse>;
 }
 
@@ -34,14 +46,17 @@ pub trait FromPayload: Sized + Send + 'static {
 pub struct Payload<T>(pub T);
 
 impl<T> Payload<T> {
+    #[must_use]
     pub fn into_inner(self) -> T {
         self.0
     }
 
+    #[must_use]
     pub fn as_inner(&self) -> &T {
         &self.0
     }
 
+    #[must_use]
     pub fn as_inner_mut(&mut self) -> &mut T {
         &mut self.0
     }
@@ -70,14 +85,17 @@ impl<T: FromPayload> FromRequest for Payload<T> {
 pub struct Json<T>(pub T);
 
 impl<T> Json<T> {
+    #[must_use]
     pub fn into_inner(self) -> T {
         self.0
     }
 
+    #[must_use]
     pub fn as_inner(&self) -> &T {
         &self.0
     }
 
+    #[must_use]
     pub fn as_inner_mut(&mut self) -> &mut T {
         &mut self.0
     }
@@ -101,14 +119,17 @@ impl<T> std::ops::DerefMut for Json<T> {
 pub struct Proto<T>(pub T);
 
 impl<T> Proto<T> {
+    #[must_use]
     pub fn into_inner(self) -> T {
         self.0
     }
 
+    #[must_use]
     pub fn as_inner(&self) -> &T {
         &self.0
     }
 
+    #[must_use]
     pub fn as_inner_mut(&mut self) -> &mut T {
         &mut self.0
     }
@@ -118,10 +139,12 @@ impl<T> Proto<T> {
 pub struct State<T>(pub Arc<T>);
 
 impl<T> State<T> {
+    #[must_use]
     pub fn into_inner(self) -> Arc<T> {
         self.0
     }
 
+    #[must_use]
     pub fn as_inner(&self) -> &T {
         &self.0
     }
@@ -152,14 +175,17 @@ impl<T> std::ops::DerefMut for Proto<T> {
 pub struct SubjectParam<T>(pub T);
 
 impl<T> SubjectParam<T> {
+    #[must_use]
     pub fn into_inner(self) -> T {
         self.0
     }
 
+    #[must_use]
     pub fn as_inner(&self) -> &T {
         &self.0
     }
 
+    #[must_use]
     pub fn as_inner_mut(&mut self) -> &mut T {
         &mut self.0
     }
@@ -182,10 +208,12 @@ impl<T> std::ops::DerefMut for SubjectParam<T> {
 pub struct RequestId(pub String);
 
 impl RequestId {
+    #[must_use]
     pub fn into_inner(self) -> String {
         self.0
     }
 
+    #[must_use]
     pub fn as_inner(&self) -> &str {
         &self.0
     }
@@ -202,10 +230,12 @@ impl std::ops::Deref for RequestId {
 pub struct Subject(pub String);
 
 impl Subject {
+    #[must_use]
     pub fn into_inner(self) -> String {
         self.0
     }
 
+    #[must_use]
     pub fn as_inner(&self) -> &str {
         &self.0
     }

@@ -1,8 +1,6 @@
 use async_nats::HeaderMap;
 use bytes::Bytes;
 use nats_micro_shared::{FrameworkError, TransportError as SharedTransportError};
-#[cfg(feature = "encryption")]
-use x25519_dalek::PublicKey;
 
 use crate::error::NatsErrorResponse;
 
