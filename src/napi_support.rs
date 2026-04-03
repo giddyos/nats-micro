@@ -45,8 +45,69 @@ pub struct ConnectedClient {
     pub recipient: Option<crate::ServiceRecipient>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NapiClientHeaderValue {
+    pub name: String,
+    pub value: String,
+    #[cfg(feature = "encryption")]
+    pub encrypted: bool,
+}
+
+impl NapiClientHeaderValue {
+    #[cfg(feature = "encryption")]
+    fn into_parts(self) -> (String, String, bool) {
+        (self.name, self.value, self.encrypted)
+    }
+
+    #[cfg(not(feature = "encryption"))]
+    fn into_parts(self) -> (String, String, bool) {
+        (self.name, self.value, false)
+    }
+}
+
 fn framework_error(error: FrameworkError, message: impl Into<String>) -> NatsErrorResponse {
     NatsErrorResponse::framework(error, message)
+}
+
+pub fn client_call_options_from_headers<I>(
+    headers: I,
+    has_recipient: bool,
+) -> Result<crate::ClientCallOptions, NatsErrorResponse>
+where
+    I: IntoIterator<Item = NapiClientHeaderValue>,
+{
+    let mut options = crate::ClientCallOptions::new();
+
+    for header in headers {
+        let (name, value, encrypted) = header.into_parts();
+
+        if encrypted {
+            #[cfg(feature = "encryption")]
+            {
+                if !has_recipient {
+                    return Err(framework_error(
+                        FrameworkError::MissingRecipientPubkey,
+                        "encrypted headers require recipientPublicKey in the NAPI client connect options",
+                    ));
+                }
+
+                options = options.encrypted_header(name, value);
+                continue;
+            }
+
+            #[cfg(not(feature = "encryption"))]
+            {
+                return Err(framework_error(
+                    FrameworkError::EncryptRequired,
+                    format!("encrypted header '{name}' requires the nats-micro encryption feature"),
+                ));
+            }
+        }
+
+        options = options.header(name, value);
+    }
+
+    Ok(options)
 }
 
 fn apply_auth(
@@ -253,4 +314,73 @@ pub async fn connect(
         #[cfg(feature = "encryption")]
         recipient,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NapiClientHeaderValue, client_call_options_from_headers};
+    use nats_micro_shared::FrameworkError;
+
+    #[test]
+    fn plaintext_headers_build_client_call_options() {
+        let options = client_call_options_from_headers(
+            [NapiClientHeaderValue {
+                name: "x-request-id".to_string(),
+                value: "req-1".to_string(),
+                #[cfg(feature = "encryption")]
+                encrypted: false,
+            }],
+            false,
+        )
+        .unwrap();
+
+        let header = options
+            .plaintext_headers
+            .get("x-request-id")
+            .expect("plaintext header should be preserved");
+
+        assert_eq!(header.as_str(), "req-1");
+
+        #[cfg(feature = "encryption")]
+        assert!(options.encrypted_headers.is_empty());
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn encrypted_headers_build_client_call_options() {
+        let options = client_call_options_from_headers(
+            [NapiClientHeaderValue {
+                name: "x-tenant-id".to_string(),
+                value: "tenant-42".to_string(),
+                encrypted: true,
+            }],
+            true,
+        )
+        .unwrap();
+
+        assert!(options.plaintext_headers.is_empty());
+        assert_eq!(
+            options.encrypted_headers,
+            vec![("x-tenant-id".to_string(), "tenant-42".to_string())]
+        );
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn encrypted_headers_require_recipient_public_key() {
+        let error = match client_call_options_from_headers(
+            [NapiClientHeaderValue {
+                name: "x-tenant-id".to_string(),
+                value: "tenant-42".to_string(),
+                encrypted: true,
+            }],
+            false,
+        ) {
+            Ok(_) => panic!("encrypted headers without recipient should fail"),
+            Err(error) => error,
+        };
+
+        assert_eq!(error.kind, FrameworkError::MissingRecipientPubkey.as_code());
+        assert!(error.message.contains("recipientPublicKey"));
+    }
 }

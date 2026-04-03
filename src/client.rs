@@ -64,7 +64,7 @@ impl ClientCallOptions {
             let recipient = self.recipient.ok_or_else(|| {
                 NatsErrorResponse::framework(
                     FrameworkError::MissingRecipientPubkey,
-                    "encrypted headers require a recipient",
+                    "encrypted headers require a recipient public key",
                 )
             })?;
             let recipient = recipient.with_client(client.clone());
@@ -121,7 +121,7 @@ impl ClientCallOptions {
             let recipient = self.recipient.ok_or_else(|| {
                 NatsErrorResponse::framework(
                     FrameworkError::MissingRecipientPubkey,
-                    "encrypted headers require a recipient",
+                    "encrypted headers require a recipient public key",
                 )
             })?;
             let recipient = recipient.with_client(client.clone());

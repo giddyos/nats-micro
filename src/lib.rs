@@ -118,7 +118,10 @@ pub mod __private {
 #[doc(hidden)]
 pub mod __napi {
     pub use crate::error::NapiClientError;
-    pub use crate::napi_support::{ConnectedClient, NapiAuthOptions, NapiConnectOptions, connect};
+    pub use crate::napi_support::{
+        ConnectedClient, NapiAuthOptions, NapiClientHeaderValue, NapiConnectOptions,
+        client_call_options_from_headers, connect,
+    };
 }
 
 #[doc(hidden)]
