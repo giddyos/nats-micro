@@ -74,7 +74,6 @@ define_error_code_enum! {
         DecryptFailed => { code: "DECRYPT_FAILED", status: 400 },
         EncryptFailed => { code: "ENCRYPT_FAILED", status: 500 },
         EncryptRequired => { code: "ENCRYPT_REQUIRED", status: 400 },
-        MissingRecipient => { code: "MISSING_RECIPIENT", status: 400 },
         MissingRecipientPubkey => { code: "MISSING_RECIPIENT_PUBKEY", status: 400 },
         NoEncryptionKey => { code: "NO_ENCRYPTION_KEY", status: 500 },
         SignatureInvalid => { code: "SIGNATURE_INVALID", status: 400 },
