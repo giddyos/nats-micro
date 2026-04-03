@@ -2,9 +2,9 @@ use std::collections::BTreeSet;
 
 use heck::{ToLowerCamelCase, ToSnakeCase, ToUpperCamelCase};
 use nats_micro_shared::{FrameworkError, TransportError as SharedTransportError};
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote, quote_spanned};
-use syn::{Type, spanned::Spanned};
+use syn::{LitStr, Type, spanned::Spanned};
 
 use crate::{
     client::{ClientEndpointSpec, ClientPayloadShape, ClientResponseShape, RawValueKind},
@@ -112,7 +112,6 @@ fn framework_error_kind_values() -> Vec<&'static str> {
                         | FrameworkError::DecryptFailed
                         | FrameworkError::EncryptFailed
                         | FrameworkError::EncryptRequired
-                        | FrameworkError::MissingRecipient
                         | FrameworkError::MissingRecipientPubkey
                         | FrameworkError::NoEncryptionKey
                         | FrameworkError::SignatureInvalid
@@ -246,8 +245,10 @@ fn render_service_error_interface(
         return quote! {};
     }
 
+    let client_base_name = client_error_base_name(service_name);
+
     let rust_name = format_ident!("Napi{}Error", service_name.to_upper_camel_case());
-    let js_name = format!("{}Error", service_name.to_upper_camel_case());
+    let js_name = format!("{}Error", client_base_name);
     let flag_field = format_ident!("is_service_error");
     let kind_ts_type = service_error_specs
         .iter()
@@ -300,6 +301,10 @@ fn connect_options_names(service_name: &str) -> (syn::Ident, syn::Ident) {
         format_ident!("{}ClientAuthOptions", service_name.to_upper_camel_case()),
         format_ident!("{}ClientConnectOptions", service_name.to_upper_camel_case()),
     )
+}
+
+fn header_type_name(service_name: &str) -> syn::Ident {
+    format_ident!("{}ClientHeader", service_name.to_upper_camel_case())
 }
 
 fn args_struct_name(service_name: &str, fn_name: &syn::Ident) -> syn::Ident {
@@ -415,6 +420,23 @@ fn gen_args_struct(
 
 fn render_connect_support(service_name: &str, nats_micro: &syn::Path) -> TokenStream {
     let (auth_options_name, connect_options_name) = connect_options_names(service_name);
+    let header_name = header_type_name(service_name);
+
+    let encrypted_field = if cfg!(feature = "macros_encryption_feature") {
+        quote! {
+            pub encrypted: bool,
+        }
+    } else {
+        quote! {}
+    };
+
+    let encrypted_conversion = if cfg!(feature = "macros_encryption_feature") {
+        quote! {
+            encrypted: value.encrypted,
+        }
+    } else {
+        quote! {}
+    };
 
     let recipient_field = if cfg!(feature = "macros_encryption_feature") {
         quote! {
@@ -435,6 +457,24 @@ fn render_connect_support(service_name: &str, nats_micro: &syn::Path) -> TokenSt
     };
 
     quote! {
+        #[derive(Clone)]
+        #[#nats_micro::napi_derive::napi(object, js_name = "Header")]
+        pub struct #header_name {
+            pub name: String,
+            pub value: String,
+            #encrypted_field
+        }
+
+        impl From<#header_name> for #nats_micro::__napi::NapiClientHeaderValue {
+            fn from(value: #header_name) -> Self {
+                Self {
+                    name: value.name,
+                    value: value.value,
+                    #encrypted_conversion
+                }
+            }
+        }
+
         #[derive(Default)]
         #[#nats_micro::napi_derive::napi(object)]
         pub struct #auth_options_name {
@@ -478,6 +518,7 @@ fn render_connect_support(service_name: &str, nats_micro: &syn::Path) -> TokenSt
             pub retain_servers_order: Option<bool>,
             pub read_buffer_capacity: Option<u16>,
             pub subject_prefix: Option<String>,
+            pub headers: Option<Vec<#header_name>>,
             #recipient_field
         }
 
@@ -515,93 +556,150 @@ fn render_method(
     service_name: &str,
     endpoint: &ClientEndpointSpec,
     nats_micro: &syn::Path,
+    build_call_options_fn: &syn::Ident,
     map_service_error_fn: &syn::Ident,
     map_generic_error_fn: &syn::Ident,
+    map_connect_error_fn: &syn::Ident,
 ) -> (Option<TokenStream>, TokenStream, TokenStream) {
     let attrs = &endpoint.attrs;
     let fn_ident = &endpoint.fn_name;
+    let fn_with_ident = format_ident!("{}_with", fn_ident);
+    let fn_with_headers_ident = format_ident!("{}_with_headers", fn_ident);
+    let header_name = header_type_name(service_name);
     let js_name = fn_ident.to_string().to_lower_camel_case();
     let error_type = &endpoint.error_type;
+
     let map_client_error_fn = if napi_service_error_spec(error_type).is_some() {
         map_service_error_fn
     } else {
         map_generic_error_fn
     };
+
     let return_type = response_return_type(&endpoint.response, nats_micro);
     let response_map = response_map_expr(&endpoint.response, quote! { result }, nats_micro);
-    let has_subject_params = !endpoint.subject.params.is_empty();
+
     let payload = endpoint.payload.as_ref();
+    let has_subject_params = !endpoint.subject.params.is_empty();
+    let has_inputs = has_subject_params || payload.is_some();
 
-    let mut helper_struct = None;
-    let method_args;
-    let forward_args;
+    let (helper_struct, method_args, public_forward_args, inner_forward_args) =
+        if has_subject_params {
+            let mut fields: Vec<(syn::Ident, TokenStream)> =
+                Vec::with_capacity(endpoint.subject.params.len() + usize::from(payload.is_some()));
 
-    if has_subject_params {
-        let mut fields: Vec<(syn::Ident, TokenStream)> = endpoint
-            .subject
-            .params
-            .iter()
-            .map(|SubjectParamMeta { name, inner_type }| {
-                (format_ident!("{}", name), quote! { #inner_type })
-            })
-            .collect();
-
-        if let Some(payload) = payload {
-            fields.push((
-                format_ident!("payload"),
-                payload_arg_type(payload, nats_micro),
+            fields.extend(endpoint.subject.params.iter().map(
+                |SubjectParamMeta { name, inner_type }| {
+                    (format_ident!("{}", name), quote! { #inner_type })
+                },
             ));
-        }
 
-        let (args_name, args_tokens) =
-            gen_args_struct(service_name, fn_ident, attrs, &fields, nats_micro);
-        helper_struct = Some(args_tokens);
-        method_args = quote! { args: #args_name };
+            if let Some(payload) = payload {
+                fields.push((
+                    format_ident!("payload"),
+                    payload_arg_type(payload, nats_micro),
+                ));
+            }
 
-        let subject_forward = endpoint.subject.params.iter().map(|param| {
-            let name = format_ident!("{}", param.name);
-            quote! { &args.#name }
-        });
+            let (args_name, args_tokens) =
+                gen_args_struct(service_name, fn_ident, attrs, &fields, nats_micro);
 
-        forward_args = if let Some(payload) = payload {
-            let payload_forward = payload_forward_expr(payload, quote! { args.payload });
-            quote! { #(#subject_forward,)* #payload_forward }
+            let subject_forward = endpoint.subject.params.iter().map(|param| {
+                let name = format_ident!("{}", param.name);
+                quote! { &args.#name }
+            });
+
+            let forward_args = if let Some(payload) = payload {
+                let payload_forward = payload_forward_expr(payload, quote! { args.payload });
+                quote! { #(#subject_forward,)* #payload_forward }
+            } else {
+                quote! { #(#subject_forward),* }
+            };
+
+            (
+                Some(args_tokens),
+                quote! { args: #args_name },
+                quote! { args },
+                forward_args,
+            )
+        } else if let Some(payload) = payload {
+            let payload_ty = payload_arg_type(payload, nats_micro);
+            let payload_forward = payload_forward_expr(payload, quote! { payload });
+
+            (
+                None,
+                quote! { payload: #payload_ty },
+                quote! { payload },
+                quote! { #payload_forward },
+            )
         } else {
-            quote! { #(#subject_forward),* }
+            (None, quote! {}, quote! {}, quote! {})
         };
-    } else if let Some(payload) = payload {
-        let payload_ty = payload_arg_type(payload, nats_micro);
-        method_args = quote! { payload: #payload_ty };
-        let payload_forward = payload_forward_expr(payload, quote! { payload });
-        forward_args = quote! { #payload_forward };
-    } else {
-        method_args = quote! {};
-        forward_args = quote! {};
-    }
 
-    let rust_call = if has_subject_params || payload.is_some() {
-        quote! { self.inner.#fn_ident(#forward_args).await }
+    let with_headers_method_args = if has_inputs {
+        quote! { #method_args, headers: Option<Vec<#header_name>> }
     } else {
-        quote! { self.inner.#fn_ident().await }
+        quote! { headers: Option<Vec<#header_name>> }
     };
 
-    let js_call = if has_subject_params || payload.is_some() {
-        quote! { inner.#fn_ident(#forward_args).await }
+    let wrapper_forward_args = if has_inputs {
+        quote! { #public_forward_args, None }
     } else {
-        quote! { inner.#fn_ident().await }
+        quote! { None }
+    };
+
+    let rust_call = if has_inputs {
+        quote! { self.inner.#fn_with_ident(#inner_forward_args, options).await }
+    } else {
+        quote! { self.inner.#fn_with_ident(options).await }
+    };
+
+    let js_call = if has_inputs {
+        quote! { inner.#fn_with_ident(#inner_forward_args, options).await }
+    } else {
+        quote! { inner.#fn_with_ident(options).await }
+    };
+
+    let rust_build_call_options = if cfg!(feature = "macros_encryption_feature") {
+        quote! { #build_call_options_fn(&self.default_headers, headers, self.has_default_recipient) }
+    } else {
+        quote! { #build_call_options_fn(&self.default_headers, headers) }
+    };
+
+    let js_has_default_recipient = if cfg!(feature = "macros_encryption_feature") {
+        quote! {
+            let has_default_recipient = self.has_default_recipient;
+        }
+    } else {
+        quote! {}
+    };
+
+    let js_build_call_options = if cfg!(feature = "macros_encryption_feature") {
+        quote! { #build_call_options_fn(&default_headers, headers, has_default_recipient) }
+    } else {
+        quote! { #build_call_options_fn(&default_headers, headers) }
     };
 
     let exported_fn_ident = format_ident!("__napi_{}", fn_ident);
 
     let rust_method = quote! {
         #(#attrs)*
+        pub async fn #fn_with_headers_ident(
+            &self,
+            #with_headers_method_args
+        ) -> #nats_micro::napi::Result<#return_type, String> {
+            let options = #rust_build_call_options
+                .map_err(|error| #map_connect_error_fn(error).into_rust_napi_error())?;
+            let result = #rust_call
+                .map_err(|err| #map_client_error_fn::<#error_type>(err).into_rust_napi_error())?;
+            Ok(#response_map)
+        }
+
+        #(#attrs)*
         pub async fn #fn_ident(
             &self,
             #method_args
         ) -> #nats_micro::napi::Result<#return_type, String> {
-            let result = #rust_call
-                .map_err(|err| #map_client_error_fn::<#error_type>(err).into_rust_napi_error())?;
-            Ok(#response_map)
+            self.#fn_with_headers_ident(#wrapper_forward_args).await
         }
     };
 
@@ -611,14 +709,23 @@ fn render_method(
         pub fn #exported_fn_ident(
             &self,
             env: &Env,
-            #method_args
+            #with_headers_method_args
         ) -> #nats_micro::napi::Result<
             #nats_micro::napi::bindgen_prelude::PromiseRaw<'static, #return_type>
         > {
             let inner = self.inner.clone();
+            let default_headers = self.default_headers.clone();
+            #js_has_default_recipient
 
             let promise = env.spawn_future_with_callback(
-                async move { Ok(#js_call.map_err(#map_client_error_fn::<#error_type>)) },
+                async move {
+                    let result = match #js_build_call_options {
+                        Ok(options) => #js_call.map_err(#map_client_error_fn::<#error_type>),
+                        Err(error) => Err(#map_connect_error_fn(error)),
+                    };
+
+                    Ok(result)
+                },
                 move |env, result| match result {
                     Ok(value) => {
                         let result = value;
@@ -645,6 +752,8 @@ pub(crate) fn generate_client_napi_module(
     service_name: &str,
     endpoints: &[ClientEndpointSpec],
 ) -> TokenStream {
+    let client_base_name = client_error_base_name(service_name);
+    let header_name = header_type_name(service_name);
     let nats_micro = nats_micro_path();
     let rust_client_module = format_ident!("{}_client", service_name.to_snake_case());
     let rust_client_struct = format_ident!("{}Client", service_name.to_upper_camel_case());
@@ -656,6 +765,8 @@ pub(crate) fn generate_client_napi_module(
         format_ident!("__{}_generic_napi_error", service_name.to_snake_case());
     let map_connect_error_fn =
         format_ident!("__{}_connect_napi_error", service_name.to_snake_case());
+    let build_call_options_fn =
+        format_ident!("__{}_build_call_options", service_name.to_snake_case());
     let framework_and_transport_error_items =
         render_framework_and_transport_error_items(service_name, &nats_micro);
     let service_error_specs = collect_napi_service_error_specs(endpoints);
@@ -675,8 +786,10 @@ pub(crate) fn generate_client_napi_module(
             service_name,
             endpoint,
             &nats_micro,
+            &build_call_options_fn,
             &map_service_error_fn,
             &map_generic_error_fn,
+            &map_connect_error_fn,
         );
         if let Some(helper_struct) = helper_struct {
             helper_structs.push(helper_struct);
@@ -687,6 +800,20 @@ pub(crate) fn generate_client_napi_module(
 
     let connect_inner = if cfg!(feature = "macros_encryption_feature") {
         quote! {
+            let options = options.unwrap_or_default();
+            let has_default_recipient = options.recipient_public_key.is_some();
+            let default_headers = options
+                .headers
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .map(Into::into)
+                .collect::<Vec<#nats_micro::__napi::NapiClientHeaderValue>>();
+            let _ = #nats_micro::__napi::client_call_options_from_headers(
+                default_headers.clone(),
+                has_default_recipient,
+            )?;
+
             let #nats_micro::__napi::ConnectedClient {
                 client,
                 subject_prefix,
@@ -704,10 +831,24 @@ pub(crate) fn generate_client_napi_module(
                 inner = inner.with_recipient(recipient);
             }
 
-            Ok(Self { inner })
+            Ok(Self {
+                inner,
+                default_headers,
+                has_default_recipient,
+            })
         }
     } else {
         quote! {
+            let options = options.unwrap_or_default();
+            let default_headers = options
+                .headers
+                .clone()
+                .unwrap_or_default()
+                .into_iter()
+                .map(Into::into)
+                .collect::<Vec<#nats_micro::__napi::NapiClientHeaderValue>>();
+            let _ = #nats_micro::__napi::client_call_options_from_headers(default_headers.clone(), false)?;
+
             let #nats_micro::__napi::ConnectedClient {
                 client,
                 subject_prefix,
@@ -720,11 +861,81 @@ pub(crate) fn generate_client_napi_module(
                 None => #rust_client_module::#rust_client_struct::new(client),
             };
 
-            Ok(Self { inner })
+            Ok(Self {
+                inner,
+                default_headers,
+            })
         }
     };
 
     let (_, connect_options_name) = connect_options_names(service_name);
+
+    let build_call_options_args = if cfg!(feature = "macros_encryption_feature") {
+        quote! {
+            default_headers: &[#nats_micro::__napi::NapiClientHeaderValue],
+            headers: Option<Vec<#header_name>>,
+            has_default_recipient: bool,
+        }
+    } else {
+        quote! {
+            default_headers: &[#nats_micro::__napi::NapiClientHeaderValue],
+            headers: Option<Vec<#header_name>>,
+        }
+    };
+
+    let build_call_options_result = if cfg!(feature = "macros_encryption_feature") {
+        quote! {
+            #nats_micro::__napi::client_call_options_from_headers(merged, has_default_recipient)
+        }
+    } else {
+        quote! {
+            #nats_micro::__napi::client_call_options_from_headers(merged, false)
+        }
+    };
+
+    let wrapper_recipient_field = if cfg!(feature = "macros_encryption_feature") {
+        quote! {
+            has_default_recipient: bool,
+        }
+    } else {
+        quote! {}
+    };
+
+    let framework_error_attrs = {
+        let framework_enum_ident = format_ident!("{}FrameworkError", client_base_name);
+
+        let return_type = format!("err is {}", framework_enum_ident);
+        let return_type_lit = LitStr::new(&return_type, Span::call_site());
+
+        quote! {
+            #[#nats_micro::napi_derive::napi(js_name = "isFrameworkError", ts_return_type = #return_type_lit)]
+        }
+    };
+
+    let transport_error_attrs = {
+        let transport_enum_ident = format_ident!("{}TransportError", client_base_name);
+
+        let return_type = format!("err is {}", transport_enum_ident);
+        let return_type_lit = LitStr::new(&return_type, Span::call_site());
+
+        quote! {
+            #[#nats_micro::napi_derive::napi(
+                js_name = "isTransportError",
+                ts_return_type = #return_type_lit
+            )]
+        }
+    };
+
+    let service_error_attrs = {
+        let service_enum_ident = format_ident!("{}Error", client_base_name);
+
+        let return_type = format!("err is {}", service_enum_ident);
+        let return_type_lit = LitStr::new(&return_type, Span::call_site());
+
+        quote! {
+            #[#nats_micro::napi_derive::napi(js_name = "isServiceError", ts_return_type = #return_type_lit)]
+        }
+    };
 
     quote! {
         use #nats_micro::napi::Env;
@@ -734,6 +945,18 @@ pub(crate) fn generate_client_napi_module(
         #(#service_error_asserts)*
         #service_error_interface
         #(#helper_structs)*
+
+        fn #build_call_options_fn(
+            #build_call_options_args
+        ) -> ::std::result::Result<#nats_micro::ClientCallOptions, #nats_micro::NatsErrorResponse> {
+            let mut merged = default_headers.to_vec();
+
+            if let Some(headers) = headers {
+                merged.extend(headers.into_iter().map(Into::into));
+            }
+
+            #build_call_options_result
+        }
 
         fn #map_service_error_fn<E>(
             err: #nats_micro::ClientError<E>
@@ -777,21 +1000,34 @@ pub(crate) fn generate_client_napi_module(
         #[#nats_micro::napi_derive::napi(js_name = #js_client_name)]
         pub struct #wrapper_client_struct {
             inner: #rust_client_module::#rust_client_struct,
+            default_headers: Vec<#nats_micro::__napi::NapiClientHeaderValue>,
+            #wrapper_recipient_field
         }
 
         impl #wrapper_client_struct {
             async fn connect_inner(
                 server: String,
-                options: #connect_options_name,
+                options: Option<#connect_options_name>,
             ) -> ::std::result::Result<Self, #nats_micro::NatsErrorResponse> {
                 #connect_inner
+            }
+
+            pub fn set_headers(
+                &mut self,
+                headers: Option<Vec<#header_name>>,
+            ) {
+                self.default_headers = headers
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(Into::into)
+                    .collect();
             }
 
             pub async fn connect(
                 server: String,
                 options: Option<#connect_options_name>,
             ) -> #nats_micro::napi::Result<Self, String> {
-                Self::connect_inner(server, options.unwrap_or_default())
+                Self::connect_inner(server, options)
                     .await
                     .map_err(|error| #map_connect_error_fn(error).into_rust_napi_error())
             }
@@ -809,8 +1045,6 @@ pub(crate) fn generate_client_napi_module(
             ) -> #nats_micro::napi::Result<
                 #nats_micro::napi::bindgen_prelude::PromiseRaw<'static, #wrapper_client_struct>
             > {
-                let options = options.unwrap_or_default();
-
                 let promise = env.spawn_future_with_callback(
                     async move {
                         Ok(
@@ -831,6 +1065,38 @@ pub(crate) fn generate_client_napi_module(
                         #nats_micro::napi::bindgen_prelude::PromiseRaw<'static, #wrapper_client_struct>,
                     >(promise)
                 })
+            }
+
+            #[#nats_micro::napi_derive::napi(js_name = "setDefaultHeaders")]
+            pub fn __napi_set_headers(&mut self, headers: Option<Vec<#header_name>>) {
+                self.set_headers(headers);
+            }
+
+            #framework_error_attrs
+            pub fn __napi_is_framework_error(err: #nats_micro::serde_json::Value) -> bool {
+                if let Some(is_framework_error) = err.get("isFrameworkError") {
+                    return is_framework_error.as_bool() == Some(true);
+                }
+
+                false
+            }
+
+            #transport_error_attrs
+            pub fn __napi_is_transport_error(err: #nats_micro::serde_json::Value) -> bool {
+                  if let Some(is_transport_error) = err.get("isTransportError") {
+                      return is_transport_error.as_bool() == Some(true);
+                  }
+
+                  false
+            }
+
+            #service_error_attrs
+            pub fn __napi_is_service_error(err: #nats_micro::serde_json::Value) -> bool {
+                if let Some(is_service_error) = err.get("isServiceError") {
+                    return is_service_error.as_bool() == Some(true);
+                }
+
+                false
             }
 
             #(#js_methods)*

@@ -131,7 +131,7 @@ fn generated_napi_module_emits_service_error_interface() {
 
     assert!(expanded.contains("assert_napi_service_error :: < DemoDomainError >"));
     assert!(expanded.contains("assert_napi_service_error :: < AnotherDemoError >"));
-    assert!(expanded.contains("js_name = \"DemoServiceError\""));
+    assert!(expanded.contains("js_name = \"DemoClientError\""));
     assert!(expanded.contains("js_name = \"DemoClientFrameworkError\""));
     assert!(expanded.contains("js_name = \"DemoClientTransportError\""));
     assert!(expanded.contains("ts_type = \"true\""));
@@ -144,4 +144,61 @@ fn generated_napi_module_emits_service_error_interface() {
     assert!(expanded.contains("pub request_id : String"));
     assert!(expanded.contains("__demo_service_service_napi_error"));
     assert!(expanded.contains("__demo_service_generic_napi_error"));
+}
+
+#[test]
+fn generated_napi_module_supports_optional_call_headers() {
+    let service_ident = parse_quote!(DemoService);
+    let endpoints = vec![
+        endpoint_spec_for(
+            parse_quote! {
+                async fn health() -> Result<String, nats_micro::NatsErrorResponse> {
+                    Ok("ok".to_string())
+                }
+            },
+            "health",
+            None,
+        ),
+        endpoint_spec_for(
+            parse_quote! {
+                async fn get_profile(
+                    user_id: nats_micro::SubjectParam<String>,
+                ) -> Result<nats_micro::Json<UserProfile>, nats_micro::NatsErrorResponse> {
+                    let _ = user_id;
+                    Ok(nats_micro::Json(UserProfile))
+                }
+            },
+            "users.{user_id}.profile",
+            Some("accounts"),
+        ),
+        endpoint_spec_for(
+            parse_quote! {
+                async fn echo(
+                    payload: nats_micro::Payload<Vec<u8>>,
+                ) -> Result<Vec<u8>, nats_micro::NatsErrorResponse> {
+                    Ok(payload.0)
+                }
+            },
+            "echo",
+            Some("raw"),
+        ),
+    ];
+
+    let expanded =
+        generate_client_napi_module(&service_ident, "DemoService", &endpoints).to_string();
+
+    assert!(expanded.contains("pub struct DemoServiceClientHeader"));
+    assert!(expanded.contains("js_name = \"Header\""));
+    if cfg!(feature = "macros_encryption_feature") {
+        assert!(expanded.contains("encrypted"));
+    } else {
+        assert!(!expanded.contains("pub encrypted : bool"));
+        assert!(!expanded.contains("encrypted : value . encrypted"));
+    }
+    assert!(expanded.contains("headers"));
+    assert!(expanded.contains("pub async fn health_with_headers"));
+    assert!(expanded.contains("__napi_health"));
+    assert!(expanded.contains("__napi_get_profile"));
+    assert!(expanded.contains("DemoServiceGetProfileArgs"));
+    assert!(expanded.contains("js_name = \"setDefaultHeaders\""));
 }
