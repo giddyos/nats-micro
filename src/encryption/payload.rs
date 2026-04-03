@@ -1,6 +1,5 @@
+use super::{RESPONSE_PUB_KEY_NAME, ServiceKeyPair};
 use crate::{
-    encrypted_headers::{RESPONSE_PUB_KEY_NAME, decrypt_headers},
-    encryption::ServiceKeyPair,
     error::NatsErrorResponse,
     extractors::FromPayload,
     handler::RequestContext,
@@ -35,8 +34,13 @@ impl<T: FromPayload> FromPayload for Encrypted<T> {
         })?;
 
         let expected_eph_pub = ctx.ephemeral_pub.ok_or_else(|| {
-            NatsErrorResponse::framework(FrameworkError::DecryptFailed, format!("this endpoint only accepts encrypted requests with the ephemeral public key present in header '{}'", RESPONSE_PUB_KEY_NAME))
-                .with_request_id(ctx.request.request_id.clone())
+            NatsErrorResponse::framework(
+                FrameworkError::DecryptFailed,
+                format!(
+                    "this endpoint only accepts encrypted requests with the ephemeral public key present in header '{RESPONSE_PUB_KEY_NAME}'",
+                ),
+            )
+            .with_request_id(ctx.request.request_id.clone())
         })?;
 
         if ctx.request.payload.len() < 32 + 24 + 16 {

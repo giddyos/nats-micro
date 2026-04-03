@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 
-use crate::encryption::{EncryptionError, ServiceKeyPair};
+use super::{EncryptionError, ServiceKeyPair};
 use crate::request::Headers;
 
 pub(crate) const ENCRYPTED_HEADERS_NAME: &str = "x-encrypted-headers";
@@ -16,13 +16,13 @@ pub trait HeaderLookup {
 
 impl HeaderLookup for Headers {
     fn get_str(&self, key: &str) -> Option<&str> {
-        self.get(key).map(|value| value.as_str())
+        self.get(key).map(crate::request::Header::as_str)
     }
 }
 
 impl HeaderLookup for async_nats::HeaderMap {
     fn get_str(&self, key: &str) -> Option<&str> {
-        self.get(key).map(|value| value.as_str())
+        self.get(key).map(async_nats::HeaderValue::as_str)
     }
 }
 

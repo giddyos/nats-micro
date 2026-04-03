@@ -1,3 +1,8 @@
+mod headers;
+mod payload;
+
+use std::collections::HashMap;
+
 use base64::{Engine, engine::general_purpose::STANDARD};
 use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
@@ -6,13 +11,13 @@ use chacha20poly1305::{
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
-use std::collections::HashMap;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
-use crate::encrypted_headers::{
-    ENCRYPTED_HEADERS_NAME, RESPONSE_PUB_KEY_NAME, SIGNATURE_HEADER_NAME,
+pub(crate) use self::headers::{
+    ENCRYPTED_HEADERS_NAME, RESPONSE_PUB_KEY_NAME, SIGNATURE_HEADER_NAME, decode_response_pub_key,
 };
+pub use self::{headers::decrypt_headers, payload::Encrypted};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -362,7 +367,9 @@ impl RequestBuilder {
             );
         }
 
-        let encrypted_headers_value = if !self.encrypted_headers.is_empty() {
+        let encrypted_headers_value = if self.encrypted_headers.is_empty() {
+            None
+        } else {
             let map: HashMap<&str, &str> = self
                 .encrypted_headers
                 .iter()
@@ -375,11 +382,9 @@ impl RequestBuilder {
             let encoded = STANDARD.encode(&encrypted);
             headers.insert(ENCRYPTED_HEADERS_NAME, encoded.as_str());
             Some(encoded)
-        } else {
-            None
         };
 
-        let final_payload: Vec<u8> = if let Some(data) = &self.payload {
+        let final_payload = if let Some(data) = &self.payload {
             if self.encrypt_payload {
                 self.ctx.encrypt(data)?
             } else {
@@ -409,7 +414,7 @@ impl RequestBuilder {
         client
             .publish_with_headers(subject.into(), built.headers, built.payload)
             .await
-            .map_err(|e| EncryptionError::PublishFailed(e.to_string()))
+            .map_err(|error| EncryptionError::PublishFailed(error.to_string()))
     }
 
     pub async fn nats_request(
@@ -421,7 +426,7 @@ impl RequestBuilder {
         let msg = client
             .request_with_headers(subject.into(), built.headers, built.payload)
             .await
-            .map_err(|e| EncryptionError::RequestFailed(e.to_string()))?;
+            .map_err(|error| EncryptionError::RequestFailed(error.to_string()))?;
         Ok((msg, built.context))
     }
 }
