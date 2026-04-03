@@ -9,6 +9,8 @@ fn service_metadata_includes_prefix_when_present() {
             version: Some("1.0.0".to_string()),
             description: Some("test".to_string()),
             prefix: Some("api".to_string()),
+            #[cfg(feature = "macros_napi_feature")]
+            napi: false,
         },
         parse_quote! {
             struct DemoService;
@@ -18,6 +20,27 @@ fn service_metadata_includes_prefix_when_present() {
     let expanded = tokens.to_string();
     assert!(expanded.contains("ServiceMetadata :: new"));
     assert!(expanded.contains("Some (\"api\" . to_string ())"));
+}
+
+#[cfg(feature = "macros_napi_feature")]
+#[test]
+fn service_expansion_emits_napi_gate_module() {
+    let tokens = expand_service(
+        ServiceArgs {
+            name: Some("demo".to_string()),
+            version: Some("1.0.0".to_string()),
+            description: Some("test".to_string()),
+            prefix: None,
+            napi: true,
+        },
+        parse_quote! {
+            struct DemoService;
+        },
+    );
+
+    let expanded = tokens.to_string();
+    assert!(expanded.contains("__nats_micro_service_config_demo_service"));
+    assert!(expanded.contains("emit_napi_items"));
 }
 
 #[test]

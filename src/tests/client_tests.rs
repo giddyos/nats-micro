@@ -44,7 +44,10 @@ fn generated_client_uses_service_metadata_prefix() {
     assert!(expanded.contains("build_subject"));
     assert!(expanded.contains("self . prefix . as_deref ()"));
     if cfg!(feature = "macros_encryption_feature") {
-        assert!(expanded.contains("with_default_recipient (self . recipient . clone ())"));
+        assert!(expanded.contains("recipient : Option <"));
+        assert!(expanded.contains(
+            "Some (recipient) => options . with_default_recipient (recipient . clone ())"
+        ));
         assert!(!expanded.contains("# [cfg (feature = \"encryption\") ]"));
     }
     assert!(!expanded.contains("# [cfg (feature = \"macros_encryption_feature\") ]"));
