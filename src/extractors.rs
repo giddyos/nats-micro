@@ -1,6 +1,7 @@
 use std::{fmt::Display, future::Future, str::FromStr, sync::Arc};
 
 use bytes::Bytes;
+use nats_micro_shared::FrameworkError;
 
 use crate::{
     auth::{Auth, AuthError, FromAuthRequest},
@@ -32,10 +33,30 @@ pub trait FromPayload: Sized + Send + 'static {
 #[derive(Debug, Clone)]
 pub struct Payload<T>(pub T);
 
+impl<T> Payload<T> {
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+
+    pub fn as_inner(&self) -> &T {
+        &self.0
+    }
+
+    pub fn as_inner_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+
 impl<T> std::ops::Deref for Payload<T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl<T> std::ops::DerefMut for Payload<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 
@@ -48,6 +69,20 @@ impl<T: FromPayload> FromRequest for Payload<T> {
 #[derive(Debug, Clone)]
 pub struct Json<T>(pub T);
 
+impl<T> Json<T> {
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+
+    pub fn as_inner(&self) -> &T {
+        &self.0
+    }
+
+    pub fn as_inner_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+
 impl<T> std::ops::Deref for Json<T> {
     type Target = T;
 
@@ -56,11 +91,41 @@ impl<T> std::ops::Deref for Json<T> {
     }
 }
 
+impl<T> std::ops::DerefMut for Json<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Proto<T>(pub T);
 
+impl<T> Proto<T> {
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+
+    pub fn as_inner(&self) -> &T {
+        &self.0
+    }
+
+    pub fn as_inner_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+
 #[derive(Clone)]
 pub struct State<T>(pub Arc<T>);
+
+impl<T> State<T> {
+    pub fn into_inner(self) -> Arc<T> {
+        self.0
+    }
+
+    pub fn as_inner(&self) -> &T {
+        &self.0
+    }
+}
 
 impl<T> std::ops::Deref for State<T> {
     type Target = T;
@@ -77,8 +142,28 @@ impl<T> std::ops::Deref for Proto<T> {
     }
 }
 
+impl<T> std::ops::DerefMut for Proto<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SubjectParam<T>(pub T);
+
+impl<T> SubjectParam<T> {
+    pub fn into_inner(self) -> T {
+        self.0
+    }
+
+    pub fn as_inner(&self) -> &T {
+        &self.0
+    }
+
+    pub fn as_inner_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
 
 impl<T> std::ops::Deref for SubjectParam<T> {
     type Target = T;
@@ -87,8 +172,24 @@ impl<T> std::ops::Deref for SubjectParam<T> {
     }
 }
 
+impl<T> std::ops::DerefMut for SubjectParam<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct RequestId(pub String);
+
+impl RequestId {
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+
+    pub fn as_inner(&self) -> &str {
+        &self.0
+    }
+}
 
 impl std::ops::Deref for RequestId {
     type Target = str;
@@ -99,6 +200,16 @@ impl std::ops::Deref for RequestId {
 
 #[derive(Debug, Clone)]
 pub struct Subject(pub String);
+
+impl Subject {
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+
+    pub fn as_inner(&self) -> &str {
+        &self.0
+    }
+}
 
 impl std::ops::Deref for Subject {
     type Target = str;
@@ -134,8 +245,8 @@ impl FromRequest for Subject {
 impl FromRequest for ShutdownSignal {
     async fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
         ctx.shutdown_signal().ok_or_else(|| {
-            NatsErrorResponse::internal(
-                "SHUTDOWN_SIGNAL_UNAVAILABLE",
+            NatsErrorResponse::framework(
+                FrameworkError::ShutdownSignalUnavailable,
                 "shutdown signal extractor was requested but this handler was not registered with shutdown support",
             )
             .with_request_id(ctx.request.request_id.clone())
@@ -165,7 +276,7 @@ where
 {
     fn from_payload(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
         let value = crate::serde_json::from_slice::<T>(&ctx.request.payload).map_err(|e| {
-            NatsErrorResponse::bad_request("BAD_JSON", e.to_string())
+            NatsErrorResponse::framework(FrameworkError::BadJson, e.to_string())
                 .with_request_id(ctx.request.request_id.clone())
         })?;
         Ok(Json(value))
@@ -180,7 +291,7 @@ where
         T::decode(ctx.request.payload.clone())
             .map(Proto)
             .map_err(|e| {
-                NatsErrorResponse::bad_request("BAD_PROTOBUF", e.to_string())
+                NatsErrorResponse::framework(FrameworkError::BadProtobuf, e.to_string())
                     .with_request_id(ctx.request.request_id.clone())
             })
     }
@@ -201,7 +312,7 @@ impl FromPayload for Vec<u8> {
 impl FromPayload for String {
     fn from_payload(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
         String::from_utf8(ctx.request.payload.to_vec()).map_err(|e| {
-            NatsErrorResponse::bad_request("BAD_UTF8", e.to_string())
+            NatsErrorResponse::framework(FrameworkError::BadUtf8, e.to_string())
                 .with_request_id(ctx.request.request_id.clone())
         })
     }
@@ -213,8 +324,8 @@ where
 {
     async fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
         ctx.states.get::<T>().map(State).ok_or_else(|| {
-            NatsErrorResponse::internal(
-                "STATE_NOT_FOUND",
+            NatsErrorResponse::framework(
+                FrameworkError::StateNotFound,
                 format!("state `{}` was not registered", std::any::type_name::<T>()),
             )
             .with_request_id(ctx.request.request_id.clone())
@@ -279,16 +390,16 @@ where
 {
     async fn from_request(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
         let param_name = ctx.current_param_name.as_deref().ok_or_else(|| {
-            NatsErrorResponse::internal(
-                "PARAM_NAME_MISSING",
+            NatsErrorResponse::framework(
+                FrameworkError::ParamNameMissing,
                 "subject param extraction requires macro-generated param metadata",
             )
             .with_request_id(ctx.request.request_id.clone())
         })?;
 
         let template = ctx.subject_template.as_deref().ok_or_else(|| {
-            NatsErrorResponse::internal(
-                "SUBJECT_TEMPLATE_MISSING",
+            NatsErrorResponse::framework(
+                FrameworkError::SubjectTemplateMissing,
                 "subject param extraction requires macro-generated subject template",
             )
             .with_request_id(ctx.request.request_id.clone())
@@ -296,16 +407,16 @@ where
 
         let raw =
             extract_subject_param(template, &ctx.request.subject, param_name).ok_or_else(|| {
-                NatsErrorResponse::bad_request(
-                    "SUBJECT_PARAM_MISSING",
+                NatsErrorResponse::framework(
+                    FrameworkError::SubjectParamMissing,
                     format!("subject parameter `{param_name}` was not present"),
                 )
                 .with_request_id(ctx.request.request_id.clone())
             })?;
 
         let parsed = T::from_subject_param(&raw).map_err(|e| {
-            NatsErrorResponse::bad_request(
-                "SUBJECT_PARAM_INVALID",
+            NatsErrorResponse::framework(
+                FrameworkError::SubjectParamInvalid,
                 format!("failed to parse `{param_name}`: {e}"),
             )
             .with_request_id(ctx.request.request_id.clone())

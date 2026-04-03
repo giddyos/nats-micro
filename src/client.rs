@@ -1,5 +1,6 @@
 use async_nats::HeaderMap;
 use bytes::Bytes;
+use nats_micro_shared::{FrameworkError, TransportError as SharedTransportError};
 #[cfg(feature = "encryption")]
 use x25519_dalek::PublicKey;
 
@@ -61,8 +62,8 @@ impl ClientCallOptions {
         #[cfg(feature = "encryption")]
         if self.recipient.is_some() || !self.encrypted_headers.is_empty() {
             let recipient = self.recipient.ok_or_else(|| {
-                NatsErrorResponse::internal(
-                    "MISSING_RECIPIENT",
+                NatsErrorResponse::framework(
+                    FrameworkError::MissingRecipient,
                     "encrypted headers require a recipient",
                 )
             })?;
@@ -79,23 +80,26 @@ impl ClientCallOptions {
             }
             builder = builder.payload(payload.to_vec());
 
-            let (msg, _) = builder
-                .nats_request(subject)
-                .await
-                .map_err(|e| NatsErrorResponse::internal("NATS_REQUEST_FAILED", e.to_string()))?;
+            let (msg, _) = builder.nats_request(subject).await.map_err(|e| {
+                NatsErrorResponse::transport(SharedTransportError::NatsRequestFailed, e.to_string())
+            })?;
             return Ok(msg);
         }
 
         if self.plaintext_headers.is_empty() {
-            client
-                .request(subject, payload)
-                .await
-                .map_err(|e| NatsErrorResponse::internal("NATS_REQUEST_FAILED", e.to_string()))
+            client.request(subject, payload).await.map_err(|e| {
+                NatsErrorResponse::transport(SharedTransportError::NatsRequestFailed, e.to_string())
+            })
         } else {
             client
                 .request_with_headers(subject, self.plaintext_headers, payload)
                 .await
-                .map_err(|e| NatsErrorResponse::internal("NATS_REQUEST_FAILED", e.to_string()))
+                .map_err(|e| {
+                    NatsErrorResponse::transport(
+                        SharedTransportError::NatsRequestFailed,
+                        e.to_string(),
+                    )
+                })
         }
     }
 
@@ -115,8 +119,8 @@ impl ClientCallOptions {
     > {
         if self.recipient.is_some() || !self.encrypted_headers.is_empty() {
             let recipient = self.recipient.ok_or_else(|| {
-                NatsErrorResponse::internal(
-                    "MISSING_RECIPIENT",
+                NatsErrorResponse::framework(
+                    FrameworkError::MissingRecipient,
                     "encrypted headers require a recipient",
                 )
             })?;
@@ -133,23 +137,26 @@ impl ClientCallOptions {
             }
             builder = builder.payload(payload.to_vec());
 
-            let (msg, eph_ctx) = builder
-                .nats_request(subject)
-                .await
-                .map_err(|e| NatsErrorResponse::internal("NATS_REQUEST_FAILED", e.to_string()))?;
+            let (msg, eph_ctx) = builder.nats_request(subject).await.map_err(|e| {
+                NatsErrorResponse::transport(SharedTransportError::NatsRequestFailed, e.to_string())
+            })?;
             return Ok((msg, Some(eph_ctx)));
         }
 
         let msg = if self.plaintext_headers.is_empty() {
-            client
-                .request(subject, payload)
-                .await
-                .map_err(|e| NatsErrorResponse::internal("NATS_REQUEST_FAILED", e.to_string()))?
+            client.request(subject, payload).await.map_err(|e| {
+                NatsErrorResponse::transport(SharedTransportError::NatsRequestFailed, e.to_string())
+            })?
         } else {
             client
                 .request_with_headers(subject, self.plaintext_headers, payload)
                 .await
-                .map_err(|e| NatsErrorResponse::internal("NATS_REQUEST_FAILED", e.to_string()))?
+                .map_err(|e| {
+                    NatsErrorResponse::transport(
+                        SharedTransportError::NatsRequestFailed,
+                        e.to_string(),
+                    )
+                })?
         };
 
         Ok((msg, None))
@@ -163,8 +170,8 @@ impl ClientCallOptions {
         payload: Vec<u8>,
     ) -> Result<(async_nats::Message, crate::encryption::EphemeralContext), NatsErrorResponse> {
         let recipient = self.recipient.ok_or_else(|| {
-            NatsErrorResponse::internal(
-                "MISSING_RECIPIENT",
+            NatsErrorResponse::framework(
+                FrameworkError::MissingRecipient,
                 "encrypted payloads require a recipient",
             )
         })?;
@@ -181,10 +188,9 @@ impl ClientCallOptions {
         }
         builder = builder.encrypted_payload(payload);
 
-        let (msg, eph_ctx) = builder
-            .nats_request(subject)
-            .await
-            .map_err(|e| NatsErrorResponse::internal("NATS_REQUEST_FAILED", e.to_string()))?;
+        let (msg, eph_ctx) = builder.nats_request(subject).await.map_err(|e| {
+            NatsErrorResponse::transport(SharedTransportError::NatsRequestFailed, e.to_string())
+        })?;
         Ok((msg, eph_ctx))
     }
 }

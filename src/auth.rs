@@ -1,5 +1,6 @@
 use std::{future::Future, ops::Deref, sync::Arc};
 
+use nats_micro_shared::FrameworkError;
 use thiserror::Error;
 
 use crate::{error::NatsErrorResponse, handler::RequestContext};
@@ -20,18 +21,20 @@ impl crate::error::IntoNatsError for AuthError {
     fn into_nats_error(self, request_id: String) -> NatsErrorResponse {
         match self {
             AuthError::MissingCredentials => {
-                NatsErrorResponse::unauthorized("UNAUTHORIZED", "missing credentials")
+                NatsErrorResponse::framework(FrameworkError::Unauthorized, "missing credentials")
                     .with_request_id(request_id)
             }
             AuthError::InvalidCredentials => {
-                NatsErrorResponse::unauthorized("UNAUTHORIZED", "invalid credentials")
+                NatsErrorResponse::framework(FrameworkError::Unauthorized, "invalid credentials")
                     .with_request_id(request_id)
             }
             AuthError::Forbidden => {
-                NatsErrorResponse::forbidden("FORBIDDEN", "forbidden").with_request_id(request_id)
+                NatsErrorResponse::framework(FrameworkError::Forbidden, "forbidden")
+                    .with_request_id(request_id)
             }
             AuthError::Other(msg) => {
-                NatsErrorResponse::unauthorized("UNAUTHORIZED", msg).with_request_id(request_id)
+                NatsErrorResponse::framework(FrameworkError::Unauthorized, msg)
+                    .with_request_id(request_id)
             }
         }
     }

@@ -14,6 +14,8 @@ pub mod encryption;
 mod error;
 mod extractors;
 mod handler;
+#[cfg(feature = "napi")]
+mod napi_support;
 mod prelude;
 mod registry;
 mod request;
@@ -23,7 +25,12 @@ mod shutdown_signal;
 mod state;
 mod utils;
 
+pub use anyhow;
+pub use nats_micro_shared::{FrameworkError, TransportError};
+pub use thiserror;
+
 pub use app::{NatsApp, NatsAppConfig, WorkerFailurePolicy};
+// pub use async_nats;
 pub use async_nats;
 pub use async_nats::jetstream::consumer::push::Config as ConsumerConfig;
 pub use auth::{Auth, AuthError, FromAuthRequest};
@@ -37,6 +44,10 @@ pub use extractors::{
     SubjectParam,
 };
 pub use handler::{HandlerFn, RequestContext};
+#[cfg(feature = "napi")]
+pub use napi;
+#[cfg(feature = "napi")]
+pub use napi_derive;
 pub use prost;
 pub use request::{Header, Headers, NatsRequest};
 pub use response::{IntoNatsResponse, NatsResponse, X_SUCCESS_HEADER};
@@ -63,7 +74,52 @@ pub use encryption::{
 };
 
 pub use bytes::Bytes;
+#[cfg(feature = "napi")]
+pub use nats_micro_macros::object;
 pub use nats_micro_macros::{service, service_error, service_handlers};
+
+#[cfg(feature = "napi")]
+#[doc(hidden)]
+pub mod __private {
+    #[doc(hidden)]
+    pub trait NapiObject {}
+
+    #[doc(hidden)]
+    pub trait NapiServiceError {}
+
+    #[doc(hidden)]
+    #[inline(always)]
+    pub fn assert_napi_object<T: NapiObject>() {}
+
+    #[doc(hidden)]
+    #[inline(always)]
+    pub fn assert_napi_service_error<T: NapiServiceError>() {}
+
+    impl NapiObject for String {}
+    impl NapiObject for bool {}
+    impl NapiObject for i8 {}
+    impl NapiObject for i16 {}
+    impl NapiObject for i32 {}
+    impl NapiObject for i64 {}
+    impl NapiObject for isize {}
+    impl NapiObject for u8 {}
+    impl NapiObject for u16 {}
+    impl NapiObject for u32 {}
+    impl NapiObject for u64 {}
+    impl NapiObject for usize {}
+    impl NapiObject for f32 {}
+    impl NapiObject for f64 {}
+
+    impl<T: NapiObject> NapiObject for Option<T> {}
+    impl<T: NapiObject> NapiObject for Vec<T> {}
+}
+
+#[cfg(feature = "napi")]
+#[doc(hidden)]
+pub mod __napi {
+    pub use crate::error::NapiClientError;
+    pub use crate::napi_support::{ConnectedClient, NapiAuthOptions, NapiConnectOptions, connect};
+}
 
 #[doc(hidden)]
 pub mod __test_support {

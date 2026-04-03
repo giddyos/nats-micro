@@ -155,6 +155,10 @@ impl ServiceKeyPair {
         *self.public.as_bytes()
     }
 
+    pub fn public_key_base64(&self) -> String {
+        STANDARD.encode(self.public.as_bytes())
+    }
+
     pub fn from_private_bytes(bytes: [u8; 32]) -> Self {
         let secret = StaticSecret::from(bytes);
         let public = PublicKey::from(&secret);

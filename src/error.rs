@@ -2,10 +2,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
+use nats_micro_shared::{FrameworkError, TransportError as SharedTransportError};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NatsErrorResponse {
     pub code: u16,
-    pub error: String,
+    pub kind: String,
     pub message: String,
     pub request_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -15,13 +17,13 @@ pub struct NatsErrorResponse {
 impl NatsErrorResponse {
     pub fn new(
         code: u16,
-        error: impl Into<String>,
+        kind: impl Into<String>,
         message: impl Into<String>,
         request_id: impl Into<String>,
     ) -> Self {
         Self {
             code,
-            error: error.into(),
+            kind: kind.into(),
             message: message.into(),
             request_id: request_id.into(),
             details: None,
@@ -57,11 +59,19 @@ impl NatsErrorResponse {
     pub fn internal(error: impl Into<String>, message: impl Into<String>) -> Self {
         Self::new(500, error, message, "")
     }
+
+    pub fn framework(error: FrameworkError, message: impl Into<String>) -> Self {
+        Self::new(error.status_code(), error.as_code(), message, "")
+    }
+
+    pub fn transport(error: SharedTransportError, message: impl Into<String>) -> Self {
+        Self::new(error.status_code(), error.as_code(), message, "")
+    }
 }
 
 impl std::fmt::Display for NatsErrorResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{}] {}: {}", self.code, self.error, self.message)
+        write!(f, "[{}] {}: {}", self.code, self.kind, self.message)
     }
 }
 
@@ -103,6 +113,12 @@ impl FromNatsErrorResponse for anyhow::Error {
     }
 }
 
+impl FromNatsErrorResponse for () {
+    fn from_nats_error_response(response: NatsErrorResponse) -> ServiceErrorMatch<Self> {
+        ServiceErrorMatch::Untyped(response)
+    }
+}
+
 /// Captures the client-side failure mode separately from the remote service's
 /// business error space.
 ///
@@ -136,6 +152,121 @@ impl ClientTransportError {
     }
 }
 
+#[cfg(feature = "napi")]
+impl NatsErrorResponse {
+    pub fn into_rust_napi_error(self) -> crate::napi::Error<String> {
+        crate::napi::Error::new(self.kind, self.message)
+    }
+
+    fn into_napi_error_with_flag(
+        self,
+        env: crate::napi::Env,
+        flag_field: Option<&str>,
+    ) -> crate::napi::Error {
+        let Self {
+            code,
+            kind,
+            message,
+            request_id,
+            details,
+        } = self;
+        let fallback_message = message.clone();
+
+        (|| -> crate::napi::Result<crate::napi::Error> {
+            let mut error = env.create_error(crate::napi::Error::from_reason(message))?;
+            if let Some(flag_field) = flag_field {
+                error.set(flag_field, true)?;
+            }
+            error.set("code", kind.clone())?;
+            error.set("name", kind.clone())?;
+            error.set("kind", kind.clone())?;
+            error.set("statusCode", code)?;
+            error.set("requestId", request_id)?;
+            if let Some(details) = details {
+                error.set("details", details.to_string())?;
+            }
+
+            let unknown = crate::napi::bindgen_prelude::ToNapiValue::into_unknown(&error, &env)?;
+            Ok(crate::napi::Error::from(unknown))
+        })()
+        .unwrap_or_else(|_| crate::napi::Error::from_reason(fallback_message))
+    }
+
+    pub fn into_napi_error(self, env: crate::napi::Env) -> crate::napi::Error {
+        self.into_napi_error_with_flag(env, Some("isServiceError"))
+    }
+}
+
+#[cfg(feature = "napi")]
+fn is_transport_error_kind(kind: &str) -> bool {
+    SharedTransportError::from_code(kind).is_some()
+}
+
+#[cfg(feature = "napi")]
+fn is_framework_error_kind(kind: &str) -> bool {
+    FrameworkError::from_code(kind).is_some()
+}
+
+#[cfg(feature = "napi")]
+#[derive(Debug, Clone)]
+pub enum NapiClientError {
+    Service(NatsErrorResponse),
+    Framework(NatsErrorResponse),
+    Transport(NatsErrorResponse),
+    Generic(NatsErrorResponse),
+}
+
+#[cfg(feature = "napi")]
+impl NapiClientError {
+    pub fn service(response: NatsErrorResponse) -> Self {
+        Self::Service(response)
+    }
+
+    pub fn framework(response: NatsErrorResponse) -> Self {
+        Self::Framework(response)
+    }
+
+    pub fn transport(response: NatsErrorResponse) -> Self {
+        Self::Transport(response)
+    }
+
+    pub fn generic(response: NatsErrorResponse) -> Self {
+        Self::Generic(response)
+    }
+
+    pub fn from_response(response: NatsErrorResponse) -> Self {
+        if is_transport_error_kind(response.kind.as_str()) {
+            Self::Transport(response)
+        } else if is_framework_error_kind(response.kind.as_str()) {
+            Self::Framework(response)
+        } else {
+            Self::Generic(response)
+        }
+    }
+
+    pub fn into_rust_napi_error(self) -> crate::napi::Error<String> {
+        match self {
+            Self::Service(response)
+            | Self::Framework(response)
+            | Self::Transport(response)
+            | Self::Generic(response) => response.into_rust_napi_error(),
+        }
+    }
+
+    pub fn into_napi_error(self, env: crate::napi::Env) -> crate::napi::Error {
+        match self {
+            Self::Service(response) => response.into_napi_error(env),
+            Self::Framework(response) => {
+                response.into_napi_error_with_flag(env, Some("isFrameworkError"))
+            }
+            Self::Transport(response) => {
+                response.into_napi_error_with_flag(env, Some("isTransportError"))
+            }
+            Self::Generic(response) => response.into_napi_error_with_flag(env, None),
+        }
+    }
+}
+
 /// A generated client call can fail in only three ways:
 ///
 /// - the remote service returned a typed domain error
@@ -150,8 +281,11 @@ pub enum ClientError<E>
 where
     E: std::fmt::Debug + std::fmt::Display + 'static,
 {
-    #[error("{0}")]
-    Service(E),
+    #[error("{error}")]
+    Service {
+        error: E,
+        response: NatsErrorResponse,
+    },
     #[error("{0}")]
     ServiceResponse(NatsErrorResponse),
     #[error("{0}")]
@@ -166,8 +300,8 @@ where
     /// untyped protocol error. The conversion is total so callers never need a
     /// second fallback channel.
     pub fn from_service_response(response: NatsErrorResponse) -> Self {
-        match E::from_nats_error_response(response) {
-            ServiceErrorMatch::Typed(error) => Self::Service(error),
+        match E::from_nats_error_response(response.clone()) {
+            ServiceErrorMatch::Typed(error) => Self::Service { error, response },
             ServiceErrorMatch::Untyped(response) => Self::ServiceResponse(response),
         }
     }
@@ -194,9 +328,20 @@ where
 
     pub fn as_nats_error_response(&self) -> Option<&NatsErrorResponse> {
         match self {
-            Self::Service(_) => None,
-            Self::ServiceResponse(response) => Some(response),
+            Self::Service { response, .. } | Self::ServiceResponse(response) => Some(response),
             Self::Transport(error) => Some(error.as_nats_error_response()),
+        }
+    }
+}
+
+impl<E> ClientError<E>
+where
+    E: std::fmt::Debug + std::fmt::Display + 'static,
+{
+    pub fn into_nats_error_response(self) -> NatsErrorResponse {
+        match self {
+            Self::Service { response, .. } | Self::ServiceResponse(response) => response,
+            Self::Transport(error) => error.as_nats_error_response().clone(),
         }
     }
 }
@@ -211,13 +356,19 @@ impl IntoNatsError for NatsErrorResponse {
     }
 }
 
+impl IntoNatsError for String {
+    fn into_nats_error(self, request_id: String) -> NatsErrorResponse {
+        NatsErrorResponse::framework(FrameworkError::Error, self).with_request_id(request_id)
+    }
+}
+
 impl IntoNatsError for anyhow::Error {
     fn into_nats_error(self, request_id: String) -> NatsErrorResponse {
         // Preserve a safe, truncated error message in `details` to aid debugging
         // while avoiding leaking large or sensitive payloads.
         let msg = self.to_string();
         let trunc = if msg.len() > 200 { &msg[..200] } else { &msg };
-        NatsErrorResponse::internal("INTERNAL_ERROR", "an internal error occurred")
+        NatsErrorResponse::framework(FrameworkError::InternalError, "an internal error occurred")
             .with_details(Value::String(trunc.to_string()))
             .with_request_id(request_id)
     }
@@ -229,7 +380,7 @@ pub fn deserialize_error_response_payload(payload: &[u8]) -> Option<NatsErrorRes
 }
 
 pub fn invalid_response(message: impl Into<String>) -> NatsErrorResponse {
-    NatsErrorResponse::internal("INVALID_RESPONSE", message.into())
+    NatsErrorResponse::framework(FrameworkError::InvalidResponse, message.into())
 }
 
 pub fn deserialize_error_response<
@@ -262,11 +413,48 @@ impl IntoNatsError for AppError {
     fn into_nats_error(self, request_id: String) -> NatsErrorResponse {
         match self {
             AppError::Startup(msg) => {
-                NatsErrorResponse::internal("STARTUP_ERROR", msg).with_request_id(request_id)
+                NatsErrorResponse::transport(SharedTransportError::StartupError, msg)
+                    .with_request_id(request_id)
             }
             AppError::Transport(msg) => {
-                NatsErrorResponse::internal("TRANSPORT_ERROR", msg).with_request_id(request_id)
+                NatsErrorResponse::transport(SharedTransportError::TransportError, msg)
+                    .with_request_id(request_id)
             }
         }
+    }
+}
+
+#[cfg(all(test, feature = "napi"))]
+mod tests {
+    use super::{NapiClientError, NatsErrorResponse};
+    use nats_micro_shared::{FrameworkError, TransportError as SharedTransportError};
+
+    #[test]
+    fn napi_client_error_classifies_framework_responses() {
+        let response =
+            NatsErrorResponse::framework(FrameworkError::MissingRecipient, "recipient required");
+        assert!(matches!(
+            NapiClientError::from_response(response),
+            NapiClientError::Framework(_)
+        ));
+    }
+
+    #[test]
+    fn napi_client_error_classifies_transport_responses() {
+        let response =
+            NatsErrorResponse::transport(SharedTransportError::NatsRequestFailed, "request failed");
+        assert!(matches!(
+            NapiClientError::from_response(response),
+            NapiClientError::Transport(_)
+        ));
+    }
+
+    #[test]
+    fn napi_client_error_leaves_unknown_responses_generic() {
+        let response = NatsErrorResponse::internal("SOME_CUSTOM_KIND", "custom");
+        assert!(matches!(
+            NapiClientError::from_response(response),
+            NapiClientError::Generic(_)
+        ));
     }
 }
