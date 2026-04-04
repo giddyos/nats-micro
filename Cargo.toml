@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "nats-micro-macros",
+    "nats-micro",
+    "nats-micro-shared",
+]
+resolver = "2"
