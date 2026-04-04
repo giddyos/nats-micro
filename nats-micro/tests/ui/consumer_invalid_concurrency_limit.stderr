@@ -1,0 +1,5 @@
+error: Unknown value: `many`
+  --> tests/ui/consumer_invalid_concurrency_limit.rs:11:29
+   |
+11 |         concurrency_limit = "many"
+   |                             ^^^^^^

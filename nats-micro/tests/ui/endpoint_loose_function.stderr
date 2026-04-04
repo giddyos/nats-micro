@@ -1,0 +1,5 @@
+error: #[endpoint] may only be used on methods inside a #[service_handlers] impl block
+ --> tests/ui/endpoint_loose_function.rs:4:10
+  |
+4 | async fn loose_endpoint() -> Result<(), NatsErrorResponse> {
+  |          ^^^^^^^^^^^^^^

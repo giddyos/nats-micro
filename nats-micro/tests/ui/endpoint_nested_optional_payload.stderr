@@ -1,0 +1,5 @@
+error: `Payload<Option<T>>` does not support nested `Option` payloads
+  --> tests/ui/endpoint_nested_optional_payload.rs:12:33
+   |
+12 |         payload: Payload<Option<Option<String>>>,
+   |                                 ^^^^^^^^^^^^^^

@@ -1,0 +1,48 @@
+error[E0277]: the trait bound `MissingMarkerPayload: NapiObject` is not satisfied
+  --> tests/ui/service_napi_missing_object.rs:24:31
+   |
+24 |         payload: Payload<Json<MissingMarkerPayload>>,
+   |                               ^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `NapiObject` is not implemented for `MissingMarkerPayload`
+  --> tests/ui/service_napi_missing_object.rs:7:1
+   |
+ 7 | struct MissingMarkerPayload {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: the following other types implement trait `NapiObject`:
+             CreatedResponse
+             Vec<T>
+             bool
+             f32
+             f64
+             i16
+             i32
+             i64
+           and $N others
+note: required by a bound in `assert_napi_object`
+  --> src/lib.rs
+   |
+   |     pub fn assert_napi_object<T: NapiObject>() {}
+   |                                  ^^^^^^^^^^ required by this bound in `assert_napi_object`
+
+error[E0277]: the trait bound `MissingMarkerPayload: FromNapiValue` is not satisfied
+  --> tests/ui/service_napi_missing_object.rs:24:31
+   |
+24 |         payload: Payload<Json<MissingMarkerPayload>>,
+   |                               ^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `FromNapiValue` is not implemented for `MissingMarkerPayload`
+  --> tests/ui/service_napi_missing_object.rs:7:1
+   |
+ 7 | struct MissingMarkerPayload {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   = help: the following other types implement trait `FromNapiValue`:
+             &T
+             &[f32]
+             &[f64]
+             &[i16]
+             &[i32]
+             &[i8]
+             &[u16]
+             &[u32]
+           and $N others

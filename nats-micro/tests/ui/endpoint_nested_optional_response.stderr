@@ -1,0 +1,5 @@
+error: optional responses do not support nested `Option` types
+  --> tests/ui/endpoint_nested_optional_response.rs:11:48
+   |
+11 |     async fn maybe_response() -> Result<Option<Option<String>>, NatsErrorResponse> {
+   |                                                ^^^^^^^^^^^^^^
