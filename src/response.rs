@@ -98,8 +98,11 @@ where
     fn into_response(self, ctx: &RequestContext) -> Result<NatsResponse, NatsErrorResponse> {
         crate::serde_json::to_vec(&self.0)
             .map_err(|e| {
-                NatsErrorResponse::framework(FrameworkError::SerializationError, e.to_string())
-                    .with_request_id(ctx.request.request_id.clone())
+                NatsErrorResponse::framework(
+                    FrameworkError::SerializationError,
+                    format!("failed to serialize the response payload as JSON: {e}"),
+                )
+                .with_request_id(ctx.request.request_id.clone())
             })
             .map(NatsResponse::new)
     }
@@ -112,8 +115,11 @@ where
     fn into_response(self, ctx: &RequestContext) -> Result<NatsResponse, NatsErrorResponse> {
         let mut buf = Vec::new();
         self.0.encode(&mut buf).map_err(|e| {
-            NatsErrorResponse::framework(FrameworkError::SerializationError, e.to_string())
-                .with_request_id(ctx.request.request_id.clone())
+            NatsErrorResponse::framework(
+                FrameworkError::SerializationError,
+                format!("failed to encode the response payload as protobuf: {e}"),
+            )
+            .with_request_id(ctx.request.request_id.clone())
         })?;
         Ok(NatsResponse::new(buf))
     }
@@ -147,7 +153,9 @@ pub fn response_success_from_headers<
         Err(crate::ClientError::invalid_response(
             NatsErrorResponse::framework(
                 FrameworkError::InvalidResponse,
-                format!("invalid {X_SUCCESS_HEADER} header value: {value}"),
+                format!(
+                    "invalid header `{X_SUCCESS_HEADER}` value `{value}`; expected `true` or `false`"
+                ),
             ),
         ))
     }
@@ -180,7 +188,9 @@ pub fn optional_response_from_headers<
         Err(crate::ClientError::invalid_response(
             NatsErrorResponse::framework(
                 FrameworkError::InvalidResponse,
-                format!("invalid {X_OPTIONAL_RESPONSE_HEADER} header value: {value}"),
+                format!(
+                    "invalid header `{X_OPTIONAL_RESPONSE_HEADER}` value `{value}`; expected `true` or `false`"
+                ),
             ),
         ))
     }
@@ -217,7 +227,7 @@ pub fn deserialize_response<
             return crate::serde_json::from_slice(payload).map_err(|error| {
                 crate::ClientError::deserialize(crate::NatsErrorResponse::framework(
                     FrameworkError::DeserializationError,
-                    error.to_string(),
+                    format!("failed to decode a successful response payload as JSON: {error}"),
                 ))
             });
         }
@@ -237,7 +247,7 @@ pub fn deserialize_response<
                 Err(crate::ClientError::deserialize(
                     crate::NatsErrorResponse::framework(
                         FrameworkError::DeserializationError,
-                        error.to_string(),
+                        format!("failed to decode the response payload as JSON: {error}"),
                     ),
                 ))
             }
@@ -288,7 +298,7 @@ pub fn deserialize_proto_response<
             return T::decode(payload).map_err(|error| {
                 crate::ClientError::deserialize(crate::NatsErrorResponse::framework(
                     FrameworkError::DeserializationError,
-                    error.to_string(),
+                    format!("failed to decode a successful response payload as protobuf: {error}"),
                 ))
             });
         }
@@ -308,7 +318,7 @@ pub fn deserialize_proto_response<
                 Err(crate::ClientError::deserialize(
                     crate::NatsErrorResponse::framework(
                         FrameworkError::DeserializationError,
-                        error.to_string(),
+                        format!("failed to decode the response payload as protobuf: {error}"),
                     ),
                 ))
             }
@@ -361,7 +371,11 @@ pub fn deserialize_unit_response<
             return Err(crate::ClientError::invalid_response(
                 NatsErrorResponse::framework(
                     FrameworkError::InvalidResponse,
-                    "expected empty response payload when x-success=true",
+                    format!(
+                        "expected an empty response payload when `{}`=true, but received {} byte(s)",
+                        crate::X_SUCCESS_HEADER,
+                        payload.len()
+                    ),
                 ),
             ));
         }
@@ -380,8 +394,11 @@ pub fn deserialize_unit_response<
     }
     Err(crate::ClientError::invalid_response(
         crate::NatsErrorResponse::framework(
-            FrameworkError::DeserializationError,
-            "expected empty response payload",
+            FrameworkError::InvalidResponse,
+            format!(
+                "expected an empty response payload, but received {} byte(s)",
+                payload.len()
+            ),
         ),
     ))
 }
@@ -438,7 +455,7 @@ pub fn raw_response_to_string<
     String::from_utf8(payload.to_vec()).map_err(|error| {
         crate::ClientError::deserialize(crate::NatsErrorResponse::framework(
             FrameworkError::DeserializationError,
-            error.to_string(),
+            format!("failed to decode the response payload as UTF-8 text: {error}"),
         ))
     })
 }
@@ -540,7 +557,7 @@ pub fn decrypt_client_response<
             return eph_ctx.decrypt_response(payload).map_err(|error| {
                 crate::ClientError::decrypt(crate::NatsErrorResponse::framework(
                     FrameworkError::DecryptError,
-                    error.to_string(),
+                    format!("failed to decrypt the successful response payload: {error}"),
                 ))
             });
         }
@@ -556,7 +573,7 @@ pub fn decrypt_client_response<
                 Err(crate::ClientError::decrypt(
                     crate::NatsErrorResponse::framework(
                         FrameworkError::DecryptError,
-                        error.to_string(),
+                        format!("failed to decrypt the response payload: {error}"),
                     ),
                 ))
             }
@@ -575,7 +592,10 @@ pub fn serialize_serde_payload<T: crate::serde::Serialize>(
     crate::serde_json::to_vec(payload)
         .map(::bytes::Bytes::from)
         .map_err(|e| {
-            crate::NatsErrorResponse::framework(FrameworkError::SerializationError, e.to_string())
+            crate::NatsErrorResponse::framework(
+                FrameworkError::SerializationError,
+                format!("failed to serialize the request payload as JSON: {e}"),
+            )
         })
 }
 
@@ -589,7 +609,10 @@ pub fn serialize_proto_payload<T: crate::prost::Message>(
 ) -> Result<::bytes::Bytes, crate::NatsErrorResponse> {
     let mut buf = Vec::new();
     payload.encode(&mut buf).map_err(|e| {
-        crate::NatsErrorResponse::framework(FrameworkError::SerializationError, e.to_string())
+        crate::NatsErrorResponse::framework(
+            FrameworkError::SerializationError,
+            format!("failed to encode the request payload as protobuf: {e}"),
+        )
     })?;
     Ok(::bytes::Bytes::from(buf))
 }

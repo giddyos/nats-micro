@@ -27,7 +27,7 @@ pub(super) fn prepare_request_for_dispatch_with_state(
         let response_pub_key = decode_response_pub_key(&req.headers).map_err(|error| {
             NatsErrorResponse::framework(
                 FrameworkError::DecryptFailed,
-                format!("failed to decode ephemeral public key from headers: {error}"),
+                format!("failed to decode header `{RESPONSE_PUB_KEY_NAME}`: {error}"),
             )
             .with_request_id(req.request_id.clone())
         })?;
@@ -36,7 +36,7 @@ pub(super) fn prepare_request_for_dispatch_with_state(
             let keypair = state.get::<ServiceKeyPair>().ok_or_else(|| {
                 NatsErrorResponse::framework(
                     FrameworkError::DecryptFailed,
-                    "service encryption key not configured",
+                    "The service is configured to accept encrypted requests, but no service encryption key was registered.",
                 )
                 .with_request_id(req.request_id.clone())
             })?;
@@ -46,16 +46,20 @@ pub(super) fn prepare_request_for_dispatch_with_state(
             let sig_header = req.headers.get(SIGNATURE_HEADER_NAME).ok_or_else(|| {
                 NatsErrorResponse::framework(
                     FrameworkError::SignatureMissing,
-                    "x-signature header is required when x-ephemeral-pub-key is present",
+                    format!(
+                        "Header `{SIGNATURE_HEADER_NAME}` is required when `{RESPONSE_PUB_KEY_NAME}` is present."
+                    ),
                 )
                 .with_request_id(req.request_id.clone())
             })?;
             let signature = STANDARD
                 .decode(sig_header.as_str().as_bytes())
-                .map_err(|_| {
+                .map_err(|error| {
                     NatsErrorResponse::framework(
                         FrameworkError::SignatureInvalid,
-                        "invalid signature encoding",
+                        format!(
+                            "failed to decode header `{SIGNATURE_HEADER_NAME}` as base64: {error}"
+                        ),
                     )
                     .with_request_id(req.request_id.clone())
                 })?;
@@ -66,7 +70,7 @@ pub(super) fn prepare_request_for_dispatch_with_state(
             verify_signature(&shared_key, &req.payload, enc_hdr_val, &signature).map_err(|_| {
                 NatsErrorResponse::framework(
                     FrameworkError::SignatureInvalid,
-                    "Request signature verification failed. Please ensure that the service public key is correct.",
+                    "request signature verification failed; verify that the client used the correct service public key.",
                 )
                 .with_request_id(req.request_id.clone())
             })?;
@@ -75,7 +79,7 @@ pub(super) fn prepare_request_for_dispatch_with_state(
                 decrypt_headers(&req.headers, &shared_key).map_err(|error| {
                     NatsErrorResponse::framework(
                         FrameworkError::DecryptFailed,
-                        format!("failed to decrypt the request headers: {error}"),
+                        format!("failed to decrypt the encrypted request headers: {error}"),
                     )
                     .with_request_id(req.request_id.clone())
                 })?

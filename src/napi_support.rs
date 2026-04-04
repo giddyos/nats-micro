@@ -95,7 +95,7 @@ where
                 if !has_recipient {
                     return Err(framework_error(
                         FrameworkError::MissingRecipientPubkey,
-                        "encrypted headers require recipientPublicKey in the NAPI client connect options",
+                        "Encrypted headers require recipientPublicKey in the N-API client connect options.",
                     ));
                 }
 
@@ -107,7 +107,9 @@ where
             {
                 return Err(framework_error(
                     FrameworkError::EncryptRequired,
-                    format!("encrypted header '{name}' requires the nats-micro encryption feature"),
+                    format!(
+                        "Header `{name}` is marked as encrypted, but this nats-micro build does not enable the `encryption` feature."
+                    ),
                 ));
             }
         }
@@ -137,7 +139,7 @@ fn apply_auth(
     if modes > 1 {
         return Err(framework_error(
             FrameworkError::AuthModeConflict,
-            "choose only one auth mode: token, username/password, or nkey",
+            "Choose exactly one authentication mode: token, username/password, or nkey.",
         ));
     }
 
@@ -149,13 +151,13 @@ fn apply_auth(
         let username = username.ok_or_else(|| {
             framework_error(
                 FrameworkError::AuthUsernameRequired,
-                "username is required when password is provided",
+                "username is required when password is provided.",
             )
         })?;
         let password = password.ok_or_else(|| {
             framework_error(
                 FrameworkError::AuthPasswordRequired,
-                "password is required when username is provided",
+                "password is required when username is provided.",
             )
         })?;
         options = options.user_and_password(username, password);
@@ -164,7 +166,7 @@ fn apply_auth(
     if nkey.is_some() {
         return Err(framework_error(
             FrameworkError::AuthNkeyUnsupported,
-            "nkey auth is not enabled for this nats-micro build",
+            "NKey authentication is not enabled in this nats-micro build.",
         ));
     }
 
@@ -179,10 +181,13 @@ fn parse_recipient_public_key(
         return Ok(None);
     };
 
+    let actual_len = recipient_public_key.len();
     let public_key: [u8; 32] = recipient_public_key.try_into().map_err(|_| {
         framework_error(
             FrameworkError::MissingRecipientPubkey,
-            "recipient_public_key must contain exactly 32 bytes",
+            format!(
+                "recipient_public_key must contain exactly 32 bytes, but received {actual_len}."
+            ),
         )
     })?;
 
@@ -255,7 +260,7 @@ fn apply_tls_connect_options(
         _ => {
             return Err(framework_error(
                 FrameworkError::ClientCertKeyMismatch,
-                "client_cert and client_key must be provided together",
+                "TLS client authentication requires both client_cert and client_key.",
             ));
         }
     }
@@ -388,10 +393,12 @@ pub async fn connect(
         read_buffer_capacity,
     );
 
-    let client = options
-        .connect(server)
-        .await
-        .map_err(|error| framework_error(FrameworkError::ClientConnectFailed, error.to_string()))?;
+    let client = options.connect(server.clone()).await.map_err(|error| {
+        framework_error(
+            FrameworkError::ClientConnectFailed,
+            format!("failed to connect to NATS server `{server}`: {error}"),
+        )
+    })?;
 
     Ok(ConnectedClient {
         client,

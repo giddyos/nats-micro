@@ -203,7 +203,7 @@ pub(super) async fn run_endpoint_worker(
             }
             permit_result = semaphore.clone().acquire_owned() => match permit_result {
                 Ok(permit) => permit,
-                Err(_) => break Err(anyhow::anyhow!("endpoint semaphore closed unexpectedly")),
+                Err(_) => break Err(anyhow::anyhow!("the endpoint worker semaphore closed unexpectedly")),
             },
         };
 
@@ -223,7 +223,9 @@ pub(super) async fn run_endpoint_worker(
 
         let Some(raw_req) = raw_req else {
             drop(permit);
-            break Err(anyhow::anyhow!("endpoint subscription ended unexpectedly"));
+            break Err(anyhow::anyhow!(
+                "the endpoint subscription stream ended unexpectedly"
+            ));
         };
 
         let app = app.clone();
@@ -473,7 +475,7 @@ pub(super) async fn run_consumer_worker(
             }
             permit_result = semaphore.clone().acquire_owned() => match permit_result {
                 Ok(permit) => permit,
-                Err(_) => break Err(anyhow::anyhow!("consumer semaphore closed unexpectedly")),
+                Err(_) => break Err(anyhow::anyhow!("the consumer worker semaphore closed unexpectedly")),
             },
         };
 
@@ -493,7 +495,7 @@ pub(super) async fn run_consumer_worker(
         let Some(message) = message else {
             drop(permit);
             break Err(anyhow::anyhow!(
-                "consumer message stream ended unexpectedly"
+                "the consumer message stream ended unexpectedly"
             ));
         };
 

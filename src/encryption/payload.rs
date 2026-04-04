@@ -28,7 +28,7 @@ impl<T: FromPayload> FromPayload for Encrypted<T> {
         let keypair = ctx.states.get::<ServiceKeyPair>().ok_or_else(|| {
             NatsErrorResponse::framework(
                 FrameworkError::NoEncryptionKey,
-                "no encryption key registered",
+                "No service encryption key was registered for this endpoint.",
             )
             .with_request_id(ctx.request.request_id.clone())
         })?;
@@ -37,7 +37,7 @@ impl<T: FromPayload> FromPayload for Encrypted<T> {
             NatsErrorResponse::framework(
                 FrameworkError::DecryptFailed,
                 format!(
-                    "this endpoint only accepts encrypted requests with the ephemeral public key present in header '{RESPONSE_PUB_KEY_NAME}'",
+                    "This endpoint accepts only encrypted requests. Header `{RESPONSE_PUB_KEY_NAME}` must contain the request's ephemeral public key.",
                 ),
             )
             .with_request_id(ctx.request.request_id.clone())
@@ -46,7 +46,11 @@ impl<T: FromPayload> FromPayload for Encrypted<T> {
         if ctx.request.payload.len() < 32 + 24 + 16 {
             return Err(NatsErrorResponse::framework(
                 FrameworkError::DecryptFailed,
-                "payload too short",
+                format!(
+                    "encrypted payload is too short: expected at least {} bytes, but received {}",
+                    32 + 24 + 16,
+                    ctx.request.payload.len()
+                ),
             )
             .with_request_id(ctx.request.request_id.clone()));
         }
@@ -57,7 +61,7 @@ impl<T: FromPayload> FromPayload for Encrypted<T> {
         if expected_eph_pub != eph_pub {
             return Err(NatsErrorResponse::framework(
                 FrameworkError::DecryptFailed,
-                "multiple ephemeral keys detected; only a single key should be used to encrypt both headers and payload",
+                "The encrypted headers and payload used different ephemeral keys; both must use the same key.",
             )
             .with_request_id(ctx.request.request_id.clone()));
         }
@@ -68,7 +72,7 @@ impl<T: FromPayload> FromPayload for Encrypted<T> {
             .map_err(|error| {
                 NatsErrorResponse::framework(
                     FrameworkError::DecryptFailed,
-                    format!("payload decryption failed: {error}"),
+                    format!("failed to decrypt the encrypted request payload: {error}"),
                 )
                 .with_request_id(ctx.request.request_id.clone())
             })?;
@@ -87,7 +91,7 @@ impl<T: IntoNatsResponse> IntoNatsResponse for Encrypted<T> {
         let eph_pub = ctx.ephemeral_pub.ok_or_else(|| {
             NatsErrorResponse::framework(
                 FrameworkError::EncryptRequired,
-                "Encrypted<T> response requires the request to have been encrypted",
+                "Encrypted<T> responses can be returned only for encrypted requests.",
             )
             .with_request_id(ctx.request.request_id.clone())
         })?;
@@ -95,17 +99,17 @@ impl<T: IntoNatsResponse> IntoNatsResponse for Encrypted<T> {
         let keypair = ctx.states.get::<ServiceKeyPair>().ok_or_else(|| {
             NatsErrorResponse::framework(
                 FrameworkError::NoEncryptionKey,
-                "no encryption key registered",
+                "No service encryption key was registered for this endpoint.",
             )
             .with_request_id(ctx.request.request_id.clone())
         })?;
 
         let ciphertext = keypair
             .encrypt_response(&plain.payload, &eph_pub)
-            .map_err(|_| {
+            .map_err(|error| {
                 NatsErrorResponse::framework(
                     FrameworkError::EncryptFailed,
-                    "response encryption failed",
+                    format!("failed to encrypt the response payload: {error}"),
                 )
                 .with_request_id(ctx.request.request_id.clone())
             })?;
@@ -119,11 +123,5 @@ impl<T> std::ops::Deref for Encrypted<T> {
 
     fn deref(&self) -> &Self::Target {
         &self.0
-    }
-}
-
-impl<T> std::ops::DerefMut for Encrypted<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
     }
 }

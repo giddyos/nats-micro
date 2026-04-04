@@ -31,23 +31,25 @@ const MIN_RESPONSE_ENVELOPE: usize = NONCE_LEN + TAG_LEN;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EncryptionError {
-    #[error("{context}: decryption failed")]
+    #[error("failed to decrypt data while {context}")]
     DecryptFailed { context: &'static str },
-    #[error("{context}: ciphertext too short (expected at least {expected} bytes, got {actual})")]
+    #[error(
+        "data was too short while {context} (expected at least {expected} bytes, got {actual})"
+    )]
     TooShort {
         context: &'static str,
         expected: usize,
         actual: usize,
     },
-    #[error("{context}: encryption failed")]
+    #[error("failed to encrypt data while {context}")]
     EncryptFailed { context: &'static str },
-    #[error("invalid signature")]
+    #[error("the signature is invalid")]
     SignatureInvalid,
-    #[error("no NATS client configured on ServiceRecipient")]
+    #[error("no NATS client is configured on ServiceRecipient")]
     NoClient,
-    #[error("NATS publish failed: {0}")]
+    #[error("failed to publish the NATS message: {0}")]
     PublishFailed(String),
-    #[error("NATS request failed: {0}")]
+    #[error("failed to send the NATS request: {0}")]
     RequestFailed(String),
 }
 

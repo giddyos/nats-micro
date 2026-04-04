@@ -171,11 +171,13 @@ fn prepare_request_for_dispatch_rejects_headers_for_wrong_service() {
     )
     .expect_err("wrong service key should fail");
 
-    assert_eq!(err.code, 400);
+    assert_eq!(err.code, 401);
     assert_eq!(err.kind, "SIGNATURE_INVALID");
-    assert_eq!(
+    assert!(
+        err.message
+            .contains("request signature verification failed"),
+        "unexpected error message: {}",
         err.message,
-        "Request signature verification failed. Please ensure that the service public key is correct."
     );
     assert_eq!(err.request_id, "req-header-only");
 }
@@ -203,7 +205,7 @@ fn tampered_payload_fails_signature_verification() {
     )
     .expect_err("tampered payload should fail");
 
-    assert_eq!(err.code, 400);
+    assert_eq!(err.code, 401);
     assert_eq!(err.kind, "SIGNATURE_INVALID");
 }
 
@@ -235,7 +237,7 @@ fn missing_signature_fails_when_eph_pub_key_present() {
     )
     .expect_err("missing signature should fail");
 
-    assert_eq!(err.code, 400);
+    assert_eq!(err.code, 401);
     assert_eq!(err.kind, "SIGNATURE_MISSING");
 }
 
@@ -256,7 +258,7 @@ fn invalid_ephemeral_public_key_encoding_fails_fast() {
     assert_eq!(err.kind, "DECRYPT_FAILED");
     assert!(
         err.message
-            .contains("failed to decode ephemeral public key")
+            .contains("failed to decode header `x-ephemeral-pub-key`")
     );
 }
 
@@ -280,9 +282,14 @@ fn invalid_signature_encoding_is_rejected() {
     )
     .expect_err("invalid signature encoding should fail");
 
-    assert_eq!(err.code, 400);
+    assert_eq!(err.code, 401);
     assert_eq!(err.kind, "SIGNATURE_INVALID");
-    assert_eq!(err.message, "invalid signature encoding");
+    assert!(
+        err.message
+            .contains("failed to decode header `x-signature` as base64"),
+        "unexpected error message: {}",
+        err.message,
+    );
 }
 
 #[test]
@@ -393,7 +400,7 @@ fn encrypted_payload_rejects_mismatched_header_ephemeral_key() {
     )
     .expect_err("mismatched payload should fail signature");
 
-    assert_eq!(err.code, 400);
+    assert_eq!(err.code, 401);
     assert_eq!(err.kind, "SIGNATURE_INVALID");
 }
 

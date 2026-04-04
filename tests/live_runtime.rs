@@ -969,7 +969,11 @@ async fn live_generated_napi_client_connect_surfaces_auth_mode_conflict() -> Res
     };
 
     assert_eq!(error.status, "AUTH_MODE_CONFLICT");
-    assert!(error.reason.contains("choose only one auth mode"));
+    assert!(
+        error
+            .reason
+            .contains("Choose exactly one authentication mode")
+    );
 
     Ok(())
 }

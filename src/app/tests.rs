@@ -104,7 +104,7 @@ fn app_config_rejects_zero_default_concurrency_limit() {
         .validate()
         .unwrap_err();
 
-    assert!(err.to_string().contains("greater than zero"));
+    assert!(err.to_string().contains("greater than 0"));
 }
 
 #[tokio::test]

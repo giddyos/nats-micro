@@ -132,7 +132,7 @@ impl NatsApp {
 
         if self.service_defs.is_empty() {
             anyhow::bail!(
-                "NatsApp requires at least one explicit service via .service(...) or .service_def(...)"
+                "NatsApp cannot start without at least one service. Call .service(...) or .service_def(...) before run()."
             );
         }
 
@@ -186,7 +186,7 @@ impl NatsApp {
                 worker_exit = worker_events_rx.recv(), if active_workers > 0 => {
                     let Some(worker_exit) = worker_exit else {
                         break (
-                            Err(anyhow::anyhow!("worker supervision channel closed unexpectedly")),
+                            Err(anyhow::anyhow!("the worker supervision channel closed unexpectedly")),
                             true,
                         );
                     };
@@ -293,7 +293,11 @@ impl NatsApp {
             .description(service_description)
             .start(service_name.clone(), service_version.clone())
             .await
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "failed to start NATS service `{service_name}` v{service_version}: {e}"
+                )
+            })?;
 
         info!(
             service = %service_name,
@@ -345,7 +349,11 @@ impl NatsApp {
             let ep = endpoint_builder
                 .add(endpoint_full_subject.clone())
                 .await
-                .map_err(|e| anyhow::anyhow!("{e}"))?;
+                .map_err(|e| {
+                    anyhow::anyhow!(
+                        "failed to register endpoint `{endpoint_full_subject}` for service `{endpoint_service_name}`: {e}"
+                    )
+                })?;
 
             info!(
                 service = %endpoint_service_name,

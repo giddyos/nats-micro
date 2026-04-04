@@ -7,35 +7,39 @@ use crate::{error::NatsErrorResponse, handler::RequestContext};
 
 #[derive(Debug, Error, Clone)]
 pub enum AuthError {
-    #[error("missing credentials")]
+    #[error("authentication credentials were not provided")]
     MissingCredentials,
-    #[error("invalid credentials")]
+    #[error("authentication credentials are invalid")]
     InvalidCredentials,
-    #[error("forbidden")]
+    #[error("access to this resource is forbidden")]
     Forbidden,
-    #[error("auth error: {0}")]
+    #[error("authentication failed: {0}")]
     Other(String),
 }
 
 impl crate::error::IntoNatsError for AuthError {
     fn into_nats_error(self, request_id: String) -> NatsErrorResponse {
         match self {
-            AuthError::MissingCredentials => {
-                NatsErrorResponse::framework(FrameworkError::Unauthorized, "missing credentials")
-                    .with_request_id(request_id)
-            }
-            AuthError::InvalidCredentials => {
-                NatsErrorResponse::framework(FrameworkError::Unauthorized, "invalid credentials")
-                    .with_request_id(request_id)
-            }
-            AuthError::Forbidden => {
-                NatsErrorResponse::framework(FrameworkError::Forbidden, "forbidden")
-                    .with_request_id(request_id)
-            }
-            AuthError::Other(msg) => {
-                NatsErrorResponse::framework(FrameworkError::Unauthorized, msg)
-                    .with_request_id(request_id)
-            }
+            AuthError::MissingCredentials => NatsErrorResponse::framework(
+                FrameworkError::Unauthorized,
+                "Authentication credentials were not provided.",
+            )
+            .with_request_id(request_id),
+            AuthError::InvalidCredentials => NatsErrorResponse::framework(
+                FrameworkError::Unauthorized,
+                "Authentication credentials are invalid.",
+            )
+            .with_request_id(request_id),
+            AuthError::Forbidden => NatsErrorResponse::framework(
+                FrameworkError::Forbidden,
+                "The authenticated caller does not have permission to access this resource.",
+            )
+            .with_request_id(request_id),
+            AuthError::Other(msg) => NatsErrorResponse::framework(
+                FrameworkError::Unauthorized,
+                format!("Authentication failed: {msg}"),
+            )
+            .with_request_id(request_id),
         }
     }
 }

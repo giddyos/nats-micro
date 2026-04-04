@@ -138,15 +138,15 @@ impl FromNatsErrorResponse for () {
 /// than returning another undifferentiated `NatsErrorResponse`.
 #[derive(Debug, Error)]
 pub enum ClientTransportError {
-    #[error("request transport failed: {0}")]
+    #[error("failed to send the request: {0}")]
     Request(NatsErrorResponse),
-    #[error("request serialization failed: {0}")]
+    #[error("failed to serialize the request payload: {0}")]
     Serialize(NatsErrorResponse),
-    #[error("response deserialization failed: {0}")]
+    #[error("failed to deserialize the response payload: {0}")]
     Deserialize(NatsErrorResponse),
-    #[error("response decryption failed: {0}")]
+    #[error("failed to decrypt the response payload: {0}")]
     Decrypt(NatsErrorResponse),
-    #[error("invalid response shape: {0}")]
+    #[error("the service returned an invalid response: {0}")]
     InvalidResponse(NatsErrorResponse),
 }
 

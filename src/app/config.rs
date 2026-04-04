@@ -68,7 +68,7 @@ impl NatsAppConfig {
     pub(crate) fn validate(&self) -> Result<()> {
         anyhow::ensure!(
             self.default_concurrency_limit > 0,
-            "NatsAppConfig.default_concurrency_limit must be greater than zero"
+            "NatsAppConfig.default_concurrency_limit must be greater than 0"
         );
         Ok(())
     }

@@ -1,8 +1,17 @@
+use std::fmt::Display;
+
 use async_nats::HeaderMap;
 use bytes::Bytes;
 use nats_micro_shared::{FrameworkError, TransportError as SharedTransportError};
 
 use crate::error::NatsErrorResponse;
+
+fn request_failed(subject: &str, error: impl Display) -> NatsErrorResponse {
+    NatsErrorResponse::transport(
+        SharedTransportError::NatsRequestFailed,
+        format!("failed to send a NATS request to subject `{subject}`: {error}"),
+    )
+}
 
 #[derive(Default)]
 pub struct ClientCallOptions {
@@ -62,7 +71,7 @@ impl ClientCallOptions {
             let recipient = self.recipient.ok_or_else(|| {
                 NatsErrorResponse::framework(
                     FrameworkError::MissingRecipientPubkey,
-                    "encrypted headers require a recipient public key",
+                    "Encrypted headers require a recipient public key. Call ClientCallOptions::recipient(...) first.",
                 )
             })?;
             let recipient = recipient.with_client(client.clone());
@@ -78,26 +87,26 @@ impl ClientCallOptions {
             }
             builder = builder.payload(payload.to_vec());
 
-            let (msg, _) = builder.nats_request(subject).await.map_err(|e| {
-                NatsErrorResponse::transport(SharedTransportError::NatsRequestFailed, e.to_string())
-            })?;
+            let request_subject = subject.clone();
+            let (msg, _) = builder
+                .nats_request(subject)
+                .await
+                .map_err(|e| request_failed(&request_subject, e))?;
             return Ok(msg);
         }
 
         if self.plaintext_headers.is_empty() {
-            client.request(subject, payload).await.map_err(|e| {
-                NatsErrorResponse::transport(SharedTransportError::NatsRequestFailed, e.to_string())
-            })
+            let request_subject = subject.clone();
+            client
+                .request(subject, payload)
+                .await
+                .map_err(|e| request_failed(&request_subject, e))
         } else {
+            let request_subject = subject.clone();
             client
                 .request_with_headers(subject, self.plaintext_headers, payload)
                 .await
-                .map_err(|e| {
-                    NatsErrorResponse::transport(
-                        SharedTransportError::NatsRequestFailed,
-                        e.to_string(),
-                    )
-                })
+                .map_err(|e| request_failed(&request_subject, e))
         }
     }
 
@@ -119,7 +128,7 @@ impl ClientCallOptions {
             let recipient = self.recipient.ok_or_else(|| {
                 NatsErrorResponse::framework(
                     FrameworkError::MissingRecipientPubkey,
-                    "encrypted headers require a recipient public key",
+                    "Encrypted headers require a recipient public key. Call ClientCallOptions::recipient(...) first.",
                 )
             })?;
             let recipient = recipient.with_client(client.clone());
@@ -135,26 +144,26 @@ impl ClientCallOptions {
             }
             builder = builder.payload(payload.to_vec());
 
-            let (msg, eph_ctx) = builder.nats_request(subject).await.map_err(|e| {
-                NatsErrorResponse::transport(SharedTransportError::NatsRequestFailed, e.to_string())
-            })?;
+            let request_subject = subject.clone();
+            let (msg, eph_ctx) = builder
+                .nats_request(subject)
+                .await
+                .map_err(|e| request_failed(&request_subject, e))?;
             return Ok((msg, Some(eph_ctx)));
         }
 
         let msg = if self.plaintext_headers.is_empty() {
-            client.request(subject, payload).await.map_err(|e| {
-                NatsErrorResponse::transport(SharedTransportError::NatsRequestFailed, e.to_string())
-            })?
+            let request_subject = subject.clone();
+            client
+                .request(subject, payload)
+                .await
+                .map_err(|e| request_failed(&request_subject, e))?
         } else {
+            let request_subject = subject.clone();
             client
                 .request_with_headers(subject, self.plaintext_headers, payload)
                 .await
-                .map_err(|e| {
-                    NatsErrorResponse::transport(
-                        SharedTransportError::NatsRequestFailed,
-                        e.to_string(),
-                    )
-                })?
+                .map_err(|e| request_failed(&request_subject, e))?
         };
 
         Ok((msg, None))
@@ -170,7 +179,7 @@ impl ClientCallOptions {
         let recipient = self.recipient.ok_or_else(|| {
             NatsErrorResponse::framework(
                 FrameworkError::MissingRecipientPubkey,
-                "encrypted payloads require a recipient",
+                "Encrypted payloads require a recipient public key. Call ClientCallOptions::recipient(...) first.",
             )
         })?;
         let recipient = recipient.with_client(client.clone());
@@ -186,9 +195,11 @@ impl ClientCallOptions {
         }
         builder = builder.encrypted_payload(payload);
 
-        let (msg, eph_ctx) = builder.nats_request(subject).await.map_err(|e| {
-            NatsErrorResponse::transport(SharedTransportError::NatsRequestFailed, e.to_string())
-        })?;
+        let request_subject = subject.clone();
+        let (msg, eph_ctx) = builder
+            .nats_request(subject)
+            .await
+            .map_err(|e| request_failed(&request_subject, e))?;
         Ok((msg, eph_ctx))
     }
 }
