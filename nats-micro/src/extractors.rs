@@ -14,7 +14,11 @@ use crate::{
     utils::extract_subject_param,
 };
 
-pub trait FromRequest: Sized + Send + 'static {
+mod sealed {
+    pub trait Sealed {}
+}
+
+pub trait FromRequest: sealed::Sealed + Sized + Send + 'static {
     fn from_request(
         ctx: &RequestContext,
     ) -> impl Future<Output = Result<Self, NatsErrorResponse>> + Send;
@@ -399,6 +403,17 @@ where
         }
     }
 }
+
+impl<T: FromPayload> sealed::Sealed for Payload<T> {}
+impl sealed::Sealed for NatsRequest {}
+impl sealed::Sealed for Headers {}
+impl sealed::Sealed for RequestId {}
+impl sealed::Sealed for Subject {}
+impl sealed::Sealed for ShutdownSignal {}
+impl<T: Send + Sync + 'static> sealed::Sealed for State<T> {}
+impl<U: FromAuthRequest> sealed::Sealed for Auth<U> {}
+impl<U: FromAuthRequest> sealed::Sealed for Option<Auth<U>> {}
+impl<T: FromSubjectParam> sealed::Sealed for SubjectParam<T> {}
 
 impl FromSubjectParam for String {
     type Err = std::convert::Infallible;
