@@ -2,6 +2,7 @@
 members = [
     "nats-micro-macros",
     "nats-micro",
-    "nats-micro-shared",
+    "nats-micro-shared", 
+    "nats-server",
 ]
 resolver = "2"
