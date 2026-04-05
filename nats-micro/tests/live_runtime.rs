@@ -23,7 +23,9 @@ use futures::StreamExt;
 #[cfg(feature = "napi")]
 use nats_micro::napi;
 #[cfg(feature = "client")]
-use nats_micro::{ClientCallOptions, Json, NatsService, Proto, SubjectParam};
+use nats_micro::{
+    ClientCallOptions, Headers, Json, NatsService, Proto, RequestId, Subject, SubjectParam,
+};
 use nats_micro::{
     ConsumerDefinition, EndpointDefinition, NatsApp, NatsErrorResponse, Payload, ServiceDefinition,
     ServiceMetadata, ShutdownSignal, State, WorkerFailurePolicy, async_nats, service,
@@ -103,6 +105,25 @@ pub struct LiveOptionalProtoPayload {
 }
 
 #[cfg(feature = "client")]
+#[cfg_attr(feature = "napi", nats_micro::object)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LiveClientRequestSnapshot {
+    pub subject: String,
+    pub request_id: String,
+    pub trace_id: Option<String>,
+    pub client_name: Option<String>,
+    pub client_mode: Option<String>,
+}
+
+#[cfg(feature = "client")]
+#[cfg_attr(feature = "napi", nats_micro::object)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LiveClientSubjectSnapshot {
+    pub user_id: String,
+    pub subject: String,
+}
+
+#[cfg(feature = "client")]
 #[service_error]
 #[derive(Debug, thiserror::Error)]
 enum LiveGeneratedClientError {
@@ -123,6 +144,27 @@ impl LiveGeneratedClientService {
         Ok("ok")
     }
 
+    #[endpoint(subject = "inspect-request", group = "live-client")]
+    async fn inspect_request(
+        headers: Headers,
+        request_id: RequestId,
+        subject: Subject,
+    ) -> Result<Json<LiveClientRequestSnapshot>, NatsErrorResponse> {
+        Ok(Json(LiveClientRequestSnapshot {
+            subject: subject.into_inner(),
+            request_id: request_id.into_inner(),
+            trace_id: headers
+                .get("x-trace-id")
+                .map(|header| header.as_str().to_string()),
+            client_name: headers
+                .get("x-client-name")
+                .map(|header| header.as_str().to_string()),
+            client_mode: headers
+                .get("x-client-mode")
+                .map(|header| header.as_str().to_string()),
+        }))
+    }
+
     #[endpoint(subject = "sum", group = "live-client")]
     async fn sum(
         payload: Payload<Json<LiveClientSumRequest>>,
@@ -135,6 +177,17 @@ impl LiveGeneratedClientService {
     #[endpoint(subject = "users.{user_id}.profile", group = "live-client")]
     async fn get_user_profile(user_id: SubjectParam<String>) -> Result<String, NatsErrorResponse> {
         Ok(format!("profile:{}", user_id.as_str()))
+    }
+
+    #[endpoint(subject = "subjects.{user_id}.details", group = "live-client")]
+    async fn subject_details(
+        user_id: SubjectParam<String>,
+        subject: Subject,
+    ) -> Result<Json<LiveClientSubjectSnapshot>, NatsErrorResponse> {
+        Ok(Json(LiveClientSubjectSnapshot {
+            user_id: user_id.into_inner(),
+            subject: subject.into_inner(),
+        }))
     }
 
     #[endpoint(subject = "maybe-json", group = "live-client")]
@@ -181,6 +234,18 @@ impl LiveGeneratedClientService {
     #[endpoint(subject = "service-error", group = "live-client")]
     async fn service_error() -> Result<(), LiveGeneratedClientError> {
         Err(LiveGeneratedClientError::InvalidEvent)
+    }
+
+    #[endpoint(subject = "echo-bytes", group = "live-client")]
+    async fn echo_bytes(payload: Payload<Vec<u8>>) -> Result<Vec<u8>, NatsErrorResponse> {
+        let mut echoed = b"echo:".to_vec();
+        echoed.extend_from_slice(payload.as_inner());
+        Ok(echoed)
+    }
+
+    #[endpoint(subject = "ack", group = "live-client")]
+    async fn ack() -> Result<(), NatsErrorResponse> {
+        Ok(())
     }
 
     #[cfg(feature = "encryption")]
@@ -652,6 +717,81 @@ async fn live_generated_client_optional_response_variants_round_trip() -> Result
 
 #[cfg(feature = "client")]
 #[tokio::test]
+async fn live_generated_client_headers_subjects_and_return_types_round_trip() -> Result<()> {
+    let server = nats_server::run_basic_server();
+    let client = async_nats::connect(server.client_url()).await?;
+
+    let spawned = spawn_live_generated_client_service_app(client.clone()).await?;
+    let service_client = build_live_generated_client(
+        client,
+        spawned.prefix.clone(),
+        #[cfg(feature = "encryption")]
+        spawned.recipient,
+    );
+
+    let client_result = async {
+        let request_snapshot = service_client
+            .inspect_request_with(
+                ClientCallOptions::new()
+                    .header("x-request-id", "req-rust-inspect")
+                    .header("x-trace-id", "trace-rust")
+                    .header("x-client-name", "rust-client")
+                    .header("x-client-mode", "direct"),
+            )
+            .await
+            .context("generated client inspect_request_with call failed")?;
+        assert_eq!(
+            request_snapshot,
+            LiveClientRequestSnapshot {
+                subject: format!("{}.live-client.inspect-request", spawned.prefix),
+                request_id: "req-rust-inspect".to_string(),
+                trace_id: Some("trace-rust".to_string()),
+                client_name: Some("rust-client".to_string()),
+                client_mode: Some("direct".to_string()),
+            }
+        );
+
+        let subject_snapshot = service_client
+            .subject_details(&"alice".to_string())
+            .await
+            .context("generated client subject_details call failed")?;
+        assert_eq!(
+            subject_snapshot,
+            LiveClientSubjectSnapshot {
+                user_id: "alice".to_string(),
+                subject: format!("{}.live-client.subjects.alice.details", spawned.prefix),
+            }
+        );
+
+        let echoed = service_client
+            .echo_bytes(&[0, 1, 2, 3])
+            .await
+            .context("generated client echo_bytes call failed")?;
+        assert_eq!(echoed, b"echo:\0\x01\x02\x03".to_vec());
+
+        service_client
+            .ack()
+            .await
+            .context("generated client ack call failed")?;
+
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+
+    let shutdown_result = shutdown_app(
+        spawned.shutdown_tx,
+        spawned.app_handle,
+        "generated client headers and return types",
+    )
+    .await;
+
+    client_result?;
+    shutdown_result?;
+    Ok(())
+}
+
+#[cfg(feature = "client")]
+#[tokio::test]
 async fn live_generated_client_preserves_service_error_metadata() -> Result<()> {
     let server = nats_server::run_basic_server();
     let client = async_nats::connect(server.client_url()).await?;
@@ -889,6 +1029,123 @@ async fn live_generated_napi_client_round_trips_endpoints() -> Result<()> {
         spawned.shutdown_tx,
         spawned.app_handle,
         "generated N-API client",
+    )
+    .await;
+
+    napi_result?;
+    shutdown_result?;
+    Ok(())
+}
+
+#[cfg(all(feature = "client", feature = "napi"))]
+#[tokio::test]
+async fn live_generated_napi_client_headers_subjects_and_return_types_round_trip() -> Result<()> {
+    let server = nats_server::run_basic_server();
+    let server_url = server.client_url();
+
+    let client = async_nats::connect(server_url.clone()).await?;
+    let spawned = spawn_live_generated_client_service_app(client).await?;
+
+    let header = |name: &str, value: &str| LiveGeneratedClientServiceClientHeader {
+        name: name.to_string(),
+        value: value.to_string(),
+        #[cfg(feature = "encryption")]
+        encrypted: false,
+    };
+
+    let napi_result = async {
+        let mut service_client = JsLiveGeneratedClientServiceClient::connect(
+            server_url,
+            Some(LiveGeneratedClientServiceClientConnectOptions {
+                subject_prefix: Some(spawned.prefix.clone()),
+                headers: Some(vec![
+                    header("x-client-name", "connect-default"),
+                    header("x-client-mode", "connect-default"),
+                ]),
+                ..Default::default()
+            }),
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("generated N-API client connect failed: {err}"))?;
+
+        let initial_snapshot = service_client.inspect_request().await.map_err(|err| {
+            anyhow::anyhow!("generated N-API client inspect_request call failed: {err}")
+        })?;
+        assert_eq!(
+            initial_snapshot,
+            LiveClientRequestSnapshot {
+                subject: format!("{}.live-client.inspect-request", spawned.prefix),
+                request_id: initial_snapshot.request_id.clone(),
+                trace_id: None,
+                client_name: Some("connect-default".to_string()),
+                client_mode: Some("connect-default".to_string()),
+            }
+        );
+        assert!(!initial_snapshot.request_id.is_empty());
+
+        service_client.set_headers(Some(vec![
+            header("x-client-name", "runtime-default"),
+            header("x-client-mode", "runtime-default"),
+        ]));
+
+        let merged_snapshot = service_client
+            .inspect_request_with_headers(Some(vec![
+                header("x-request-id", "req-napi-inspect"),
+                header("x-trace-id", "trace-napi"),
+                header("x-client-mode", "per-call"),
+            ]))
+            .await
+            .map_err(|err| {
+                anyhow::anyhow!(
+                    "generated N-API client inspect_request_with_headers call failed: {err}"
+                )
+            })?;
+        assert_eq!(
+            merged_snapshot,
+            LiveClientRequestSnapshot {
+                subject: format!("{}.live-client.inspect-request", spawned.prefix),
+                request_id: "req-napi-inspect".to_string(),
+                trace_id: Some("trace-napi".to_string()),
+                client_name: Some("runtime-default".to_string()),
+                client_mode: Some("per-call".to_string()),
+            }
+        );
+
+        let subject_snapshot = service_client
+            .subject_details(LiveGeneratedClientServiceSubjectDetailsArgs {
+                user_id: "alice".to_string(),
+            })
+            .await
+            .map_err(|err| {
+                anyhow::anyhow!("generated N-API client subject_details call failed: {err}")
+            })?;
+        assert_eq!(
+            subject_snapshot,
+            LiveClientSubjectSnapshot {
+                user_id: "alice".to_string(),
+                subject: format!("{}.live-client.subjects.alice.details", spawned.prefix),
+            }
+        );
+
+        let echoed = service_client
+            .echo_bytes(napi::bindgen_prelude::Buffer::from(vec![9, 8, 7]))
+            .await
+            .map_err(|err| anyhow::anyhow!("generated N-API client echo_bytes call failed: {err}"))?;
+        assert_eq!(echoed.to_vec(), b"echo:\x09\x08\x07".to_vec());
+
+        service_client
+            .ack()
+            .await
+            .map_err(|err| anyhow::anyhow!("generated N-API client ack call failed: {err}"))?;
+
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+
+    let shutdown_result = shutdown_app(
+        spawned.shutdown_tx,
+        spawned.app_handle,
+        "generated N-API client headers and return types",
     )
     .await;
 
