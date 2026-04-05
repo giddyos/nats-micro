@@ -353,9 +353,8 @@ fn macro_generated_handlers_only_enable_shutdown_support_when_needed() {
 
 #[tokio::test]
 async fn live_queue_groups_receive_independent_copies() -> Result<()> {
-    let Some(client) = connect_live_nats().await else {
-        return Ok(());
-    };
+    let server = nats_server::run_basic_server();
+    let client = async_nats::connect(server.client_url()).await?;
 
     let unique = unique_name("queue-groups");
     let group = format!("live.{unique}");
@@ -399,9 +398,8 @@ async fn live_queue_groups_receive_independent_copies() -> Result<()> {
 
 #[tokio::test]
 async fn live_client_drain_triggers_supervised_shutdown() -> Result<()> {
-    let Some(client) = connect_live_nats().await else {
-        return Ok(());
-    };
+    let server = nats_server::run_basic_server();
+    let client = async_nats::connect(server.client_url()).await?;
 
     let unique = unique_name("supervision");
     let group = format!("live.{unique}");
@@ -442,9 +440,8 @@ async fn live_client_drain_triggers_supervised_shutdown() -> Result<()> {
 #[cfg(feature = "client")]
 #[tokio::test]
 async fn live_generated_client_round_trips_standard_endpoints() -> Result<()> {
-    let Some(client) = connect_live_nats().await else {
-        return Ok(());
-    };
+    let server = nats_server::run_basic_server();
+    let client = async_nats::connect(server.client_url()).await?;
 
     let (shutdown_tx, app_handle, service_client) =
         spawn_live_generated_client_service(client.clone()).await?;
@@ -501,9 +498,8 @@ async fn live_generated_client_round_trips_standard_endpoints() -> Result<()> {
 #[cfg(feature = "client")]
 #[tokio::test]
 async fn live_generated_client_optional_payload_variants_round_trip() -> Result<()> {
-    let Some(client) = connect_live_nats().await else {
-        return Ok(());
-    };
+    let server = nats_server::run_basic_server();
+    let client = async_nats::connect(server.client_url()).await?;
 
     let (shutdown_tx, app_handle, service_client) =
         spawn_live_generated_client_service(client.clone()).await?;
@@ -566,9 +562,8 @@ async fn live_generated_client_optional_payload_variants_round_trip() -> Result<
 #[cfg(feature = "client")]
 #[tokio::test]
 async fn live_generated_client_optional_response_variants_round_trip() -> Result<()> {
-    let Some(client) = connect_live_nats().await else {
-        return Ok(());
-    };
+    let server = nats_server::run_basic_server();
+    let client = async_nats::connect(server.client_url()).await?;
 
     let (shutdown_tx, app_handle, service_client) =
         spawn_live_generated_client_service(client.clone()).await?;
@@ -658,9 +653,8 @@ async fn live_generated_client_optional_response_variants_round_trip() -> Result
 #[cfg(feature = "client")]
 #[tokio::test]
 async fn live_generated_client_preserves_service_error_metadata() -> Result<()> {
-    let Some(client) = connect_live_nats().await else {
-        return Ok(());
-    };
+    let server = nats_server::run_basic_server();
+    let client = async_nats::connect(server.client_url()).await?;
 
     let (shutdown_tx, app_handle, service_client) =
         spawn_live_generated_client_service(client.clone()).await?;
@@ -691,16 +685,16 @@ async fn live_generated_client_preserves_service_error_metadata() -> Result<()> 
 #[cfg(all(feature = "client", feature = "napi"))]
 #[tokio::test]
 async fn live_generated_napi_client_round_trips_endpoints() -> Result<()> {
-    let Some(client) = connect_live_nats().await else {
-        return Ok(());
-    };
+    let server = nats_server::run_basic_server();
+    let server_url = server.client_url();
 
-    let server = std::env::var("NATS_URL").unwrap_or_else(|_| "nats://127.0.0.1:4222".to_string());
+    let client = async_nats::connect(server_url.clone()).await?;
+
     let spawned = spawn_live_generated_client_service_app(client).await?;
 
     let napi_result = async {
         let service_client = build_live_generated_napi_client(
-            server,
+            server_url,
             spawned.prefix.clone(),
             #[cfg(feature = "encryption")]
             spawned.recipient,
@@ -906,9 +900,8 @@ async fn live_generated_napi_client_round_trips_endpoints() -> Result<()> {
 #[cfg(all(feature = "client", feature = "napi", feature = "encryption"))]
 #[tokio::test]
 async fn live_generated_napi_client_surfaces_framework_errors() -> Result<()> {
-    let Some(client) = connect_live_nats().await else {
-        return Ok(());
-    };
+    let server = nats_server::run_basic_server();
+    let client = async_nats::connect(server.client_url()).await?;
 
     let server = std::env::var("NATS_URL").unwrap_or_else(|_| "nats://127.0.0.1:4222".to_string());
     let spawned = spawn_live_generated_client_service_app(client).await?;
@@ -1033,29 +1026,22 @@ async fn live_generated_napi_client_connect_surfaces_invalid_recipient_public_ke
 
 #[tokio::test]
 async fn live_jetstream_consumer_processes_messages() -> Result<()> {
-    let Some(client) = connect_live_nats().await else {
-        return Ok(());
-    };
+    let server = nats_server::run_server_with_jetstream();
+    let client = async_nats::connect(server.client_url()).await?;
 
     let jetstream = async_nats::jetstream::new(client.clone());
     let stream_name = unique_name("LIVE_STREAM").to_uppercase();
     let subject = format!("live.{}.events", unique_name("consumer-subject"));
     let durable = unique_name("durable");
 
-    let _stream = match jetstream
+    let _stream = jetstream
         .get_or_create_stream(async_nats::jetstream::stream::Config {
             name: stream_name.clone(),
             subjects: vec![subject.clone()],
             ..Default::default()
         })
         .await
-    {
-        Ok(stream) => stream,
-        Err(err) => {
-            eprintln!("skipping live JetStream runtime test: {err}");
-            return Ok(());
-        }
-    };
+        .expect("failed to create JetStream stream for live consumer test");
 
     let probe = ConsumerProbe::default();
     let mut consumer = LiveConsumerFlowService::jobs_consumer();
@@ -1100,9 +1086,8 @@ async fn live_jetstream_consumer_processes_messages() -> Result<()> {
 
 #[tokio::test]
 async fn live_endpoint_handlers_observe_shutdown_signal_and_timeout() -> Result<()> {
-    let Some(client) = connect_live_nats().await else {
-        return Ok(());
-    };
+    let server = nats_server::run_basic_server();
+    let client = async_nats::connect(server.client_url()).await?;
 
     let probe = ShutdownProbe::default();
     let unique = unique_name("shutdown-endpoint");
@@ -1171,29 +1156,22 @@ async fn live_endpoint_handlers_observe_shutdown_signal_and_timeout() -> Result<
 
 #[tokio::test]
 async fn live_consumer_handlers_observe_shutdown_signal_and_timeout() -> Result<()> {
-    let Some(client) = connect_live_nats().await else {
-        return Ok(());
-    };
+    let server = nats_server::run_server_with_jetstream();
+    let client = async_nats::connect(server.client_url()).await?;
 
     let jetstream = async_nats::jetstream::new(client.clone());
     let stream_name = unique_name("LIVE_SHUTDOWN_STREAM").to_uppercase();
     let subject = format!("live.{}.shutdown", unique_name("consumer-shutdown-subject"));
     let durable = unique_name("shutdown-durable");
 
-    let _stream = match jetstream
+    let _stream = jetstream
         .get_or_create_stream(async_nats::jetstream::stream::Config {
             name: stream_name.clone(),
             subjects: vec![subject.clone()],
             ..Default::default()
         })
         .await
-    {
-        Ok(stream) => stream,
-        Err(err) => {
-            eprintln!("skipping live shutdown consumer test: {err}");
-            return Ok(());
-        }
-    };
+        .expect("failed to create JetStream stream for live shutdown consumer test");
 
     let probe = ShutdownProbe::default();
     let unique = unique_name("shutdown-consumer");
@@ -1252,46 +1230,24 @@ async fn live_consumer_handlers_observe_shutdown_signal_and_timeout() -> Result<
     Ok(())
 }
 
-async fn connect_live_nats() -> Option<async_nats::Client> {
-    let nats_url =
-        std::env::var("NATS_URL").unwrap_or_else(|_| "nats://127.0.0.1:4222".to_string());
-
-    match async_nats::connect(&nats_url).await {
-        Ok(client) => Some(client),
-        Err(err) => {
-            eprintln!(
-                "skipping live runtime tests because NATS is unavailable at {nats_url}: {err}"
-            );
-            None
-        }
-    }
-}
-
 #[tokio::test]
 async fn live_consumer_promotes_concurrency_limit_to_max_ack_pending() -> Result<()> {
-    let Some(client) = connect_live_nats().await else {
-        return Ok(());
-    };
+    let server = nats_server::run_server_with_jetstream();
+    let client = async_nats::connect(server.client_url()).await?;
 
     let jetstream = async_nats::jetstream::new(client.clone());
     let stream_name = unique_name("PROMOTE_LIVE_STREAM").to_uppercase();
     let subject = format!("live.{}.promote", unique_name("consumer-promote-subject"));
     let durable = unique_name("promote-durable");
 
-    let _stream = match jetstream
+    let _stream = jetstream
         .get_or_create_stream(async_nats::jetstream::stream::Config {
             name: stream_name.clone(),
             subjects: vec![subject.clone()],
             ..Default::default()
         })
         .await
-    {
-        Ok(stream) => stream,
-        Err(err) => {
-            eprintln!("skipping live promote test: {err}");
-            return Ok(());
-        }
-    };
+        .expect("failed to create JetStream stream for live promote consumer test");
 
     let probe = ConsumerProbe::default();
     let mut consumer = LiveConsumerFlowService::jobs_consumer();
@@ -1339,29 +1295,22 @@ async fn live_consumer_promotes_concurrency_limit_to_max_ack_pending() -> Result
 
 #[tokio::test]
 async fn live_consumer_configured_concurrency_exceeding_max_ack_pending_errors() -> Result<()> {
-    let Some(client) = connect_live_nats().await else {
-        return Ok(());
-    };
+    let server = nats_server::run_server_with_jetstream();
+    let client = async_nats::connect(server.client_url()).await?;
 
     let jetstream = async_nats::jetstream::new(client.clone());
     let stream_name = unique_name("BAD_LIVE_STREAM").to_uppercase();
     let subject = format!("live.{}.bad", unique_name("consumer-bad-subject"));
     let durable = unique_name("bad-durable");
 
-    let _stream = match jetstream
+    let _stream = jetstream
         .get_or_create_stream(async_nats::jetstream::stream::Config {
             name: stream_name.clone(),
             subjects: vec![subject.clone()],
             ..Default::default()
         })
         .await
-    {
-        Ok(stream) => stream,
-        Err(err) => {
-            eprintln!("skipping live bad-config test: {err}");
-            return Ok(());
-        }
-    };
+        .expect("failed to create JetStream stream for live bad consumer test");
 
     let mut consumer = LiveConsumerFlowService::jobs_consumer();
     consumer.stream = stream_name.clone();
