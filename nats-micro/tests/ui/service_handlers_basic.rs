@@ -49,7 +49,7 @@ fn main() {
 
     let status_endpoint = GreeterService::status_endpoint();
     assert_eq!(status_endpoint.group, "");
-    assert_eq!(status_endpoint.full_subject(), "status");
+    assert_eq!(status_endpoint.full_subject(), "v1.status");
 
     let greet_info = def
         .endpoint_info
@@ -62,7 +62,7 @@ fn main() {
     assert!(greet_info.params[0].is_subject_param);
 
     let greet_endpoint = GreeterService::greet_endpoint();
-    assert_eq!(greet_endpoint.full_subject(), "hello.greet.*");
+    assert_eq!(greet_endpoint.full_subject(), "v1.hello.greet.*");
 
     let _ = GreeterService::status_endpoint();
     let _ = GreeterService::greet_endpoint();

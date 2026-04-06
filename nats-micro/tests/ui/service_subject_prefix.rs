@@ -19,6 +19,6 @@ impl PrefixedService {
 fn main() {
     let def = PrefixedService::definition();
     assert_eq!(def.metadata.subject_prefix.as_deref(), Some("api"));
-    assert_eq!(PrefixedService::sum_endpoint().full_subject(), "api.math.sum");
-    assert_eq!(PrefixedService::health_endpoint().full_subject(), "api.health");
+    assert_eq!(PrefixedService::sum_endpoint().full_subject(), "api.v1.math.sum");
+    assert_eq!(PrefixedService::health_endpoint().full_subject(), "api.v1.health");
 }

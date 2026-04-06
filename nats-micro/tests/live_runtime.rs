@@ -434,7 +434,7 @@ async fn live_queue_groups_receive_independent_copies() -> Result<()> {
 
     let unique = unique_name("queue-groups");
     let group = format!("live.{unique}");
-    let full_subject = format!("{group}.jobs");
+    let full_subject = format!("v1.{group}.jobs");
 
     let mut alpha_endpoint = LiveQueueAlphaService::jobs_endpoint();
     alpha_endpoint.group = group.clone();
@@ -473,13 +473,65 @@ async fn live_queue_groups_receive_independent_copies() -> Result<()> {
 }
 
 #[tokio::test]
+async fn live_endpoints_only_respond_on_matching_major_version_subjects() -> Result<()> {
+    let server = nats_server::run_basic_server();
+    let client = async_nats::connect(server.client_url()).await?;
+
+    let prefix = unique_name("versioned-prefix");
+    let mut endpoint = LiveQueueAlphaService::jobs_endpoint();
+    endpoint.group = "live".to_string();
+    endpoint.subject_prefix = Some(prefix.clone());
+
+    let (shutdown_tx, app_handle) = spawn_app_until_shutdown(
+        NatsApp::new(client.clone())
+            .service_def(endpoint_service(unique_name("versioned-service"), endpoint)),
+    );
+
+    let versioned_subject = format!("{prefix}.v1.live.jobs");
+    let unversioned_subject = format!("{prefix}.live.jobs");
+    let wrong_major_subject = format!("{prefix}.v2.live.jobs");
+
+    let replies = {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        loop {
+            let replies = request_replies_once(&client, &versioned_subject, 1).await?;
+            if replies == vec!["alpha".to_string()] {
+                break replies;
+            }
+
+            if tokio::time::Instant::now() >= deadline {
+                anyhow::bail!(
+                    "timed out waiting for versioned subject `{versioned_subject}` to receive `alpha`"
+                );
+            }
+
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    };
+    let legacy_replies = request_replies_once(&client, &unversioned_subject, 1).await?;
+    let wrong_major_replies = request_replies_once(&client, &wrong_major_subject, 1).await?;
+
+    let _ = shutdown_tx.send(());
+    let app_result = timeout(Duration::from_secs(5), app_handle)
+        .await
+        .context("timed out waiting for versioned subject app shutdown")?
+        .context("versioned subject app task failed")?;
+
+    assert_eq!(replies, vec!["alpha".to_string()]);
+    assert!(legacy_replies.iter().all(String::is_empty));
+    assert!(wrong_major_replies.iter().all(String::is_empty));
+    app_result?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn live_client_drain_triggers_supervised_shutdown() -> Result<()> {
     let server = nats_server::run_basic_server();
     let client = async_nats::connect(server.client_url()).await?;
 
     let unique = unique_name("supervision");
     let group = format!("live.{unique}");
-    let full_subject = format!("{group}.status");
+    let full_subject = format!("v1.{group}.status");
 
     let mut endpoint = LiveSupervisionService::status_endpoint();
     endpoint.group = group;
@@ -754,7 +806,7 @@ async fn live_generated_client_headers_subjects_and_return_types_round_trip() ->
         assert_eq!(
             request_snapshot,
             LiveClientRequestSnapshot {
-                subject: format!("{}.live-client.inspect-request", spawned.prefix),
+                subject: format!("{}.v1.live-client.inspect-request", spawned.prefix),
                 request_id: "req-rust-inspect".to_string(),
                 trace_id: Some("trace-rust".to_string()),
                 client_name: Some("rust-client".to_string()),
@@ -771,7 +823,7 @@ async fn live_generated_client_headers_subjects_and_return_types_round_trip() ->
             subject_snapshot,
             LiveClientSubjectSnapshot {
                 user_id: "alice".to_string(),
-                subject: format!("{}.live-client.subjects.alice.details", spawned.prefix),
+                subject: format!("{}.v1.live-client.subjects.alice.details", spawned.prefix),
             }
         );
 
@@ -1086,7 +1138,7 @@ async fn live_generated_napi_client_headers_subjects_and_return_types_round_trip
         assert_eq!(
             initial_snapshot,
             LiveClientRequestSnapshot {
-                subject: format!("{}.live-client.inspect-request", spawned.prefix),
+                subject: format!("{}.v1.live-client.inspect-request", spawned.prefix),
                 request_id: initial_snapshot.request_id.clone(),
                 trace_id: None,
                 client_name: Some("connect-default".to_string()),
@@ -1116,7 +1168,7 @@ async fn live_generated_napi_client_headers_subjects_and_return_types_round_trip
         assert_eq!(
             merged_snapshot,
             LiveClientRequestSnapshot {
-                subject: format!("{}.live-client.inspect-request", spawned.prefix),
+                subject: format!("{}.v1.live-client.inspect-request", spawned.prefix),
                 request_id: "req-napi-inspect".to_string(),
                 trace_id: Some("trace-napi".to_string()),
                 client_name: Some("runtime-default".to_string()),
@@ -1137,7 +1189,7 @@ async fn live_generated_napi_client_headers_subjects_and_return_types_round_trip
             subject_snapshot,
             LiveClientSubjectSnapshot {
                 user_id: "alice".to_string(),
-                subject: format!("{}.live-client.subjects.alice.details", spawned.prefix),
+                subject: format!("{}.v1.live-client.subjects.alice.details", spawned.prefix),
             }
         );
 
@@ -1365,8 +1417,8 @@ async fn live_endpoint_handlers_observe_shutdown_signal_and_timeout() -> Result<
     let probe = ShutdownProbe::default();
     let unique = unique_name("shutdown-endpoint");
     let group = format!("live.{unique}");
-    let status_subject = format!("{group}.status");
-    let cleanup_subject = format!("{group}.cleanup");
+    let status_subject = format!("v1.{group}.status");
+    let cleanup_subject = format!("v1.{group}.cleanup");
 
     let mut status_endpoint = LiveShutdownEndpointService::status_endpoint();
     status_endpoint.group = group.clone();
@@ -1449,7 +1501,7 @@ async fn live_consumer_handlers_observe_shutdown_signal_and_timeout() -> Result<
     let probe = ShutdownProbe::default();
     let unique = unique_name("shutdown-consumer");
     let group = format!("live.{unique}");
-    let status_subject = format!("{group}.status");
+    let status_subject = format!("v1.{group}.status");
 
     let mut status_endpoint = LiveShutdownConsumerService::status_endpoint();
     status_endpoint.group = group;
@@ -1734,7 +1786,7 @@ async fn wait_for_generated_client_service(
     client: &async_nats::Client,
     prefix: &str,
 ) -> Result<()> {
-    let health_subject = format!("{prefix}.live-client.health");
+    let health_subject = format!("{prefix}.v1.live-client.health");
     let _ = request_expected_replies(client, &health_subject, 1).await?;
     Ok(())
 }

@@ -45,6 +45,7 @@ fn generated_client_uses_service_metadata_prefix() {
     assert!(expanded.contains("service_version : String"));
     assert!(expanded.contains("build_subject"));
     assert!(expanded.contains("self . prefix . as_deref ()"));
+    assert!(expanded.contains("& self . service_version"));
     assert!(expanded.contains("X_CLIENT_VERSION_HEADER"));
     assert!(expanded.contains("with_required_header"));
     if cfg!(feature = "macros_encryption_feature") {
