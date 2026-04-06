@@ -157,7 +157,7 @@ pub fn run_server(cfg: &str) -> Server {
 
 pub fn run_server_with_jetstream() -> Server {
     let workspace_dir = get_workspace_root();
-    let config_path = PathBuf::from(workspace_dir)
+    let config_path = workspace_dir
         .join("nats-server")
         .join("configs")
         .join("jetstream.conf");
