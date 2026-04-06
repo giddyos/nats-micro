@@ -9,6 +9,9 @@ fn macro_ui_validation() {
     tests.compile_fail("tests/ui/endpoint_duplicate_payload.rs");
     tests.compile_fail("tests/ui/endpoint_nested_optional_payload.rs");
     tests.compile_fail("tests/ui/endpoint_nested_optional_response.rs");
+    tests.compile_fail("tests/ui/service_invalid_version.rs");
+    tests.compile_fail("tests/ui/service_missing_name.rs");
+    tests.compile_fail("tests/ui/service_missing_version.rs");
     tests.pass("tests/ui/endpoint_underscore_params.rs");
     tests.pass("tests/ui/endpoint_custom_param.rs");
     tests.pass("tests/ui/service_multi_auth_extractors.rs");

@@ -1,6 +1,6 @@
 use nats_micro::{NatsErrorResponse, State, service, service_handlers};
 
-#[service(name = "missing-params")]
+#[service(name = "missing-params", version = "1.0.0")]
 struct MissingParamsService;
 
 #[service_handlers]

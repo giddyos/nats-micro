@@ -3,7 +3,7 @@ use nats_micro::{
     service_handlers,
 };
 
-#[service(name = "multi-auth")]
+#[service(name = "multi-auth", version = "1.0.0")]
 struct MultiAuthService;
 
 struct JwtUser;

@@ -1,6 +1,6 @@
 use nats_micro::{NatsErrorResponse, SubjectParam, service, service_handlers};
 
-#[service(name = "underscore-params")]
+#[service(name = "underscore-params", version = "1.0.0")]
 struct UnderscoreParamsService;
 
 #[service_handlers]

@@ -14,7 +14,7 @@ pub struct CreatedResponse {
     pub ok: bool,
 }
 
-#[service(name = "broken", napi = true)]
+#[service(name = "broken", version = "1.0.0", napi = true)]
 struct BrokenService;
 
 #[service_handlers]

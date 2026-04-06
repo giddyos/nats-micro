@@ -1,0 +1,7 @@
+error: Missing field `version`
+ --> tests/ui/service_missing_version.rs:3:1
+  |
+3 | #[service(name = "missing-version")]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: this error originates in the attribute macro `service` (in Nightly builds, run with -Z macro-backtrace for more info)

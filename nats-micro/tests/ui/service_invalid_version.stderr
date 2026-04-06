@@ -1,0 +1,5 @@
+error: service `version` must match x.x.x where each x is one or more ASCII digits
+ --> tests/ui/service_invalid_version.rs:4:8
+  |
+4 | struct InvalidVersionService;
+  |        ^^^^^^^^^^^^^^^^^^^^^

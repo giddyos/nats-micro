@@ -1,6 +1,6 @@
 use nats_micro::{service, service_handlers};
 
-#[service(name = "svc")]
+#[service(name = "svc", version = "1.0.0")]
 struct InvalidConsumerConcurrencyService;
 
 #[service_handlers]

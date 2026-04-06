@@ -1,6 +1,6 @@
 use nats_micro::{NatsErrorResponse, SubjectParam, service, service_handlers};
 
-#[service(name = "extra-param")]
+#[service(name = "extra-param", version = "1.0.0")]
 struct ExtraParamService;
 
 #[service_handlers]

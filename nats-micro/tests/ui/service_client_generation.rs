@@ -60,8 +60,14 @@ fn _assert_client_module() {
     #[cfg(feature = "encryption")]
     fn _assert_constructors(client: nats_micro::async_nats::Client) {
         let recipient = [7u8; 32];
-        let _typed = DemoServiceClient::new(client.clone()).with_recipient(recipient);
-        let _prefixed = DemoServiceClient::with_prefix(client, "demo").with_recipient(recipient);
+        let _typed = DemoServiceClient::new(client.clone(), Some(recipient));
+        let _prefixed = DemoServiceClient::with_prefix(client, "demo", Some(recipient));
+    }
+
+    #[cfg(not(feature = "encryption"))]
+    fn _assert_constructors(client: nats_micro::async_nats::Client) {
+        let _typed = DemoServiceClient::new(client.clone());
+        let _prefixed = DemoServiceClient::with_prefix(client, "demo");
     }
 
     fn _assert_sum(client: &DemoServiceClient) {

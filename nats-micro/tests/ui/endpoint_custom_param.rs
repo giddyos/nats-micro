@@ -22,7 +22,7 @@ impl FromSubjectParam for BoolFromDigits {
     }
 }
 
-#[service(name = "custom-param")]
+#[service(name = "custom-param", version = "1.0.0")]
 struct CustomParamService;
 
 #[service_handlers]

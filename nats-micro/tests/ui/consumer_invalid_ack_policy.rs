@@ -1,6 +1,6 @@
 use nats_micro::{NatsErrorResponse, consumer, service, service_handlers};
 
-#[service(name = "svc")]
+#[service(name = "svc", version = "1.0.0")]
 struct InvalidConsumerService;
 
 #[service_handlers]
