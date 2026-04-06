@@ -1130,7 +1130,9 @@ async fn live_generated_napi_client_headers_subjects_and_return_types_round_trip
         let echoed = service_client
             .echo_bytes(napi::bindgen_prelude::Buffer::from(vec![9, 8, 7]))
             .await
-            .map_err(|err| anyhow::anyhow!("generated N-API client echo_bytes call failed: {err}"))?;
+            .map_err(|err| {
+                anyhow::anyhow!("generated N-API client echo_bytes call failed: {err}")
+            })?;
         assert_eq!(echoed.to_vec(), b"echo:\x09\x08\x07".to_vec());
 
         service_client
