@@ -53,6 +53,7 @@ impl ClientModuleSpec {
                     fn build_subject(&self, group: &str, endpoint: &str) -> String {
                         #nats_micro::__macros::build_subject(
                             self.prefix.as_deref(),
+                            &self.service_version,
                             group,
                             endpoint,
                         )

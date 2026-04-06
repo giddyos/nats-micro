@@ -2,13 +2,29 @@ use crate::consumer::ConsumerDefinition;
 use crate::handler::HandlerFn;
 
 #[must_use]
-pub fn build_subject(prefix: Option<&str>, group: &str, subject: &str) -> String {
-    match (prefix.filter(|value| !value.is_empty()), group.is_empty()) {
-        (Some(prefix), false) => format!("{prefix}.{group}.{subject}"),
-        (Some(prefix), true) => format!("{prefix}.{subject}"),
-        (None, false) => format!("{group}.{subject}"),
-        (None, true) => subject.to_string(),
+pub fn build_subject(prefix: Option<&str>, version: &str, group: &str, subject: &str) -> String {
+    let mut segments = Vec::with_capacity(4);
+
+    if let Some(prefix) = prefix.filter(|value| !value.is_empty()) {
+        segments.push(prefix.to_string());
     }
+
+    let major = version
+        .split('.')
+        .next()
+        .filter(|segment| !segment.is_empty())
+        .unwrap_or("0");
+    segments.push(format!("v{major}"));
+
+    if !group.is_empty() {
+        segments.push(group.to_string());
+    }
+
+    if !subject.is_empty() {
+        segments.push(subject.to_string());
+    }
+
+    segments.join(".")
 }
 
 #[derive(Debug, Clone)]
@@ -53,13 +69,19 @@ pub struct EndpointDefinition {
 
 impl EndpointDefinition {
     pub fn full_subject(&self) -> String {
-        build_subject(self.subject_prefix.as_deref(), &self.group, &self.subject)
+        build_subject(
+            self.subject_prefix.as_deref(),
+            &self.service_version,
+            &self.group,
+            &self.subject,
+        )
     }
 
     pub fn full_subject_template(&self) -> Option<String> {
         self.subject_template.as_deref().map(|subject_template| {
             build_subject(
                 self.subject_prefix.as_deref(),
+                &self.service_version,
                 &self.group,
                 subject_template,
             )
@@ -148,13 +170,31 @@ mod tests {
 
     #[test]
     fn builds_subject_with_prefix() {
-        assert_eq!(build_subject(Some("api"), "math", "sum"), "api.math.sum");
-        assert_eq!(build_subject(Some("api"), "", "health"), "api.health");
+        assert_eq!(
+            build_subject(Some("api"), "1.2.3", "math", "sum"),
+            "api.v1.math.sum"
+        );
+        assert_eq!(
+            build_subject(Some("api"), "1.2.3", "", "health"),
+            "api.v1.health"
+        );
     }
 
     #[test]
     fn builds_subject_without_prefix() {
-        assert_eq!(build_subject(None, "math", "sum"), "math.sum");
-        assert_eq!(build_subject(None, "", "health"), "health");
+        assert_eq!(build_subject(None, "0.9.1", "math", "sum"), "v0.math.sum");
+        assert_eq!(build_subject(None, "0.9.1", "", "health"), "v0.health");
+    }
+
+    #[test]
+    fn subject_version_uses_major_only() {
+        assert_eq!(
+            build_subject(Some("api"), "2.0.0", "live", "jobs"),
+            "api.v2.live.jobs"
+        );
+        assert_eq!(
+            build_subject(Some("api"), "2.9.99", "live", "jobs"),
+            "api.v2.live.jobs"
+        );
     }
 }
