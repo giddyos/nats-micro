@@ -6,7 +6,7 @@ use syn::{ImplItemFn, Meta};
 
 pub fn nats_micro_path() -> syn::Path {
     match crate_name("nats-micro") {
-        Ok(FoundCrate::Itself) => syn::parse_quote!(crate),
+        Ok(FoundCrate::Itself) => syn::parse_quote!(::nats_micro),
         Ok(FoundCrate::Name(name)) => {
             syn::parse_str(&format!("::{name}")).unwrap_or_else(|_| syn::parse_quote!(::nats_micro))
         }
