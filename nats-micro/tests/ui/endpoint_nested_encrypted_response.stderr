@@ -1,0 +1,5 @@
+error: `Encrypted<T>` may only be the outermost response marker; use `Encrypted<Json<T>>`, `Encrypted<Proto<T>>`, or `Encrypted<T>`
+  --> tests/ui/endpoint_nested_encrypted_response.rs:11:35
+   |
+11 |     async fn bad() -> Result<Json<Encrypted<String>>, NatsErrorResponse> {
+   |                                   ^^^^^^^^^^^^^^^^^

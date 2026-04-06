@@ -9,6 +9,7 @@ fn macro_ui_validation() {
     tests.compile_fail("tests/ui/endpoint_duplicate_payload.rs");
     tests.compile_fail("tests/ui/endpoint_nested_optional_payload.rs");
     tests.compile_fail("tests/ui/endpoint_nested_optional_response.rs");
+    tests.compile_fail("tests/ui/endpoint_plain_response_missing_serialize.rs");
     tests.compile_fail("tests/ui/service_invalid_version.rs");
     tests.compile_fail("tests/ui/service_missing_name.rs");
     tests.compile_fail("tests/ui/service_missing_version.rs");
@@ -21,9 +22,13 @@ fn macro_ui_validation() {
     tests.pass("tests/ui/service_queue_groups.rs");
     tests.pass("tests/ui/service_client_optional_payloads.rs");
     tests.pass("tests/ui/service_client_optional_responses.rs");
+    tests.pass("tests/ui/service_client_collection_responses.rs");
     tests.pass("tests/ui/service_subject_prefix.rs");
     tests.pass("tests/ui/service_client_metadata.rs");
     tests.pass("tests/ui/service_client_generation.rs");
+
+    #[cfg(feature = "encryption")]
+    tests.compile_fail("tests/ui/endpoint_nested_encrypted_response.rs");
 
     #[cfg(feature = "napi")]
     {

@@ -72,6 +72,27 @@ fn client_meta_tracks_optional_payload_and_response_markers() {
 }
 
 #[test]
+fn classify_return_type_tracks_plain_collection_responses() {
+    let plain = signature(parse_quote! {
+        async fn list() -> Result<Vec<String>, nats_micro::NatsErrorResponse>
+    });
+    let plain_meta = classify_return_type(&plain).unwrap();
+
+    assert!(matches!(plain_meta.encoding, ResponseEncoding::Serde));
+    assert!(!plain_meta.encrypted);
+    assert!(!plain_meta.optional);
+
+    let encrypted = signature(parse_quote! {
+        async fn list() -> Result<nats_micro::Encrypted<Vec<String>>, nats_micro::NatsErrorResponse>
+    });
+    let encrypted_meta = classify_return_type(&encrypted).unwrap();
+
+    assert!(matches!(encrypted_meta.encoding, ResponseEncoding::Serde));
+    assert!(encrypted_meta.encrypted);
+    assert!(!encrypted_meta.optional);
+}
+
+#[test]
 fn classify_return_type_rejects_nested_optional_markers() {
     let sig = signature(parse_quote! {
         async fn bad() -> Result<Option<nats_micro::Json<Option<String>>>, nats_micro::NatsErrorResponse>
@@ -79,6 +100,16 @@ fn classify_return_type_rejects_nested_optional_markers() {
     let error = classify_return_type(&sig).unwrap_err().to_string();
 
     assert!(error.contains("nested `Option` types"));
+}
+
+#[test]
+fn classify_return_type_rejects_nested_encrypted_markers() {
+    let sig = signature(parse_quote! {
+        async fn bad() -> Result<nats_micro::Json<nats_micro::Encrypted<String>>, nats_micro::NatsErrorResponse>
+    });
+    let error = classify_return_type(&sig).unwrap_err().to_string();
+
+    assert!(error.contains("outermost response marker"));
 }
 
 #[test]

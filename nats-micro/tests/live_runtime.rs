@@ -126,6 +126,25 @@ pub struct LiveClientSubjectSnapshot {
 }
 
 #[cfg(feature = "client")]
+fn live_json_collection<I, S>(values: I) -> Vec<LiveOptionalJsonPayload>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    values
+        .into_iter()
+        .map(|value| LiveOptionalJsonPayload {
+            value: value.into(),
+        })
+        .collect()
+}
+
+#[cfg(feature = "client")]
+fn live_echoed_strings(value: &str) -> Vec<String> {
+    vec![value.to_string(), format!("{value}-echo")]
+}
+
+#[cfg(feature = "client")]
 #[service_error]
 #[derive(Debug, thiserror::Error)]
 enum LiveGeneratedClientError {
@@ -242,6 +261,40 @@ impl LiveGeneratedClientService {
         Ok(payload.into_inner())
     }
 
+    #[endpoint(subject = "json-collection", group = "live-client")]
+    async fn json_collection(
+        payload: Payload<Json<LiveClientSumRequest>>,
+    ) -> Result<Vec<LiveOptionalJsonPayload>, NatsErrorResponse> {
+        Ok(live_json_collection(
+            payload.numbers.iter().map(std::string::ToString::to_string),
+        ))
+    }
+
+    #[endpoint(subject = "proto-collection", group = "live-client")]
+    async fn proto_collection(
+        payload: Payload<Proto<LiveOptionalProtoPayload>>,
+    ) -> Result<Vec<String>, NatsErrorResponse> {
+        Ok(live_echoed_strings(&payload.value))
+    }
+
+    #[endpoint(subject = "maybe-json-collection-response", group = "live-client")]
+    async fn maybe_json_collection_response(
+        payload: Payload<Option<Json<LiveOptionalJsonPayload>>>,
+    ) -> Result<Option<Vec<LiveOptionalJsonPayload>>, NatsErrorResponse> {
+        Ok(payload.into_inner().map(|payload| {
+            live_json_collection([payload.value.clone(), format!("{}-echo", payload.value)])
+        }))
+    }
+
+    #[endpoint(subject = "maybe-proto-collection-response", group = "live-client")]
+    async fn maybe_proto_collection_response(
+        payload: Payload<Option<Proto<LiveOptionalProtoPayload>>>,
+    ) -> Result<Option<Vec<String>>, NatsErrorResponse> {
+        Ok(payload
+            .into_inner()
+            .map(|payload| live_echoed_strings(&payload.value)))
+    }
+
     #[endpoint(subject = "service-error", group = "live-client")]
     async fn service_error() -> Result<(), LiveGeneratedClientError> {
         Err(LiveGeneratedClientError::InvalidEvent)
@@ -278,6 +331,37 @@ impl LiveGeneratedClientService {
         _shutdown: ShutdownSignal,
     ) -> Result<Option<Encrypted<String>>, NatsErrorResponse> {
         Ok(payload.into_inner())
+    }
+
+    #[cfg(feature = "encryption")]
+    #[endpoint(subject = "encrypted-collection", group = "live-client")]
+    async fn encrypted_collection(
+        payload: Payload<Option<Encrypted<String>>>,
+        _shutdown: ShutdownSignal,
+    ) -> Result<Encrypted<Vec<LiveOptionalJsonPayload>>, NatsErrorResponse> {
+        let value = payload
+            .as_deref()
+            .cloned()
+            .unwrap_or_else(|| "none".to_string());
+        Ok(Encrypted(live_json_collection([
+            value.clone(),
+            format!("{value}-echo"),
+        ])))
+    }
+
+    #[cfg(feature = "encryption")]
+    #[endpoint(subject = "maybe-encrypted-collection-response", group = "live-client")]
+    async fn maybe_encrypted_collection_response(
+        payload: Payload<Option<Encrypted<String>>>,
+        _shutdown: ShutdownSignal,
+    ) -> Result<Option<Encrypted<Vec<LiveOptionalJsonPayload>>>, NatsErrorResponse> {
+        Ok(payload.into_inner().map(|payload| {
+            let value = payload.into_inner();
+            Encrypted(live_json_collection([
+                value.clone(),
+                format!("{value}-echo"),
+            ]))
+        }))
     }
 }
 
@@ -780,6 +864,121 @@ async fn live_generated_client_optional_response_variants_round_trip() -> Result
 
 #[cfg(feature = "client")]
 #[tokio::test]
+async fn live_generated_client_collection_response_variants_round_trip() -> Result<()> {
+    let server = nats_server::run_basic_server();
+    let client = async_nats::connect(server.client_url()).await?;
+
+    let (shutdown_tx, app_handle, service_client) =
+        spawn_live_generated_client_service(client.clone()).await?;
+
+    let collection_result = async {
+        let json_collection = service_client
+            .json_collection(&LiveClientSumRequest {
+                numbers: vec![4, 5, 6],
+            })
+            .await
+            .context("generated client json_collection call failed")?;
+        assert_eq!(json_collection, live_json_collection(["4", "5", "6"]));
+
+        let proto_collection = service_client
+            .proto_collection(&LiveOptionalProtoPayload {
+                value: "proto-list".to_string(),
+            })
+            .await
+            .context("generated client proto_collection call failed")?;
+        assert_eq!(proto_collection, live_echoed_strings("proto-list"));
+
+        let maybe_json_some = service_client
+            .maybe_json_collection_response(Some(&LiveOptionalJsonPayload {
+                value: "json-list".to_string(),
+            }))
+            .await
+            .context("generated client maybe_json_collection_response Some call failed")?;
+        assert_eq!(
+            maybe_json_some,
+            Some(live_json_collection(["json-list", "json-list-echo"]))
+        );
+
+        let maybe_json_none = service_client
+            .maybe_json_collection_response(None)
+            .await
+            .context("generated client maybe_json_collection_response None call failed")?;
+        assert_eq!(maybe_json_none, None);
+
+        let maybe_proto_some = service_client
+            .maybe_proto_collection_response(Some(&LiveOptionalProtoPayload {
+                value: "proto-optional".to_string(),
+            }))
+            .await
+            .context("generated client maybe_proto_collection_response Some call failed")?;
+        assert_eq!(
+            maybe_proto_some,
+            Some(live_echoed_strings("proto-optional"))
+        );
+
+        let maybe_proto_none = service_client
+            .maybe_proto_collection_response(None)
+            .await
+            .context("generated client maybe_proto_collection_response None call failed")?;
+        assert_eq!(maybe_proto_none, None);
+
+        #[cfg(feature = "encryption")]
+        {
+            let encrypted_collection = service_client
+                .encrypted_collection(Some("secret-list"))
+                .await
+                .context("generated client encrypted_collection Some call failed")?;
+            assert_eq!(
+                encrypted_collection,
+                live_json_collection(["secret-list", "secret-list-echo"])
+            );
+
+            let encrypted_collection_none = service_client
+                .encrypted_collection(None)
+                .await
+                .context("generated client encrypted_collection None call failed")?;
+            assert_eq!(
+                encrypted_collection_none,
+                live_json_collection(["none", "none-echo"])
+            );
+
+            let maybe_encrypted_some = service_client
+                .maybe_encrypted_collection_response(Some("secret-optional"))
+                .await
+                .context("generated client maybe_encrypted_collection_response Some call failed")?;
+            assert_eq!(
+                maybe_encrypted_some,
+                Some(live_json_collection([
+                    "secret-optional",
+                    "secret-optional-echo",
+                ]))
+            );
+
+            let maybe_encrypted_none = service_client
+                .maybe_encrypted_collection_response(None)
+                .await
+                .context("generated client maybe_encrypted_collection_response None call failed")?;
+            assert_eq!(maybe_encrypted_none, None);
+        }
+
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+
+    let shutdown_result = shutdown_app(
+        shutdown_tx,
+        app_handle,
+        "generated client collection response",
+    )
+    .await;
+
+    collection_result?;
+    shutdown_result?;
+    Ok(())
+}
+
+#[cfg(feature = "client")]
+#[tokio::test]
 async fn live_generated_client_headers_subjects_and_return_types_round_trip() -> Result<()> {
     let server = nats_server::run_basic_server();
     let client = async_nats::connect(server.client_url()).await?;
@@ -1093,6 +1292,162 @@ async fn live_generated_napi_client_round_trips_endpoints() -> Result<()> {
         spawned.shutdown_tx,
         spawned.app_handle,
         "generated N-API client",
+    )
+    .await;
+
+    napi_result?;
+    shutdown_result?;
+    Ok(())
+}
+
+#[cfg(all(feature = "client", feature = "napi"))]
+#[tokio::test]
+async fn live_generated_napi_client_collection_response_variants_round_trip() -> Result<()> {
+    let server = nats_server::run_basic_server();
+    let server_url = server.client_url();
+
+    let client = async_nats::connect(server_url.clone()).await?;
+    let spawned = spawn_live_generated_client_service_app(client).await?;
+
+    let napi_result = async {
+        let service_client = build_live_generated_napi_client(
+            server_url,
+            spawned.prefix.clone(),
+            #[cfg(feature = "encryption")]
+            spawned.recipient,
+        )
+        .await
+        .map_err(|err| anyhow::anyhow!("generated N-API client connect failed: {err}"))?;
+
+        let json_collection = service_client
+            .json_collection(LiveClientSumRequest {
+                numbers: vec![7, 8, 9],
+            })
+            .await
+            .map_err(|err| anyhow::anyhow!("generated N-API client json_collection call failed: {err}"))?;
+        assert_eq!(json_collection, live_json_collection(["7", "8", "9"]));
+
+        let proto_collection = service_client
+            .proto_collection(LiveOptionalProtoPayload {
+                value: "proto-napi".to_string(),
+            })
+            .await
+            .map_err(|err| anyhow::anyhow!("generated N-API client proto_collection call failed: {err}"))?;
+        assert_eq!(proto_collection, live_echoed_strings("proto-napi"));
+
+        let maybe_json_some = service_client
+            .maybe_json_collection_response(Some(LiveOptionalJsonPayload {
+                value: "json-napi".to_string(),
+            }))
+            .await
+            .map_err(|err| {
+                anyhow::anyhow!(
+                    "generated N-API client maybe_json_collection_response Some call failed: {err}"
+                )
+            })?;
+        assert_eq!(
+            maybe_json_some,
+            Some(live_json_collection(["json-napi", "json-napi-echo"]))
+        );
+
+        let maybe_json_none = service_client
+            .maybe_json_collection_response(None)
+            .await
+            .map_err(|err| {
+                anyhow::anyhow!(
+                    "generated N-API client maybe_json_collection_response None call failed: {err}"
+                )
+            })?;
+        assert_eq!(maybe_json_none, None);
+
+        let maybe_proto_some = service_client
+            .maybe_proto_collection_response(Some(LiveOptionalProtoPayload {
+                value: "proto-napi-optional".to_string(),
+            }))
+            .await
+            .map_err(|err| {
+                anyhow::anyhow!(
+                    "generated N-API client maybe_proto_collection_response Some call failed: {err}"
+                )
+            })?;
+        assert_eq!(
+            maybe_proto_some,
+            Some(live_echoed_strings("proto-napi-optional"))
+        );
+
+        let maybe_proto_none = service_client
+            .maybe_proto_collection_response(None)
+            .await
+            .map_err(|err| {
+                anyhow::anyhow!(
+                    "generated N-API client maybe_proto_collection_response None call failed: {err}"
+                )
+            })?;
+        assert_eq!(maybe_proto_none, None);
+
+        #[cfg(feature = "encryption")]
+        {
+            let encrypted_collection = service_client
+                .encrypted_collection(Some("secret-napi".to_string()))
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "generated N-API client encrypted_collection Some call failed: {err}"
+                    )
+                })?;
+            assert_eq!(
+                encrypted_collection,
+                live_json_collection(["secret-napi", "secret-napi-echo"])
+            );
+
+            let encrypted_collection_none = service_client
+                .encrypted_collection(None)
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "generated N-API client encrypted_collection None call failed: {err}"
+                    )
+                })?;
+            assert_eq!(
+                encrypted_collection_none,
+                live_json_collection(["none", "none-echo"])
+            );
+
+            let maybe_encrypted_some = service_client
+                .maybe_encrypted_collection_response(Some("secret-napi-optional".to_string()))
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "generated N-API client maybe_encrypted_collection_response Some call failed: {err}"
+                    )
+                })?;
+            assert_eq!(
+                maybe_encrypted_some,
+                Some(live_json_collection([
+                    "secret-napi-optional",
+                    "secret-napi-optional-echo",
+                ]))
+            );
+
+            let maybe_encrypted_none = service_client
+                .maybe_encrypted_collection_response(None)
+                .await
+                .map_err(|err| {
+                    anyhow::anyhow!(
+                        "generated N-API client maybe_encrypted_collection_response None call failed: {err}"
+                    )
+                })?;
+            assert_eq!(maybe_encrypted_none, None);
+        }
+
+        Ok::<_, anyhow::Error>(())
+    }
+    .await;
+
+    let shutdown_result = shutdown_app(
+        spawned.shutdown_tx,
+        spawned.app_handle,
+        "generated N-API client collection response",
     )
     .await;
 

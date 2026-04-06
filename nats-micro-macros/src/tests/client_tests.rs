@@ -286,6 +286,35 @@ fn optional_responses_reject_nested_options_after_markers() {
 }
 
 #[test]
+fn plain_collection_responses_use_serde_client_shapes() {
+    let method: ImplItemFn = parse_quote! {
+        async fn list() -> Result<Vec<String>, nats_micro::NatsErrorResponse> {
+            Ok(Vec::new())
+        }
+    };
+    let endpoint = endpoint_spec_for(&method, "list", None);
+    assert!(matches!(
+        &endpoint.response.shape,
+        ClientResponseShape::Serde(_)
+    ));
+    assert!(!endpoint.response.optional);
+    assert!(!endpoint.response.encrypted);
+
+    let encrypted_method: ImplItemFn = parse_quote! {
+        async fn secret_list() -> Result<nats_micro::Encrypted<Vec<String>>, nats_micro::NatsErrorResponse> {
+            Ok(nats_micro::Encrypted(Vec::new()))
+        }
+    };
+    let encrypted_endpoint = endpoint_spec_for(&encrypted_method, "secret-list", None);
+    assert!(matches!(
+        &encrypted_endpoint.response.shape,
+        ClientResponseShape::Serde(_)
+    ));
+    assert!(!encrypted_endpoint.response.optional);
+    assert!(encrypted_endpoint.response.encrypted);
+}
+
+#[test]
 fn generated_client_branches_optional_encrypted_payloads() {
     let struct_ident = parse_quote!(DemoService);
     let method: ImplItemFn = parse_quote! {
