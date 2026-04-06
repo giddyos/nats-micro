@@ -1,8 +1,8 @@
 use darling::{FromMeta, ast::NestedMeta};
 use proc_macro_crate::{FoundCrate, crate_name};
 use proc_macro2::{Span, TokenStream};
-use quote::{ToTokens, quote};
-use syn::{ImplItemFn, Meta};
+use quote::{ToTokens, quote, quote_spanned};
+use syn::{ImplItemFn, Meta, Type, spanned::Spanned};
 
 pub fn nats_micro_path() -> syn::Path {
     match crate_name("nats-micro") {
@@ -33,6 +33,15 @@ pub(crate) fn parse_attr<T: FromMeta>(attr: &syn::Attribute) -> Result<T, TokenS
     let nested = NestedMeta::parse_meta_list(meta_list.tokens.clone())
         .map_err(|error| darling::Error::from(error).write_errors())?;
     T::from_list(&nested).map_err(darling::Error::write_errors)
+}
+
+pub(crate) fn spanned_trait_assertion(ty: &Type, bound: &TokenStream) -> TokenStream {
+    quote_spanned! {ty.span()=>
+        {
+            fn __nats_micro_assert<T: #bound>() {}
+            let _: fn() = __nats_micro_assert::<#ty>;
+        };
+    }
 }
 
 pub(crate) fn conditional_attrs(method: &ImplItemFn) -> Vec<syn::Attribute> {
