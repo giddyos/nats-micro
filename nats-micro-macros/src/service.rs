@@ -12,13 +12,37 @@ use crate::utils::nats_micro_path;
 
 #[derive(Debug, FromMeta)]
 pub struct ServiceArgs {
-    name: Option<String>,
-    version: Option<String>,
+    name: String,
+    version: String,
     description: Option<String>,
     prefix: Option<String>,
     #[cfg(feature = "macros_napi_feature")]
     #[darling(default)]
     napi: bool,
+}
+
+pub(crate) fn validate_service_args(
+    args: &ServiceArgs,
+    item_struct: &ItemStruct,
+) -> syn::Result<()> {
+    if is_valid_service_version(&args.version) {
+        Ok(())
+    } else {
+        Err(syn::Error::new(
+            item_struct.ident.span(),
+            "service `version` must match x.x.x where each x is one or more ASCII digits",
+        ))
+    }
+}
+
+fn is_valid_service_version(version: &str) -> bool {
+    matches!(
+        version.split('.').collect::<Vec<_>>().as_slice(),
+        [major, minor, patch]
+            if [major, minor, patch]
+                .into_iter()
+                .all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit()))
+    )
 }
 
 pub fn expand_service(args: ServiceArgs, item_struct: &ItemStruct) -> TokenStream {
@@ -40,8 +64,7 @@ pub fn expand_service(args: ServiceArgs, item_struct: &ItemStruct) -> TokenStrea
         prefix,
     } = args;
 
-    let service_name = name.unwrap_or_else(|| item_struct.ident.to_string());
-    let version = version.unwrap_or_else(|| "0.1.0".to_string());
+    let service_name = name;
     let description = description.unwrap_or_default();
     let service_config_module = service_config_module_ident(ident);
     let prefix = if let Some(prefix) = prefix {

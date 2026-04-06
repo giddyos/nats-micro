@@ -6,6 +6,8 @@ use nats_micro_shared::{FrameworkError, TransportError as SharedTransportError};
 
 use crate::error::NatsErrorResponse;
 
+pub const X_CLIENT_VERSION_HEADER: &str = "x-client-version";
+
 fn request_failed(subject: &str, error: impl Display) -> NatsErrorResponse {
     NatsErrorResponse::transport(
         SharedTransportError::NatsRequestFailed,
@@ -43,12 +45,6 @@ impl ClientCallOptions {
     }
 
     #[cfg(feature = "encryption")]
-    pub fn recipient(mut self, pub_key: [u8; 32]) -> Self {
-        self.recipient = Some(crate::encryption::ServiceRecipient::from_bytes(pub_key));
-        self
-    }
-
-    #[cfg(feature = "encryption")]
     #[doc(hidden)]
     pub fn with_default_recipient(
         mut self,
@@ -57,6 +53,16 @@ impl ClientCallOptions {
         if self.recipient.is_none() {
             self.recipient = Some(recipient);
         }
+        self
+    }
+
+    #[doc(hidden)]
+    pub fn with_required_header(mut self, key: &'static str, value: impl Into<String>) -> Self {
+        let header_value = value
+            .into()
+            .parse::<async_nats::HeaderValue>()
+            .expect("generated client headers must be valid HTTP header values");
+        self.plaintext_headers.insert(key, header_value);
         self
     }
 
@@ -71,7 +77,7 @@ impl ClientCallOptions {
             let recipient = self.recipient.ok_or_else(|| {
                 NatsErrorResponse::framework(
                     FrameworkError::MissingRecipientPubkey,
-                    "Encrypted headers require a recipient public key. Call ClientCallOptions::recipient(...) first.",
+                    "Encrypted headers require a recipient public key. Configure the generated client with a default recipient public key.",
                 )
             })?;
             let recipient = recipient.with_client(client.clone());
@@ -128,7 +134,7 @@ impl ClientCallOptions {
             let recipient = self.recipient.ok_or_else(|| {
                 NatsErrorResponse::framework(
                     FrameworkError::MissingRecipientPubkey,
-                    "Encrypted headers require a recipient public key. Call ClientCallOptions::recipient(...) first.",
+                    "Encrypted headers require a recipient public key. Configure the generated client with a default recipient public key.",
                 )
             })?;
             let recipient = recipient.with_client(client.clone());
@@ -179,7 +185,7 @@ impl ClientCallOptions {
         let recipient = self.recipient.ok_or_else(|| {
             NatsErrorResponse::framework(
                 FrameworkError::MissingRecipientPubkey,
-                "Encrypted payloads require a recipient public key. Call ClientCallOptions::recipient(...) first.",
+                "Encrypted payloads require a recipient public key. Configure the generated client with a default recipient public key.",
             )
         })?;
         let recipient = recipient.with_client(client.clone());

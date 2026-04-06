@@ -830,16 +830,20 @@ pub(crate) fn generate_client_napi_module(
                 recipient,
             } = #nats_micro::__napi::connect(server, options.into()).await?;
 
-            let mut inner = match subject_prefix {
+            let recipient_public_key = recipient.as_ref().map(#nats_micro::ServiceRecipient::to_bytes);
+            let inner = match subject_prefix {
                 Some(subject_prefix) => {
-                    #rust_client_module::#rust_client_struct::with_prefix(client, subject_prefix)
+                    #rust_client_module::#rust_client_struct::with_prefix(
+                        client,
+                        subject_prefix,
+                        recipient_public_key,
+                    )
                 }
-                None => #rust_client_module::#rust_client_struct::new(client),
+                None => #rust_client_module::#rust_client_struct::new(
+                    client,
+                    recipient_public_key,
+                ),
             };
-
-            if let Some(recipient) = recipient {
-                inner = inner.with_recipient(recipient);
-            }
 
             Ok(Self {
                 inner,

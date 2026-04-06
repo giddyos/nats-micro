@@ -54,7 +54,7 @@ pub use shutdown_signal::ShutdownSignal;
 pub use state::StateMap;
 
 #[cfg(feature = "client")]
-pub use client::ClientCallOptions;
+pub use client::{ClientCallOptions, X_CLIENT_VERSION_HEADER};
 
 #[cfg(feature = "encryption")]
 pub use encryption::{

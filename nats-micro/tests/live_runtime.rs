@@ -25,6 +25,7 @@ use nats_micro::napi;
 #[cfg(feature = "client")]
 use nats_micro::{
     ClientCallOptions, Headers, Json, NatsService, Proto, RequestId, Subject, SubjectParam,
+    X_CLIENT_VERSION_HEADER,
 };
 use nats_micro::{
     ConsumerDefinition, EndpointDefinition, NatsApp, NatsErrorResponse, Payload, ServiceDefinition,
@@ -42,7 +43,7 @@ use tokio::{
 };
 use uuid::Uuid;
 
-#[service(name = "live-queue-alpha")]
+#[service(name = "live-queue-alpha", version = "1.0.0")]
 struct LiveQueueAlphaService;
 
 #[service_handlers]
@@ -53,7 +54,7 @@ impl LiveQueueAlphaService {
     }
 }
 
-#[service(name = "live-queue-beta")]
+#[service(name = "live-queue-beta", version = "1.0.0")]
 struct LiveQueueBetaService;
 
 #[service_handlers]
@@ -64,7 +65,7 @@ impl LiveQueueBetaService {
     }
 }
 
-#[service(name = "live-supervision")]
+#[service(name = "live-supervision", version = "1.0.0")]
 struct LiveSupervisionService;
 
 #[service_handlers]
@@ -113,6 +114,7 @@ pub struct LiveClientRequestSnapshot {
     pub trace_id: Option<String>,
     pub client_name: Option<String>,
     pub client_mode: Option<String>,
+    pub client_version: Option<String>,
 }
 
 #[cfg(feature = "client")]
@@ -132,8 +134,14 @@ enum LiveGeneratedClientError {
 }
 
 #[cfg(feature = "client")]
-#[cfg_attr(feature = "napi", service(name = "live-generated-client", napi = true))]
-#[cfg_attr(not(feature = "napi"), service(name = "live-generated-client"))]
+#[cfg_attr(
+    feature = "napi",
+    service(name = "live-generated-client", version = "1.0.0", napi = true)
+)]
+#[cfg_attr(
+    not(feature = "napi"),
+    service(name = "live-generated-client", version = "1.0.0")
+)]
 struct LiveGeneratedClientService;
 
 #[cfg(feature = "client")]
@@ -161,6 +169,9 @@ impl LiveGeneratedClientService {
                 .map(|header| header.as_str().to_string()),
             client_mode: headers
                 .get("x-client-mode")
+                .map(|header| header.as_str().to_string()),
+            client_version: headers
+                .get(X_CLIENT_VERSION_HEADER)
                 .map(|header| header.as_str().to_string()),
         }))
     }
@@ -318,7 +329,7 @@ impl ShutdownProbe {
     }
 }
 
-#[service(name = "live-consumer-flow")]
+#[service(name = "live-consumer-flow", version = "1.0.0")]
 struct LiveConsumerFlowService;
 
 #[service_handlers]
@@ -340,7 +351,7 @@ impl LiveConsumerFlowService {
     }
 }
 
-#[service(name = "live-shutdown-endpoint")]
+#[service(name = "live-shutdown-endpoint", version = "1.0.0")]
 struct LiveShutdownEndpointService;
 
 #[service_handlers]
@@ -362,7 +373,7 @@ impl LiveShutdownEndpointService {
     }
 }
 
-#[service(name = "live-shutdown-consumer")]
+#[service(name = "live-shutdown-consumer", version = "1.0.0")]
 struct LiveShutdownConsumerService;
 
 #[service_handlers]
@@ -748,6 +759,7 @@ async fn live_generated_client_headers_subjects_and_return_types_round_trip() ->
                 trace_id: Some("trace-rust".to_string()),
                 client_name: Some("rust-client".to_string()),
                 client_mode: Some("direct".to_string()),
+                client_version: Some("1.0.0".to_string()),
             }
         );
 
@@ -1079,6 +1091,7 @@ async fn live_generated_napi_client_headers_subjects_and_return_types_round_trip
                 trace_id: None,
                 client_name: Some("connect-default".to_string()),
                 client_mode: Some("connect-default".to_string()),
+                client_version: Some("1.0.0".to_string()),
             }
         );
         assert!(!initial_snapshot.request_id.is_empty());
@@ -1108,6 +1121,7 @@ async fn live_generated_napi_client_headers_subjects_and_return_types_round_trip
                 trace_id: Some("trace-napi".to_string()),
                 client_name: Some("runtime-default".to_string()),
                 client_mode: Some("per-call".to_string()),
+                client_version: Some("1.0.0".to_string()),
             }
         );
 
@@ -1670,9 +1684,10 @@ fn build_live_generated_client(
     #[cfg(feature = "encryption")]
     {
         live_generated_client_service_client::LiveGeneratedClientServiceClient::with_prefix(
-            client, prefix,
+            client,
+            prefix,
+            Some(recipient),
         )
-        .with_recipient(recipient)
     }
 
     #[cfg(not(feature = "encryption"))]

@@ -24,7 +24,10 @@ pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
     let item_struct = parse_macro_input!(item as ItemStruct);
     match service::ServiceArgs::from_list(&attr_args) {
-        Ok(args) => service::expand_service(args, &item_struct).into(),
+        Ok(args) => match service::validate_service_args(&args, &item_struct) {
+            Ok(()) => service::expand_service(args, &item_struct).into(),
+            Err(error) => error.to_compile_error().into(),
+        },
         Err(e) => e.write_errors().into(),
     }
 }
