@@ -2,13 +2,16 @@ use std::collections::BTreeSet;
 
 use darling::FromMeta;
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
-use syn::{FnArg, GenericArgument, ImplItemFn, Pat, PathArguments, ReturnType, Signature, Type};
+use quote::{format_ident, quote, quote_spanned};
+use syn::{
+    FnArg, GenericArgument, ImplItemFn, Pat, PathArguments, ReturnType, Signature, Type,
+    spanned::Spanned,
+};
 
 use crate::{
     client::{ClientEndpointSpec, build_endpoint_client_spec},
     service::GeneratedHandlerItem,
-    utils::{conditional_attrs, nats_micro_path, parse_attr},
+    utils::{conditional_attrs, nats_micro_path, parse_attr, spanned_trait_assertion},
 };
 
 #[derive(Debug, FromMeta)]
@@ -175,14 +178,139 @@ fn response_encoding_tokens(enc: &ResponseEncoding, nats_micro: &syn::Path) -> T
     }
 }
 
+fn handler_response_assertions(
+    ok_type: &Type,
+    error_type: &Type,
+    response_meta: &ResponseMeta,
+    nats_micro: &syn::Path,
+) -> Vec<TokenStream> {
+    let mut assertions = vec![spanned_trait_assertion(
+        error_type,
+        &quote!(#nats_micro::__macros::IntoNatsError),
+    )];
+
+    match response_meta.encoding {
+        ResponseEncoding::Json | ResponseEncoding::Serde => {
+            if let Some(inner_type) = response_meta.inner_type.as_ref() {
+                assertions.push(spanned_trait_assertion(
+                    inner_type,
+                    &quote!(#nats_micro::serde::Serialize),
+                ));
+            }
+        }
+        ResponseEncoding::Proto => {
+            if let Some(inner_type) = response_meta.inner_type.as_ref() {
+                assertions.push(spanned_trait_assertion(
+                    inner_type,
+                    &quote!(#nats_micro::prost::Message),
+                ));
+            }
+        }
+        ResponseEncoding::Raw | ResponseEncoding::Unit => {
+            assertions.push(spanned_trait_assertion(
+                ok_type,
+                &quote!(#nats_micro::__macros::IntoNatsResponse),
+            ));
+        }
+    }
+
+    assertions
+}
+
+fn response_into_transport(response_meta: &ResponseMeta, nats_micro: &syn::Path) -> TokenStream {
+    match (
+        &response_meta.encoding,
+        response_meta.optional,
+        response_meta.encrypted,
+    ) {
+        (ResponseEncoding::Serde, false, false) => quote! { #nats_micro::Json(response) },
+        (ResponseEncoding::Serde, true, false) => quote! { response.map(#nats_micro::Json) },
+        (ResponseEncoding::Serde, false, true) => quote! {{
+            let __nats_micro_encrypted = response;
+            #nats_micro::Encrypted(#nats_micro::Json(__nats_micro_encrypted.into_inner()))
+        }},
+        (ResponseEncoding::Serde, true, true) => quote! {
+            response.map(|__nats_micro_encrypted| {
+                #nats_micro::Encrypted(#nats_micro::Json(__nats_micro_encrypted.into_inner()))
+            })
+        },
+        _ => quote! { response },
+    }
+}
+
+fn response_error_span(ok_type: &Type, response_meta: &ResponseMeta) -> proc_macro2::Span {
+    response_meta
+        .inner_type
+        .as_ref()
+        .map_or_else(|| ok_type.span(), syn::spanned::Spanned::span)
+}
+
+pub(crate) fn extract_result_types(sig: &Signature) -> Result<(&Type, &Type), syn::Error> {
+    let ReturnType::Type(_, ty) = &sig.output else {
+        return Err(syn::Error::new_spanned(
+            &sig.output,
+            "handler must return Result<T, E>",
+        ));
+    };
+
+    let Type::Path(type_path) = ty.as_ref() else {
+        return Err(syn::Error::new_spanned(
+            ty,
+            "handler must return Result<T, E>",
+        ));
+    };
+
+    let Some(segment) = type_path.path.segments.last() else {
+        return Err(syn::Error::new_spanned(
+            ty,
+            "handler must return Result<T, E>",
+        ));
+    };
+
+    if segment.ident != "Result" {
+        return Err(syn::Error::new_spanned(
+            ty,
+            "handler must return Result<T, E>",
+        ));
+    }
+
+    let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
+        return Err(syn::Error::new_spanned(
+            ty,
+            "handler must return Result<T, E>",
+        ));
+    };
+
+    let mut generic_args = arguments.args.iter();
+    let Some(GenericArgument::Type(ok_type)) = generic_args.next() else {
+        return Err(syn::Error::new_spanned(
+            ty,
+            "handler must return Result<T, E>",
+        ));
+    };
+    let Some(GenericArgument::Type(error_type)) = generic_args.next() else {
+        return Err(syn::Error::new_spanned(
+            ty,
+            "handler must return Result<T, E>",
+        ));
+    };
+
+    Ok((ok_type, error_type))
+}
+
 pub(crate) fn build_handler_body(
     fn_path: &TokenStream,
     sig: &Signature,
 ) -> Result<TokenStream, TokenStream> {
     let nats_micro = nats_micro_path();
     let requires_shutdown_signal = requires_shutdown_signal(sig);
+    let (ok_type, error_type) =
+        extract_result_types(sig).map_err(|error| error.to_compile_error())?;
+    let response_meta = classify_return_type(sig).map_err(|error| error.to_compile_error())?;
     let mut extractors = Vec::new();
     let mut args = Vec::new();
+    let mut assertions =
+        handler_response_assertions(ok_type, error_type, &response_meta, &nats_micro);
 
     for input in &sig.inputs {
         let FnArg::Typed(pat_type) = input else {
@@ -202,6 +330,10 @@ pub(crate) fn build_handler_body(
 
         let ident = &pat_ident.ident;
         let ty = &pat_type.ty;
+        assertions.push(spanned_trait_assertion(
+            ty,
+            &quote!(#nats_micro::__macros::FromRequest),
+        ));
         let ctx_expr = if is_subject_param(ty) {
             let param_name = subject_param_template_name(&ident.to_string()).to_string();
             quote! { &ctx.with_param_name(#param_name) }
@@ -218,15 +350,22 @@ pub(crate) fn build_handler_body(
         args.push(quote! { #ident });
     }
 
+    let response_into_transport = response_into_transport(&response_meta, &nats_micro);
+    let into_response_call = quote_spanned! {response_error_span(ok_type, &response_meta)=>
+        #nats_micro::__macros::IntoNatsResponse::into_response(response, &ctx)
+    };
+
     Ok(quote! {
         #nats_micro::HandlerFn::new_with_shutdown_signal_support(#requires_shutdown_signal, move |ctx: #nats_micro::__macros::RequestContext| {
             ::std::boxed::Box::pin(async move {
                 let __request_id = ctx.request.request_id.clone();
+                #(#assertions)*
                 #(#extractors)*
                 let response = #fn_path(#(#args),*)
                     .await
                     .map_err(|err| #nats_micro::__macros::IntoNatsError::into_nats_error(err, __request_id.clone()))?;
-                #nats_micro::__macros::IntoNatsResponse::into_response(response, &ctx)
+                let response = #response_into_transport;
+                #into_response_call
             })
         })
     })
@@ -830,6 +969,8 @@ fn classify_response(ty: &Type) -> Result<ResponseMeta, syn::Error> {
         (false, ty)
     };
 
+    validate_response_marker_order(inner)?;
+
     if let Type::Tuple(tuple) = inner
         && tuple.elems.is_empty()
     {
@@ -861,52 +1002,43 @@ fn is_option_auth(ty: &Type) -> bool {
     }
 }
 
-pub(crate) fn classify_return_type(sig: &Signature) -> Result<ResponseMeta, TokenStream> {
-    let ReturnType::Type(_, return_type) = &sig.output else {
-        return Ok(ResponseMeta {
-            encoding: ResponseEncoding::Unit,
-            encrypted: false,
-            optional: false,
-            inner_type: None,
-        });
-    };
+fn validate_response_marker_order(mut ty: &Type) -> Result<(), syn::Error> {
+    let mut outermost_marker = true;
 
-    let ty = return_type.as_ref();
-
-    if let Type::Tuple(tuple) = ty
-        && tuple.elems.is_empty()
-    {
-        return Ok(ResponseMeta {
-            encoding: ResponseEncoding::Unit,
-            encrypted: false,
-            optional: false,
-            inner_type: None,
-        });
-    }
-
-    let Type::Path(type_path) = ty else {
-        return classify_response(ty).map_err(|error| error.to_compile_error());
-    };
-
-    let segment = type_path.path.segments.last().unwrap();
-    if segment.ident == "Result"
-        && let PathArguments::AngleBracketed(arguments) = &segment.arguments
-        && let Some(GenericArgument::Type(ok_type)) = arguments.args.first()
-    {
-        if let Type::Tuple(tuple) = ok_type
-            && tuple.elems.is_empty()
-        {
-            return Ok(ResponseMeta {
-                encoding: ResponseEncoding::Unit,
-                encrypted: false,
-                optional: false,
-                inner_type: None,
-            });
+    loop {
+        match last_segment_ident(ty).as_deref() {
+            Some("Encrypted") => {
+                if !outermost_marker {
+                    return Err(syn::Error::new_spanned(
+                        ty,
+                        "`Encrypted<T>` may only be the outermost response marker; use `Encrypted<Json<T>>`, `Encrypted<Proto<T>>`, or `Encrypted<T>`",
+                    ));
+                }
+                ty = extract_single_generic_arg(ty).ok_or_else(|| {
+                    syn::Error::new_spanned(
+                        ty,
+                        "response marker types require a single generic argument",
+                    )
+                })?;
+                outermost_marker = false;
+            }
+            Some("Json" | "Proto") => {
+                ty = extract_single_generic_arg(ty).ok_or_else(|| {
+                    syn::Error::new_spanned(
+                        ty,
+                        "response marker types require a single generic argument",
+                    )
+                })?;
+                outermost_marker = false;
+            }
+            _ => return Ok(()),
         }
-        return classify_response(ok_type).map_err(|error| error.to_compile_error());
     }
+}
 
-    classify_response(ty).map_err(|error| error.to_compile_error())
+pub(crate) fn classify_return_type(sig: &Signature) -> Result<ResponseMeta, syn::Error> {
+    let (ok_type, _) = extract_result_types(sig)?;
+    classify_response(ok_type)
 }
 
 pub(crate) fn extract_client_meta(sig: &Signature) -> Result<EndpointClientMeta, TokenStream> {
@@ -947,7 +1079,7 @@ pub(crate) fn extract_client_meta(sig: &Signature) -> Result<EndpointClientMeta,
         }
     }
 
-    let response = classify_return_type(sig)?;
+    let response = classify_return_type(sig).map_err(|error| error.to_compile_error())?;
 
     Ok(EndpointClientMeta {
         subject_params,
