@@ -21,12 +21,12 @@ syn = { version = "2", features = ["full", "extra-traits"] }
 nats-micro-shared = { path = "../nats-micro-shared" }
 
 [lints.clippy]
-complexity   = { priority = -1, level = "deny" }
-correctness  = { priority = -1, level = "deny" }
-pedantic    = { priority = -1, level = "deny" } #
-perf         = { priority = -1, level = "deny" }
-style        = { priority = -1, level = "deny" }
-suspicious   = { priority = -1, level = "deny" }
+complexity = { priority = -1, level = "deny" }
+correctness = { priority = -1, level = "deny" }
+pedantic = { priority = -1, level = "deny" }
+perf = { priority = -1, level = "deny" }
+style = { priority = -1, level = "deny" }
+suspicious = { priority = -1, level = "deny" }
 
 single_call_fn = "allow"
 implicit_return = "allow"
