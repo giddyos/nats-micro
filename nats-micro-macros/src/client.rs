@@ -1,13 +1,14 @@
 use heck::ToSnakeCase;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{GenericArgument, ImplItemFn, PathArguments, Type};
+use syn::{ImplItemFn, Type};
 
 use crate::endpoint::{
     EndpointArgs, PayloadEncoding, PayloadMeta, ResponseEncoding, ResponseMeta, SubjectParamMeta,
-    extract_client_meta, last_segment_ident, parse_subject_template, validate_template_bindings,
+    extract_client_meta, extract_result_types, last_segment_ident, parse_subject_template,
+    validate_template_bindings,
 };
-use crate::utils::nats_micro_path;
+use crate::utils::{nats_micro_path, spanned_trait_assertion};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ClientModuleSpec {
@@ -505,6 +506,50 @@ impl ClientResponseSpec {
     }
 }
 
+fn render_client_assertions(endpoint: &ClientEndpointSpec) -> Vec<TokenStream> {
+    let nats_micro = nats_micro_path();
+    let mut assertions = vec![spanned_trait_assertion(
+        &endpoint.error_type,
+        &quote!(#nats_micro::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static),
+    )];
+
+    if let Some(payload) = endpoint.payload.as_ref() {
+        match &payload.shape {
+            ClientPayloadShape::Json(ty) | ClientPayloadShape::Serde(ty) => {
+                assertions.push(spanned_trait_assertion(
+                    ty,
+                    &quote!(#nats_micro::serde::Serialize),
+                ));
+            }
+            ClientPayloadShape::Proto(ty) => {
+                assertions.push(spanned_trait_assertion(
+                    ty,
+                    &quote!(#nats_micro::prost::Message),
+                ));
+            }
+            ClientPayloadShape::Raw(_) => {}
+        }
+    }
+
+    match &endpoint.response.shape {
+        ClientResponseShape::Json(ty) | ClientResponseShape::Serde(ty) => {
+            assertions.push(spanned_trait_assertion(
+                ty,
+                &quote!(#nats_micro::serde::de::DeserializeOwned),
+            ));
+        }
+        ClientResponseShape::Proto(ty) => {
+            assertions.push(spanned_trait_assertion(
+                ty,
+                &quote!(#nats_micro::prost::Message + ::std::default::Default),
+            ));
+        }
+        ClientResponseShape::Unit | ClientResponseShape::Raw(_) => {}
+    }
+
+    assertions
+}
+
 pub(crate) fn build_endpoint_client_spec(
     method: &ImplItemFn,
     args: &EndpointArgs,
@@ -513,7 +558,8 @@ pub(crate) fn build_endpoint_client_spec(
     let (pattern, template_params) = parse_subject_template(&args.subject, &method.sig.ident)?;
     validate_template_bindings(&method.sig, &template_params)?;
 
-    let error_type = extract_result_error_type(&method.sig)?;
+    let (_, error_type) =
+        extract_result_types(&method.sig).map_err(|error| error.to_compile_error())?;
     let client_meta = extract_client_meta(&method.sig)?;
     let payload_meta = client_meta.payload;
     let response_meta = client_meta.response;
@@ -523,7 +569,7 @@ pub(crate) fn build_endpoint_client_spec(
     Ok(ClientEndpointSpec {
         attrs,
         fn_name: method.sig.ident.clone(),
-        error_type,
+        error_type: error_type.clone(),
         group: args.group.clone().unwrap_or_default(),
         subject: ClientSubjectSpec {
             template: args.subject.clone(),
@@ -559,49 +605,6 @@ pub(crate) fn generate_client_module(
     build_client_module_spec(struct_ident, service_name_str, endpoints).render_rust_tokens()
 }
 
-fn extract_result_error_type(sig: &syn::Signature) -> Result<Type, TokenStream> {
-    let syn::ReturnType::Type(_, ty) = &sig.output else {
-        return Err(
-            syn::Error::new_spanned(&sig.output, "endpoint must return Result<T, E>")
-                .to_compile_error(),
-        );
-    };
-
-    let Type::Path(type_path) = ty.as_ref() else {
-        return Err(
-            syn::Error::new_spanned(ty, "endpoint must return Result<T, E>").to_compile_error(),
-        );
-    };
-
-    let Some(segment) = type_path.path.segments.last() else {
-        return Err(
-            syn::Error::new_spanned(ty, "endpoint must return Result<T, E>").to_compile_error(),
-        );
-    };
-
-    if segment.ident != "Result" {
-        return Err(
-            syn::Error::new_spanned(ty, "endpoint must return Result<T, E>").to_compile_error(),
-        );
-    }
-
-    let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
-        return Err(
-            syn::Error::new_spanned(ty, "endpoint must return Result<T, E>").to_compile_error(),
-        );
-    };
-
-    let mut generic_args = arguments.args.iter();
-    let _ok_type = generic_args.next();
-    let Some(GenericArgument::Type(error_type)) = generic_args.next() else {
-        return Err(
-            syn::Error::new_spanned(ty, "endpoint must return Result<T, E>").to_compile_error(),
-        );
-    };
-
-    Ok(error_type.clone())
-}
-
 fn raw_value_kind(ty: &Type) -> RawValueKind {
     let is_str_ref = matches!(ty, Type::Reference(reference) if matches!(&*reference.elem, Type::Path(path) if path.path.is_ident("str")));
     match last_segment_ident(ty).as_deref() {
@@ -623,6 +626,7 @@ fn render_client_method(endpoint: &ClientEndpointSpec) -> TokenStream {
     let fn_with_ident = format_ident!("{}_with", fn_ident);
     let error_type = &endpoint.error_type;
     let return_type = endpoint.response.return_type_tokens();
+    let assertions = render_client_assertions(endpoint);
 
     let subject_param_args = endpoint.subject.parameter_args();
     let payload_fn_args = endpoint
@@ -663,6 +667,7 @@ fn render_client_method(endpoint: &ClientEndpointSpec) -> TokenStream {
             #(#all_with_args,)*
             options: #nats_micro::ClientCallOptions,
         ) -> Result<#return_type, #nats_micro::ClientError<#error_type>> {
+            #(#assertions)*
             #with_body
         }
     }
