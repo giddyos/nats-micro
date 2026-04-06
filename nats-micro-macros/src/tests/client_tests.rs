@@ -40,17 +40,40 @@ fn generated_client_uses_service_metadata_prefix() {
 
     let expanded = generate_client_module(&struct_ident, "DemoService", &[]).to_string();
 
-    assert!(expanded.contains("DemoService :: __nats_micro_service_meta () . subject_prefix"));
+    assert!(expanded.contains("let service_meta = DemoService :: __nats_micro_service_meta ()"));
+    assert!(expanded.contains("prefix : service_meta . subject_prefix"));
+    assert!(expanded.contains("service_version : String"));
     assert!(expanded.contains("build_subject"));
     assert!(expanded.contains("self . prefix . as_deref ()"));
+    assert!(expanded.contains("X_CLIENT_VERSION_HEADER"));
+    assert!(expanded.contains("with_required_header"));
     if cfg!(feature = "macros_encryption_feature") {
         assert!(expanded.contains("recipient : Option <"));
+        assert!(expanded.contains("recipient_public_key : Option < [u8 ; 32] >"));
         assert!(expanded.contains(
             "Some (recipient) => options . with_default_recipient (recipient . clone ())"
         ));
         assert!(!expanded.contains("# [cfg (feature = \"encryption\") ]"));
     }
     assert!(!expanded.contains("# [cfg (feature = \"macros_encryption_feature\") ]"));
+}
+
+#[test]
+fn generated_client_omits_recipient_constructor_args_without_encryption() {
+    let struct_ident = parse_quote!(DemoService);
+    let mut module_spec = build_client_module_spec(&struct_ident, "DemoService", &[]);
+    module_spec.encryption_enabled = false;
+
+    let expanded = module_spec.render_rust_tokens().to_string();
+
+    assert!(
+        expanded.contains("pub fn new (client : :: nats_micro :: async_nats :: Client) -> Self")
+    );
+    assert!(expanded.contains("pub fn with_prefix"));
+    assert!(expanded.contains("prefix : impl Into < String >"));
+    assert!(!expanded.contains("recipient_public_key"));
+    assert!(!expanded.contains("recipient : Option <"));
+    assert!(!expanded.contains("with_recipient"));
 }
 
 #[test]

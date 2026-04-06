@@ -1,4 +1,4 @@
-use super::{ServiceArgs, expand_service, expand_service_handlers};
+use super::{ServiceArgs, expand_service, expand_service_handlers, validate_service_args};
 use syn::{ItemImpl, parse_quote};
 
 #[test]
@@ -8,8 +8,8 @@ fn service_metadata_includes_prefix_when_present() {
     };
     let tokens = expand_service(
         ServiceArgs {
-            name: Some("demo".to_string()),
-            version: Some("1.0.0".to_string()),
+            name: "demo".to_string(),
+            version: "1.0.0".to_string(),
             description: Some("test".to_string()),
             prefix: Some("api".to_string()),
             #[cfg(feature = "macros_napi_feature")]
@@ -31,8 +31,8 @@ fn service_expansion_emits_napi_gate_module() {
     };
     let tokens = expand_service(
         ServiceArgs {
-            name: Some("demo".to_string()),
-            version: Some("1.0.0".to_string()),
+            name: "demo".to_string(),
+            version: "1.0.0".to_string(),
             description: Some("test".to_string()),
             prefix: None,
             napi: true,
@@ -79,6 +79,43 @@ fn service_handlers_collect_endpoint_and_consumer_wiring() {
     assert!(!expanded.contains("# [ consumer"));
     assert!(expanded.contains("cfg (feature = \"demo\")"));
     assert!(expanded.contains("pub fn __ep_status"));
+}
+
+#[test]
+fn service_args_reject_non_numeric_semver() {
+    let item_struct = parse_quote! {
+        struct DemoService;
+    };
+
+    assert!(
+        validate_service_args(
+            &ServiceArgs {
+                name: "demo".to_string(),
+                version: "1.2.3".to_string(),
+                description: None,
+                prefix: None,
+                #[cfg(feature = "macros_napi_feature")]
+                napi: false,
+            },
+            &item_struct,
+        )
+        .is_ok()
+    );
+
+    let err = validate_service_args(
+        &ServiceArgs {
+            name: "demo".to_string(),
+            version: "1.2".to_string(),
+            description: None,
+            prefix: None,
+            #[cfg(feature = "macros_napi_feature")]
+            napi: false,
+        },
+        &item_struct,
+    )
+    .unwrap_err();
+
+    assert!(err.to_string().contains("x.x.x"));
 }
 
 #[test]
