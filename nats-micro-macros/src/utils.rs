@@ -37,10 +37,8 @@ pub(crate) fn parse_attr<T: FromMeta>(attr: &syn::Attribute) -> Result<T, TokenS
 
 pub(crate) fn spanned_trait_assertion(ty: &Type, bound: &TokenStream) -> TokenStream {
     quote_spanned! {ty.span()=>
-        {
-            #[doc(hidden)]
-            fn __nats_micro_assert<T: #bound>() {}
-            let _: fn() = __nats_micro_assert::<#ty>;
+        const _: () = {
+            struct _AssertBound where #ty: #bound;
         };
     }
 }
