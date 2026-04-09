@@ -8,7 +8,6 @@ use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
     aead::{Aead, KeyInit},
 };
-use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use x25519_dalek::{PublicKey, StaticSecret};
@@ -21,8 +20,6 @@ pub use self::{headers::decrypt_headers, payload::Encrypted};
 
 type HmacSha256 = Hmac<Sha256>;
 
-const HKDF_INFO: &[u8] = b"nats-micro-v1";
-const HKDF_SIG_INFO: &[u8] = b"nats-micro-v1-sig";
 const EPH_PUB_LEN: usize = 32;
 const NONCE_LEN: usize = 24;
 const TAG_LEN: usize = 16;
@@ -71,30 +68,13 @@ impl EncryptionError {
     }
 }
 
-fn derive_key(dh_output: &[u8]) -> Zeroizing<[u8; 32]> {
-    let hk = Hkdf::<Sha256>::new(None, dh_output);
-    let mut key = [0u8; 32];
-    hk.expand(HKDF_INFO, &mut key)
-        .expect("32-byte output is always valid for HKDF-SHA256");
-    Zeroizing::new(key)
-}
-
-fn derive_sig_key(shared_key: &[u8; 32]) -> Zeroizing<[u8; 32]> {
-    let hk = Hkdf::<Sha256>::new(None, shared_key);
-    let mut key = [0u8; 32];
-    hk.expand(HKDF_SIG_INFO, &mut key)
-        .expect("32-byte output is always valid for HKDF-SHA256");
-    Zeroizing::new(key)
-}
-
 pub fn compute_signature(
     shared_key: &[u8; 32],
     payload: &[u8],
     encrypted_headers_value: Option<&str>,
 ) -> Vec<u8> {
-    let sig_key = derive_sig_key(shared_key);
     let mut mac =
-        <HmacSha256 as Mac>::new_from_slice(&*sig_key).expect("HMAC accepts any key length");
+        <HmacSha256 as Mac>::new_from_slice(shared_key).expect("HMAC accepts any key length");
     mac.update(payload);
     if let Some(val) = encrypted_headers_value {
         mac.update(val.as_bytes());
@@ -108,9 +88,8 @@ pub fn verify_signature(
     encrypted_headers_value: Option<&str>,
     signature: &[u8],
 ) -> Result<(), EncryptionError> {
-    let sig_key = derive_sig_key(shared_key);
     let mut mac =
-        <HmacSha256 as Mac>::new_from_slice(&*sig_key).expect("HMAC accepts any key length");
+        <HmacSha256 as Mac>::new_from_slice(shared_key).expect("HMAC accepts any key length");
     mac.update(payload);
     if let Some(val) = encrypted_headers_value {
         mac.update(val.as_bytes());
@@ -175,7 +154,7 @@ impl ServiceKeyPair {
     pub fn derive_shared_key(&self, ephemeral_pub_bytes: &[u8; 32]) -> Zeroizing<[u8; 32]> {
         let eph_pub = PublicKey::from(*ephemeral_pub_bytes);
         let dh = self.secret.diffie_hellman(&eph_pub);
-        derive_key(dh.as_bytes())
+        Zeroizing::new(*dh.as_bytes())
     }
 
     pub fn decrypt(&self, data: &[u8]) -> Result<Vec<u8>, EncryptionError> {
@@ -285,7 +264,7 @@ impl ServiceRecipient {
         let eph_secret = StaticSecret::random_from_rng(rand::rngs::OsRng);
         let eph_public = PublicKey::from(&eph_secret);
         let dh = eph_secret.diffie_hellman(&self.public_key);
-        let shared_secret = derive_key(dh.as_bytes());
+        let shared_secret = Zeroizing::new(*dh.as_bytes());
         EphemeralContext {
             ephemeral_pub: *eph_public.as_bytes(),
             shared_secret,
