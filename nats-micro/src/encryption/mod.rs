@@ -151,6 +151,20 @@ impl ServiceKeyPair {
         Self { secret, public }
     }
 
+    pub fn from_private_key_base64(encoded: &str) -> Result<Self, base64::DecodeError> {
+        let bytes = STANDARD.decode(encoded)?;
+        let bytes_len = bytes.len();
+        let bytes_array: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| base64::DecodeError::InvalidLength(bytes_len))?;
+        Ok(Self::from_private_bytes(bytes_array))
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn expose_secret_b64(&self) -> String {
+        STANDARD.encode(self.secret.as_bytes())
+    }
+
     pub fn derive_shared_key(&self, ephemeral_pub_bytes: &[u8; 32]) -> Zeroizing<[u8; 32]> {
         let eph_pub = PublicKey::from(*ephemeral_pub_bytes);
         let dh = self.secret.diffie_hellman(&eph_pub);
