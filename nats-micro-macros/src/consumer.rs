@@ -42,12 +42,13 @@ pub(crate) fn process_consumer_method(
     let fn_path = quote! { #struct_ident::#fn_name };
     let handler = build_handler_body(&fn_path, &method.sig)?;
     let param_infos = extract_param_info(&method.sig)?;
+    let attrs = conditional_attrs(method);
     let def_method_name = format_ident!("__con_{}", fn_name);
     let accessor_name = format_ident!("{}_consumer", fn_name);
     let fn_name_str = fn_name.to_string();
 
     Ok(GeneratedHandlerItem {
-        attrs: conditional_attrs(method),
+        attrs,
         def_fn: quote! {
             #[doc(hidden)]
             pub fn #def_method_name() -> #nats_micro::ConsumerDefinition {
@@ -92,8 +93,7 @@ fn consumer_config_tokens(
     config: Option<ConsumerConfigExpr>,
     nats_micro: &syn::Path,
 ) -> TokenStream {
-    if let Some(config) = config {
-        let expr = config.0;
+    if let Some(ConsumerConfigExpr(expr)) = config {
         quote! {{
             let __config: #nats_micro::__macros::ConsumerConfig = (#expr);
             __config

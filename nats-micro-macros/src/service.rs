@@ -25,23 +25,24 @@ pub(crate) fn validate_service_args(
     args: &ServiceArgs,
     item_struct: &ItemStruct,
 ) -> syn::Result<()> {
-    if is_valid_service_version(&args.version) {
-        Ok(())
-    } else {
-        Err(syn::Error::new(
-            item_struct.ident.span(),
-            "service `version` must match x.x.x where each x is one or more ASCII digits",
-        ))
-    }
+    is_valid_service_version(&args.version)
+        .then_some(())
+        .ok_or_else(|| {
+            syn::Error::new(
+                item_struct.ident.span(),
+                "service `version` must match x.x.x where each x is one or more ASCII digits",
+            )
+        })
 }
 
 fn is_valid_service_version(version: &str) -> bool {
+    let mut parts = version.split('.');
     matches!(
-        version.split('.').collect::<Vec<_>>().as_slice(),
-        [major, minor, patch]
+        (parts.next(), parts.next(), parts.next(), parts.next()),
+        (Some(major), Some(minor), Some(patch), None)
             if [major, minor, patch]
                 .into_iter()
-                .all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit()))
+                .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
     )
 }
 
@@ -78,27 +79,7 @@ pub fn expand_service(args: ServiceArgs, item_struct: &ItemStruct) -> TokenStrea
     #[cfg(not(feature = "macros_napi_feature"))]
     let napi_enabled = false;
 
-    let emit_napi_items = if napi_enabled {
-        quote! {
-            #[allow(unused_macros)]
-            macro_rules! emit_napi_items {
-                ($($item:item)*) => {
-                    $($item)*
-                };
-            }
-
-            pub(crate) use emit_napi_items;
-        }
-    } else {
-        quote! {
-            #[allow(unused_macros)]
-            macro_rules! emit_napi_items {
-                ($($item:item)*) => {};
-            }
-
-            pub(crate) use emit_napi_items;
-        }
-    };
+    let emit_napi_items = emit_napi_items_tokens(napi_enabled);
 
     quote! {
         #item_struct
@@ -144,10 +125,6 @@ struct ServiceExpansion {
 }
 
 impl ServiceExpansion {
-    fn push_regular_item(&mut self, item: &ImplItem) {
-        self.cleaned_items.push(item.clone());
-    }
-
     fn push_endpoint(
         &mut self,
         method: &ImplItemFn,
@@ -260,6 +237,30 @@ fn service_config_module_ident(service_ident: &syn::Ident) -> syn::Ident {
     )
 }
 
+fn emit_napi_items_tokens(napi_enabled: bool) -> TokenStream {
+    if napi_enabled {
+        quote! {
+            #[allow(unused_macros)]
+            macro_rules! emit_napi_items {
+                ($($item:item)*) => {
+                    $($item)*
+                };
+            }
+
+            pub(crate) use emit_napi_items;
+        }
+    } else {
+        quote! {
+            #[allow(unused_macros)]
+            macro_rules! emit_napi_items {
+                ($($item:item)*) => {};
+            }
+
+            pub(crate) use emit_napi_items;
+        }
+    }
+}
+
 fn collect_service_items(
     struct_ident: &syn::Ident,
     item_impl: &ItemImpl,
@@ -268,7 +269,7 @@ fn collect_service_items(
 
     for item in &item_impl.items {
         let ImplItem::Fn(method) = item else {
-            expansion.push_regular_item(item);
+            expansion.cleaned_items.push(item.clone());
             continue;
         };
 
@@ -294,7 +295,7 @@ fn collect_service_items(
             continue;
         }
 
-        expansion.push_regular_item(item);
+        expansion.cleaned_items.push(item.clone());
     }
 
     Ok(expansion)

@@ -80,25 +80,27 @@ impl ClientModuleSpec {
 
     fn new_fn_tokens(&self, nats_micro: &syn::Path) -> TokenStream {
         let service_ident = &self.service_ident;
+        let service_meta = service_meta_tokens(service_ident);
         if self.encryption_enabled {
+            let recipient_init = recipient_init_tokens(nats_micro);
             quote! {
                 pub fn new(
                     client: #nats_micro::async_nats::Client,
                     recipient_public_key: Option<[u8; 32]>,
                 ) -> Self {
-                    let service_meta = #service_ident::__nats_micro_service_meta();
+                    #service_meta
                     Self {
                         client,
                         prefix: service_meta.subject_prefix,
                         service_version: service_meta.version,
-                        recipient: recipient_public_key.map(#nats_micro::ServiceRecipient::from_bytes),
+                        #recipient_init
                     }
                 }
             }
         } else {
             quote! {
                 pub fn new(client: #nats_micro::async_nats::Client) -> Self {
-                    let service_meta = #service_ident::__nats_micro_service_meta();
+                    #service_meta
                     Self {
                         client,
                         prefix: service_meta.subject_prefix,
@@ -111,19 +113,21 @@ impl ClientModuleSpec {
 
     fn with_prefix_fn_tokens(&self, nats_micro: &syn::Path) -> TokenStream {
         let service_ident = &self.service_ident;
+        let service_meta = service_meta_tokens(service_ident);
         if self.encryption_enabled {
+            let recipient_init = recipient_init_tokens(nats_micro);
             quote! {
                 pub fn with_prefix(
                     client: #nats_micro::async_nats::Client,
                     prefix: impl Into<String>,
                     recipient_public_key: Option<[u8; 32]>,
                 ) -> Self {
-                    let service_meta = #service_ident::__nats_micro_service_meta();
+                    #service_meta
                     Self {
                         client,
                         prefix: Some(prefix.into()),
                         service_version: service_meta.version,
-                        recipient: recipient_public_key.map(#nats_micro::ServiceRecipient::from_bytes),
+                        #recipient_init
                     }
                 }
             }
@@ -133,7 +137,7 @@ impl ClientModuleSpec {
                     client: #nats_micro::async_nats::Client,
                     prefix: impl Into<String>,
                 ) -> Self {
-                    let service_meta = #service_ident::__nats_micro_service_meta();
+                    #service_meta
                     Self {
                         client,
                         prefix: Some(prefix.into()),
@@ -191,6 +195,16 @@ impl ClientModuleSpec {
                 }
             }
         }
+    }
+}
+
+fn service_meta_tokens(service_ident: &syn::Ident) -> TokenStream {
+    quote! { let service_meta = #service_ident::__nats_micro_service_meta(); }
+}
+
+fn recipient_init_tokens(nats_micro: &syn::Path) -> TokenStream {
+    quote! {
+        recipient: recipient_public_key.map(#nats_micro::ServiceRecipient::from_bytes),
     }
 }
 
@@ -606,11 +620,12 @@ pub(crate) fn generate_client_module(
 }
 
 fn raw_value_kind(ty: &Type) -> RawValueKind {
-    let is_str_ref = matches!(ty, Type::Reference(reference) if matches!(&*reference.elem, Type::Path(path) if path.path.is_ident("str")));
-    match last_segment_ident(ty).as_deref() {
-        Some("String") => RawValueKind::String,
-        _ if is_str_ref => RawValueKind::String,
-        _ => RawValueKind::Bytes,
+    if matches!(last_segment_ident(ty).as_deref(), Some("String"))
+        || matches!(ty, Type::Reference(reference) if matches!(&*reference.elem, Type::Path(path) if path.path.is_ident("str")))
+    {
+        RawValueKind::String
+    } else {
+        RawValueKind::Bytes
     }
 }
 
@@ -628,18 +643,12 @@ fn render_client_method(endpoint: &ClientEndpointSpec) -> TokenStream {
     let return_type = endpoint.response.return_type_tokens();
     let assertions = render_client_assertions(endpoint);
 
-    let subject_param_args = endpoint.subject.parameter_args();
-    let payload_fn_args = endpoint
-        .payload
-        .as_ref()
-        .map_or_else(Vec::new, ClientPayloadSpec::fn_args);
-    let all_with_args: Vec<_> = subject_param_args
-        .iter()
-        .cloned()
-        .chain(payload_fn_args.iter().cloned())
-        .collect();
+    let mut all_with_args = endpoint.subject.parameter_args();
+    if let Some(payload) = endpoint.payload.as_ref() {
+        all_with_args.extend(payload.fn_args());
+    }
 
-    let mut forward_args: Vec<TokenStream> = endpoint
+    let mut forward_args: Vec<_> = endpoint
         .subject
         .parameter_idents()
         .into_iter()
@@ -720,11 +729,14 @@ fn render_request_execution(
     let deserialize_response = endpoint.response.deserialize_tokens(error_type);
     let response_encrypted = endpoint.response.encrypted;
     let encrypted_body_expr = quote! { (#body_expr).to_vec() };
+    let request_setup = quote! {
+        let __subject = self.build_subject(#group, &#endpoint_subject_expr);
+        let options = self.apply_client_defaults(options);
+    };
 
     match (request_encrypted, response_encrypted) {
         (true, true) => quote! {
-            let __subject = self.build_subject(#group, &#endpoint_subject_expr);
-            let options = self.apply_client_defaults(options);
+            #request_setup
             let (__msg, __eph_ctx) = options
                 .into_encrypted_request(&self.client, __subject, #encrypted_body_expr)
                 .await
@@ -738,8 +750,7 @@ fn render_request_execution(
             #deserialize_response
         },
         (true, false) => quote! {
-            let __subject = self.build_subject(#group, &#endpoint_subject_expr);
-            let options = self.apply_client_defaults(options);
+            #request_setup
             let (__msg, _) = options
                 .into_encrypted_request(&self.client, __subject, #encrypted_body_expr)
                 .await
@@ -749,8 +760,7 @@ fn render_request_execution(
             #deserialize_response
         },
         (false, true) => quote! {
-            let __subject = self.build_subject(#group, &#endpoint_subject_expr);
-            let options = self.apply_client_defaults(options);
+            #request_setup
             let (__msg, __eph_ctx) = options
                 .into_request_with_context(&self.client, __subject, #body_expr)
                 .await
@@ -771,8 +781,7 @@ fn render_request_execution(
             #deserialize_response
         },
         (false, false) => quote! {
-            let __subject = self.build_subject(#group, &#endpoint_subject_expr);
-            let options = self.apply_client_defaults(options);
+            #request_setup
             let __msg = options
                 .into_request(&self.client, __subject, #body_expr)
                 .await

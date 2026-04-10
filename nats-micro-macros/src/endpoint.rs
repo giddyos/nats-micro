@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use darling::FromMeta;
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote, quote_spanned};
+use quote::{ToTokens, format_ident, quote, quote_spanned};
 use syn::{
     FnArg, GenericArgument, ImplItemFn, Pat, PathArguments, ReturnType, Signature, Type,
     spanned::Spanned,
@@ -116,29 +116,26 @@ fn optional_string_tokens(value: Option<&str>) -> TokenStream {
 }
 
 fn optional_u64_tokens(value: Option<u64>) -> TokenStream {
-    if let Some(value) = value {
-        quote! { Some(#value) }
-    } else {
-        quote! { None }
-    }
+    value.map_or_else(|| quote! { None }, |value| quote! { Some(#value) })
 }
 
 fn payload_meta_tokens(payload_meta: Option<&PayloadMeta>, nats_micro: &syn::Path) -> TokenStream {
-    if let Some(payload_meta) = payload_meta {
-        let encoding = payload_encoding_tokens(&payload_meta.encoding, nats_micro);
-        let encrypted = payload_meta.encrypted;
-        let inner_type = &payload_meta.inner_type;
-        let inner_type_str = quote!(#inner_type).to_string();
-        quote! {
-            Some(#nats_micro::__macros::PayloadMeta {
-                encoding: #encoding,
-                encrypted: #encrypted,
-                inner_type: #inner_type_str.to_string(),
-            })
-        }
-    } else {
-        quote! { None }
-    }
+    payload_meta.map_or_else(
+        || quote! { None },
+        |payload_meta| {
+            let encoding = payload_encoding_tokens(&payload_meta.encoding, nats_micro);
+            let encrypted = payload_meta.encrypted;
+            let inner_type = &payload_meta.inner_type;
+            let inner_type_str = quote!(#inner_type).to_string();
+            quote! {
+                Some(#nats_micro::__macros::PayloadMeta {
+                    encoding: #encoding,
+                    encrypted: #encrypted,
+                    inner_type: #inner_type_str.to_string(),
+                })
+            }
+        },
+    )
 }
 
 fn response_meta_tokens(response_meta: &ResponseMeta, nats_micro: &syn::Path) -> TokenStream {
@@ -189,29 +186,26 @@ fn handler_response_assertions(
         &quote!(#nats_micro::__macros::IntoNatsError),
     )];
 
-    match response_meta.encoding {
-        ResponseEncoding::Json | ResponseEncoding::Serde => {
-            if let Some(inner_type) = response_meta.inner_type.as_ref() {
-                assertions.push(spanned_trait_assertion(
-                    inner_type,
-                    &quote!(#nats_micro::serde::Serialize),
-                ));
-            }
+    match (&response_meta.encoding, response_meta.inner_type.as_ref()) {
+        (ResponseEncoding::Json | ResponseEncoding::Serde, Some(inner_type)) => {
+            assertions.push(spanned_trait_assertion(
+                inner_type,
+                &quote!(#nats_micro::serde::Serialize),
+            ));
         }
-        ResponseEncoding::Proto => {
-            if let Some(inner_type) = response_meta.inner_type.as_ref() {
-                assertions.push(spanned_trait_assertion(
-                    inner_type,
-                    &quote!(#nats_micro::prost::Message),
-                ));
-            }
+        (ResponseEncoding::Proto, Some(inner_type)) => {
+            assertions.push(spanned_trait_assertion(
+                inner_type,
+                &quote!(#nats_micro::prost::Message),
+            ));
         }
-        ResponseEncoding::Raw | ResponseEncoding::Unit => {
+        (ResponseEncoding::Raw | ResponseEncoding::Unit, _) => {
             assertions.push(spanned_trait_assertion(
                 ok_type,
                 &quote!(#nats_micro::__macros::IntoNatsResponse),
             ));
         }
+        _ => {}
     }
 
     assertions
@@ -245,57 +239,64 @@ fn response_error_span(ok_type: &Type, response_meta: &ResponseMeta) -> proc_mac
         .map_or_else(|| ok_type.span(), syn::spanned::Spanned::span)
 }
 
+fn result_type_error<T: ToTokens>(tokens: T) -> syn::Error {
+    syn::Error::new_spanned(tokens, "handler must return Result<T, E>")
+}
+
 pub(crate) fn extract_result_types(sig: &Signature) -> Result<(&Type, &Type), syn::Error> {
     let ReturnType::Type(_, ty) = &sig.output else {
-        return Err(syn::Error::new_spanned(
-            &sig.output,
-            "handler must return Result<T, E>",
-        ));
+        return Err(result_type_error(&sig.output));
     };
 
     let Type::Path(type_path) = ty.as_ref() else {
-        return Err(syn::Error::new_spanned(
-            ty,
-            "handler must return Result<T, E>",
-        ));
+        return Err(result_type_error(ty));
     };
 
     let Some(segment) = type_path.path.segments.last() else {
-        return Err(syn::Error::new_spanned(
-            ty,
-            "handler must return Result<T, E>",
-        ));
+        return Err(result_type_error(ty));
     };
 
     if segment.ident != "Result" {
-        return Err(syn::Error::new_spanned(
-            ty,
-            "handler must return Result<T, E>",
-        ));
+        return Err(result_type_error(ty));
     }
 
     let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
-        return Err(syn::Error::new_spanned(
-            ty,
-            "handler must return Result<T, E>",
-        ));
+        return Err(result_type_error(ty));
     };
 
     let mut generic_args = arguments.args.iter();
     let Some(GenericArgument::Type(ok_type)) = generic_args.next() else {
-        return Err(syn::Error::new_spanned(
-            ty,
-            "handler must return Result<T, E>",
-        ));
+        return Err(result_type_error(ty));
     };
     let Some(GenericArgument::Type(error_type)) = generic_args.next() else {
-        return Err(syn::Error::new_spanned(
-            ty,
-            "handler must return Result<T, E>",
-        ));
+        return Err(result_type_error(ty));
     };
 
     Ok((ok_type, error_type))
+}
+
+fn typed_arg_type(input: &FnArg) -> Option<&Type> {
+    let FnArg::Typed(pat_type) = input else {
+        return None;
+    };
+
+    Some(pat_type.ty.as_ref())
+}
+
+fn typed_ident_arg<'a>(
+    input: &'a FnArg,
+    receiver_message: &str,
+    ident_message: &str,
+) -> Result<(&'a syn::Ident, &'a Type), TokenStream> {
+    let FnArg::Typed(pat_type) = input else {
+        return Err(syn::Error::new_spanned(input, receiver_message).to_compile_error());
+    };
+
+    let Pat::Ident(pat_ident) = pat_type.pat.as_ref() else {
+        return Err(syn::Error::new_spanned(&pat_type.pat, ident_message).to_compile_error());
+    };
+
+    Ok((&pat_ident.ident, pat_type.ty.as_ref()))
 }
 
 pub(crate) fn build_handler_body(
@@ -313,23 +314,11 @@ pub(crate) fn build_handler_body(
         handler_response_assertions(ok_type, error_type, &response_meta, &nats_micro);
 
     for input in &sig.inputs {
-        let FnArg::Typed(pat_type) = input else {
-            return Err(
-                syn::Error::new_spanned(input, "handlers cannot take a receiver")
-                    .to_compile_error(),
-            );
-        };
-
-        let Pat::Ident(pat_ident) = pat_type.pat.as_ref() else {
-            return Err(syn::Error::new_spanned(
-                &pat_type.pat,
-                "handler arguments must be simple identifiers",
-            )
-            .to_compile_error());
-        };
-
-        let ident = &pat_ident.ident;
-        let ty = &pat_type.ty;
+        let (ident, ty) = typed_ident_arg(
+            input,
+            "handlers cannot take a receiver",
+            "handler arguments must be simple identifiers",
+        )?;
         assertions.push(spanned_trait_assertion(
             ty,
             &quote!(#nats_micro::__macros::FromRequest),
@@ -375,22 +364,12 @@ pub(crate) fn extract_param_info(sig: &Signature) -> Result<Vec<TokenStream>, To
     let nats_micro = nats_micro_path();
     let mut params = Vec::new();
     for input in &sig.inputs {
-        let FnArg::Typed(pat_type) = input else {
-            return Err(
-                syn::Error::new_spanned(input, "handlers cannot take a receiver")
-                    .to_compile_error(),
-            );
-        };
-        let Pat::Ident(pat_ident) = pat_type.pat.as_ref() else {
-            return Err(syn::Error::new_spanned(
-                &pat_type.pat,
-                "handler arguments must be simple identifiers",
-            )
-            .to_compile_error());
-        };
-
-        let name = pat_ident.ident.to_string();
-        let ty = &pat_type.ty;
+        let (ident, ty) = typed_ident_arg(
+            input,
+            "handlers cannot take a receiver",
+            "handler arguments must be simple identifiers",
+        )?;
+        let name = ident.to_string();
         let type_name = quote!(#ty).to_string();
         let is_sp = is_subject_param(ty);
 
@@ -414,13 +393,10 @@ pub(crate) fn is_auth_type(ty: &Type) -> bool {
 }
 
 pub(crate) fn requires_auth(sig: &Signature) -> bool {
-    sig.inputs.iter().any(|input| {
-        let FnArg::Typed(pat_type) = input else {
-            return false;
-        };
-        let ty = pat_type.ty.as_ref();
-        is_auth_type(ty) && !is_option_auth(ty)
-    })
+    sig.inputs
+        .iter()
+        .filter_map(typed_arg_type)
+        .any(|ty| is_auth_type(ty) && !is_option_auth(ty))
 }
 
 pub(crate) fn is_shutdown_signal_type(ty: &Type) -> bool {
@@ -428,12 +404,10 @@ pub(crate) fn is_shutdown_signal_type(ty: &Type) -> bool {
 }
 
 pub(crate) fn requires_shutdown_signal(sig: &Signature) -> bool {
-    sig.inputs.iter().any(|input| {
-        let FnArg::Typed(pat_type) = input else {
-            return false;
-        };
-        is_shutdown_signal_type(pat_type.ty.as_ref())
-    })
+    sig.inputs
+        .iter()
+        .filter_map(typed_arg_type)
+        .any(is_shutdown_signal_type)
 }
 
 pub(crate) fn parse_subject_template(
@@ -701,21 +675,11 @@ fn is_raw_type(ty: &Type) -> bool {
 }
 
 fn is_vec_u8(ty: &Type) -> bool {
-    let Type::Path(type_path) = ty else {
-        return false;
-    };
-    let segment = type_path.path.segments.last().unwrap();
-    if segment.ident != "Vec" {
-        return false;
-    }
-    let PathArguments::AngleBracketed(arguments) = &segment.arguments else {
-        return false;
-    };
-    if let Some(GenericArgument::Type(Type::Path(inner))) = arguments.args.first() {
-        inner.path.segments.last().is_some_and(|s| s.ident == "u8")
-    } else {
-        false
-    }
+    last_segment_ident(ty).as_deref() == Some("Vec")
+        && matches!(
+            extract_single_generic_arg(ty),
+            Some(Type::Path(inner)) if inner.path.segments.last().is_some_and(|segment| segment.ident == "u8")
+        )
 }
 
 fn is_str_ref(ty: &Type) -> bool {
@@ -727,14 +691,14 @@ fn is_str_ref(ty: &Type) -> bool {
     false
 }
 
-fn unwrap_optional_payload_markers(mut ty: &Type) -> Result<&Type, syn::Error> {
+fn unwrap_optional_markers<'a>(mut ty: &'a Type, kind: &str) -> Result<&'a Type, syn::Error> {
     loop {
         match last_segment_ident(ty).as_deref() {
             Some("Encrypted" | "Json" | "Proto") => {
                 ty = extract_single_generic_arg(ty).ok_or_else(|| {
                     syn::Error::new_spanned(
                         ty,
-                        "payload marker types require a single generic argument",
+                        format!("{kind} marker types require a single generic argument"),
                     )
                 })?;
             }
@@ -743,20 +707,12 @@ fn unwrap_optional_payload_markers(mut ty: &Type) -> Result<&Type, syn::Error> {
     }
 }
 
-fn unwrap_optional_response_markers(mut ty: &Type) -> Result<&Type, syn::Error> {
-    loop {
-        match last_segment_ident(ty).as_deref() {
-            Some("Encrypted" | "Json" | "Proto") => {
-                ty = extract_single_generic_arg(ty).ok_or_else(|| {
-                    syn::Error::new_spanned(
-                        ty,
-                        "response marker types require a single generic argument",
-                    )
-                })?;
-            }
-            _ => return Ok(ty),
-        }
-    }
+fn unwrap_optional_payload_markers(ty: &Type) -> Result<&Type, syn::Error> {
+    unwrap_optional_markers(ty, "payload")
+}
+
+fn unwrap_optional_response_markers(ty: &Type) -> Result<&Type, syn::Error> {
+    unwrap_optional_markers(ty, "response")
 }
 
 fn classify_payload(ty: &Type) -> Result<PayloadMeta, syn::Error> {
@@ -988,18 +944,9 @@ fn classify_response(ty: &Type) -> Result<ResponseMeta, syn::Error> {
 }
 
 fn is_option_auth(ty: &Type) -> bool {
-    let Type::Path(type_path) = ty else {
-        return false;
-    };
-    let segment = type_path.path.segments.last().unwrap();
-    if segment.ident != "Option" {
-        return false;
-    }
-    if let Some(inner) = extract_single_generic_arg(ty) {
-        last_segment_ident(inner).as_deref() == Some("Auth")
-    } else {
-        false
-    }
+    last_segment_ident(ty).as_deref() == Some("Option")
+        && extract_single_generic_arg(ty)
+            .is_some_and(|inner| last_segment_ident(inner).as_deref() == Some("Auth"))
 }
 
 fn validate_response_marker_order(mut ty: &Type) -> Result<(), syn::Error> {

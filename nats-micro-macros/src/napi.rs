@@ -268,27 +268,23 @@ fn gen_napi_assert(ty: &Type) -> TokenStream {
     }
 }
 
+fn push_napi_assert(asserts: &mut Vec<TokenStream>, attrs: &[syn::Attribute], ty: Option<Type>) {
+    if let Some(ty) = ty {
+        let assert = gen_napi_assert(&ty);
+        asserts.push(quote! {
+            #(#attrs)*
+            #assert
+        });
+    }
+}
+
 pub(crate) fn gen_napi_asserts(endpoints: &[ClientEndpointSpec]) -> TokenStream {
     let mut asserts = Vec::new();
 
     for endpoint in endpoints {
-        if let Some(ty) = dto_payload_type(endpoint) {
-            let attrs = &endpoint.attrs;
-            let assert = gen_napi_assert(&ty);
-            asserts.push(quote! {
-                #(#attrs)*
-                #assert
-            });
-        }
-
-        if let Some(ty) = dto_response_type(endpoint) {
-            let attrs = &endpoint.attrs;
-            let assert = gen_napi_assert(&ty);
-            asserts.push(quote! {
-                #(#attrs)*
-                #assert
-            });
-        }
+        let attrs = &endpoint.attrs;
+        push_napi_assert(&mut asserts, attrs, dto_payload_type(endpoint));
+        push_napi_assert(&mut asserts, attrs, dto_response_type(endpoint));
     }
 
     quote! {
@@ -305,6 +301,10 @@ fn connect_options_names(service_name: &str) -> (syn::Ident, syn::Ident) {
 
 fn header_type_name(service_name: &str) -> syn::Ident {
     format_ident!("{}ClientHeader", service_name.to_upper_camel_case())
+}
+
+fn napi_buffer_type(nats_micro: &syn::Path) -> TokenStream {
+    quote! { #nats_micro::napi::bindgen_prelude::Buffer }
 }
 
 fn args_struct_name(service_name: &str, fn_name: &syn::Ident) -> syn::Ident {
@@ -324,9 +324,7 @@ fn payload_arg_type(
         | ClientPayloadShape::Proto(ty)
         | ClientPayloadShape::Serde(ty) => quote! { #ty },
         ClientPayloadShape::Raw(RawValueKind::String) => quote! { String },
-        ClientPayloadShape::Raw(RawValueKind::Bytes) => {
-            quote! { #nats_micro::napi::bindgen_prelude::Buffer }
-        }
+        ClientPayloadShape::Raw(RawValueKind::Bytes) => napi_buffer_type(nats_micro),
     };
 
     if payload.optional {
@@ -371,9 +369,7 @@ fn response_return_type(
         | ClientResponseShape::Proto(ty)
         | ClientResponseShape::Serde(ty) => quote! { #ty },
         ClientResponseShape::Raw(RawValueKind::String) => quote! { String },
-        ClientResponseShape::Raw(RawValueKind::Bytes) => {
-            quote! { #nats_micro::napi::bindgen_prelude::Buffer }
-        }
+        ClientResponseShape::Raw(RawValueKind::Bytes) => napi_buffer_type(nats_micro),
     };
 
     if response.optional {
@@ -808,17 +804,21 @@ pub(crate) fn generate_client_napi_module(
         js_methods.push(js_method);
     }
 
+    let default_headers_init = quote! {
+        let default_headers = options
+            .headers
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(Into::into)
+            .collect::<Vec<#nats_micro::__napi::NapiClientHeaderValue>>();
+    };
+
     let connect_inner = if cfg!(feature = "macros_encryption_feature") {
         quote! {
             let options = options.unwrap_or_default();
             let has_default_recipient = options.recipient_public_key.is_some();
-            let default_headers = options
-                .headers
-                .clone()
-                .unwrap_or_default()
-                .into_iter()
-                .map(Into::into)
-                .collect::<Vec<#nats_micro::__napi::NapiClientHeaderValue>>();
+            #default_headers_init
             let _ = #nats_micro::__napi::client_call_options_from_headers(
                 default_headers.clone(),
                 has_default_recipient,
@@ -854,13 +854,7 @@ pub(crate) fn generate_client_napi_module(
     } else {
         quote! {
             let options = options.unwrap_or_default();
-            let default_headers = options
-                .headers
-                .clone()
-                .unwrap_or_default()
-                .into_iter()
-                .map(Into::into)
-                .collect::<Vec<#nats_micro::__napi::NapiClientHeaderValue>>();
+            #default_headers_init
             let _ = #nats_micro::__napi::client_call_options_from_headers(default_headers.clone(), false)?;
 
             let #nats_micro::__napi::ConnectedClient {
@@ -972,6 +966,10 @@ pub(crate) fn generate_client_napi_module(
             #build_call_options_result
         }
 
+        fn __napi_error_flag(err: &#nats_micro::serde_json::Value, flag: &str) -> bool {
+            err.get(flag).and_then(|value| value.as_bool()) == Some(true)
+        }
+
         fn #map_service_error_fn<E>(
             err: #nats_micro::ClientError<E>
         ) -> #nats_micro::__napi::NapiClientError
@@ -1030,11 +1028,7 @@ pub(crate) fn generate_client_napi_module(
                 &mut self,
                 headers: Option<Vec<#header_name>>,
             ) {
-                self.default_headers = headers
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(Into::into)
-                    .collect();
+                self.default_headers = headers.unwrap_or_default().into_iter().map(Into::into).collect();
             }
 
             pub async fn connect(
@@ -1088,29 +1082,17 @@ pub(crate) fn generate_client_napi_module(
 
             #framework_error_attrs
             pub fn __napi_is_framework_error(err: #nats_micro::serde_json::Value) -> bool {
-                if let Some(is_framework_error) = err.get("isFrameworkError") {
-                    return is_framework_error.as_bool() == Some(true);
-                }
-
-                false
+                __napi_error_flag(&err, "isFrameworkError")
             }
 
             #transport_error_attrs
             pub fn __napi_is_transport_error(err: #nats_micro::serde_json::Value) -> bool {
-                  if let Some(is_transport_error) = err.get("isTransportError") {
-                      return is_transport_error.as_bool() == Some(true);
-                  }
-
-                  false
+                __napi_error_flag(&err, "isTransportError")
             }
 
             #service_error_attrs
             pub fn __napi_is_service_error(err: #nats_micro::serde_json::Value) -> bool {
-                if let Some(is_service_error) = err.get("isServiceError") {
-                    return is_service_error.as_bool() == Some(true);
-                }
-
-                false
+                __napi_error_flag(&err, "isServiceError")
             }
 
             #(#js_methods)*

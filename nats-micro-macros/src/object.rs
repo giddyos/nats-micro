@@ -19,13 +19,15 @@ pub(crate) fn expand_object(item: &ItemStruct) -> TokenStream {
         };
     };
 
-    for field in &named_fields.named {
-        if !matches!(field.vis, Visibility::Public(_)) {
-            let span = field.span();
-            return quote_spanned! { span =>
-                compile_error!("#[nats_micro::object] requires all fields to be pub");
-            };
-        }
+    if let Some(field) = named_fields
+        .named
+        .iter()
+        .find(|field| !matches!(field.vis, Visibility::Public(_)))
+    {
+        let span = field.span();
+        return quote_spanned! { span =>
+            compile_error!("#[nats_micro::object] requires all fields to be pub");
+        };
     }
 
     let nats_micro = nats_micro_path();

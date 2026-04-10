@@ -35,18 +35,8 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
         let v_code = format!("{}", AsShoutySnakeCase(&v_name));
         let js_variant_ident = format_ident!("{}", v_code);
 
-        let is_internal = variant
-            .attrs
-            .iter()
-            .any(|attr| attr.path().is_ident("internal"));
-
-        let code: u16 = variant
-            .attrs
-            .iter()
-            .find(|attr| attr.path().is_ident("code"))
-            .and_then(|attr| attr.parse_args::<syn::LitInt>().ok())
-            .and_then(|lit| lit.base10_parse().ok())
-            .unwrap_or(if is_internal { 500 } else { 400 });
+        let is_internal = variant_is_internal(variant);
+        let code = variant_code(variant, is_internal);
 
         let message = if is_internal {
             quote! { "an internal error occurred".to_string() }
@@ -211,6 +201,23 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
     out
 }
 
+fn variant_is_internal(variant: &syn::Variant) -> bool {
+    variant
+        .attrs
+        .iter()
+        .any(|attr| attr.path().is_ident("internal"))
+}
+
+fn variant_code(variant: &syn::Variant, is_internal: bool) -> u16 {
+    variant
+        .attrs
+        .iter()
+        .find(|attr| attr.path().is_ident("code"))
+        .and_then(|attr| attr.parse_args::<syn::LitInt>().ok())
+        .and_then(|lit| lit.base10_parse().ok())
+        .unwrap_or(if is_internal { 500 } else { 400 })
+}
+
 fn build_unnamed_variant_tokens(
     enum_ident: &syn::Ident,
     variant_ident: &syn::Ident,
@@ -230,11 +237,11 @@ fn build_unnamed_variant_tokens(
     let details = if is_internal {
         quote! { None }
     } else {
-        let serialize_value = tuple_value(&bindings);
+        let serialize_value = singleton_or_tuple(&bindings);
         quote! { #nats_micro::serde_json::to_value(#serialize_value).ok() }
     };
-    let tuple_type = tuple_type(&types);
-    let deserialize_pattern = tuple_pattern(&bindings);
+    let tuple_type = singleton_or_tuple(&types);
+    let deserialize_pattern = singleton_or_tuple(&bindings);
 
     (
         quote! { #enum_ident::#variant_ident(#(#bindings),*) },
@@ -279,11 +286,11 @@ fn build_named_variant_tokens(
     let details = if is_internal {
         quote! { None }
     } else {
-        let serialize_value = tuple_value(&bindings);
+        let serialize_value = singleton_or_tuple(&bindings);
         quote! { #nats_micro::serde_json::to_value(#serialize_value).ok() }
     };
-    let tuple_type = tuple_type(&types);
-    let deserialize_pattern = tuple_pattern(&bindings);
+    let tuple_type = singleton_or_tuple(&types);
+    let deserialize_pattern = singleton_or_tuple(&bindings);
 
     (
         quote! { #enum_ident::#variant_ident { #(#field_idents: #bindings),* } },
@@ -303,29 +310,10 @@ fn build_named_variant_tokens(
     )
 }
 
-fn tuple_type(types: &[&syn::Type]) -> TokenStream {
-    if types.len() == 1 {
-        let ty = types[0];
-        quote! { (#ty,) }
+fn singleton_or_tuple<T: ToTokens>(items: &[T]) -> TokenStream {
+    if let [item] = items {
+        quote! { (#item,) }
     } else {
-        quote! { (#(#types),*) }
-    }
-}
-
-fn tuple_value(idents: &[syn::Ident]) -> TokenStream {
-    if idents.len() == 1 {
-        let ident = &idents[0];
-        quote! { (#ident,) }
-    } else {
-        quote! { (#(#idents),*) }
-    }
-}
-
-fn tuple_pattern(idents: &[syn::Ident]) -> TokenStream {
-    if idents.len() == 1 {
-        let ident = &idents[0];
-        quote! { (#ident,) }
-    } else {
-        quote! { (#(#idents),*) }
+        quote! { (#(#items),*) }
     }
 }

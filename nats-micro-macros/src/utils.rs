@@ -14,8 +14,7 @@ pub fn nats_micro_path() -> syn::Path {
 }
 
 pub fn error_stream<T: ToTokens>(span: Span, msg: &str, original: T) -> TokenStream {
-    let err = syn::Error::new(span, msg);
-    let compile_error = err.to_compile_error();
+    let compile_error = syn::Error::new(span, msg).to_compile_error();
     quote! {
         #compile_error
         #original

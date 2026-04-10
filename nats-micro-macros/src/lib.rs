@@ -13,7 +13,7 @@ mod utils;
 
 fn parse_attr_args(attr: TokenStream) -> Result<Vec<NestedMeta>, TokenStream> {
     NestedMeta::parse_meta_list(attr.into())
-        .map_err(|e| TokenStream::from(darling::Error::from(e).write_errors()))
+        .map_err(|error| darling::Error::from(error).write_errors().into())
 }
 
 #[proc_macro_attribute]
