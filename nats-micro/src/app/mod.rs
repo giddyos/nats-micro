@@ -139,8 +139,8 @@ impl NatsApp {
         let (shutdown_tx, shutdown_rx) =
             watch::channel(ShutdownState::running(shutdown_drain_timeout));
         let (worker_events_tx, mut worker_events_rx) = mpsc::unbounded_channel::<WorkerExit>();
-        let mut live_services: Vec<LiveService> = Vec::new();
         let total_services = self.service_defs.len();
+        let mut live_services: Vec<LiveService> = Vec::with_capacity(total_services);
         let mut worker_count = 0usize;
 
         info!(service_count = total_services, "starting nats application");
@@ -285,7 +285,7 @@ impl NatsApp {
         let service_name = svc_def.metadata.name.clone();
         let service_version = svc_def.metadata.version.clone();
         let service_description = svc_def.metadata.description.clone();
-        let mut workers = Vec::new();
+        let mut workers = Vec::with_capacity(svc_def.consumers.len() + svc_def.endpoints.len());
 
         let service = self
             .client
@@ -400,7 +400,7 @@ impl NatsApp {
 
         let default_concurrency_limit = self.config.default_concurrency_limit();
         let jetstream = jetstream::new(self.client.clone());
-        let mut workers = Vec::new();
+        let mut workers = Vec::with_capacity(consumers.len());
 
         for consumer_def in consumers {
             debug!(

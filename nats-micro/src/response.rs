@@ -8,6 +8,33 @@ use crate::{
 pub const X_SUCCESS_HEADER: &str = "x-success";
 pub const X_OPTIONAL_RESPONSE_HEADER: &str = "x-nats-micro-optional-response";
 
+fn parse_bool_header<
+    E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
+>(
+    headers: Option<&crate::async_nats::HeaderMap>,
+    header_name: &'static str,
+) -> Result<Option<bool>, crate::ClientError<E>> {
+    let Some(value) = headers.and_then(|headers| headers.get(header_name)) else {
+        return Ok(None);
+    };
+
+    let value = value.as_str();
+    if value.eq_ignore_ascii_case("true") {
+        Ok(Some(true))
+    } else if value.eq_ignore_ascii_case("false") {
+        Ok(Some(false))
+    } else {
+        Err(crate::ClientError::invalid_response(
+            NatsErrorResponse::framework(
+                FrameworkError::InvalidResponse,
+                format!(
+                    "invalid header `{header_name}` value `{value}`; expected `true` or `false`"
+                ),
+            ),
+        ))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct NatsResponse {
     pub payload: Bytes,
@@ -137,28 +164,7 @@ pub fn response_success_from_headers<
 >(
     headers: Option<&crate::async_nats::HeaderMap>,
 ) -> Result<Option<bool>, crate::ClientError<E>> {
-    let Some(headers) = headers else {
-        return Ok(None);
-    };
-    let Some(value) = headers.get(crate::X_SUCCESS_HEADER) else {
-        return Ok(None);
-    };
-
-    let value = value.as_str();
-    if value.eq_ignore_ascii_case("true") {
-        Ok(Some(true))
-    } else if value.eq_ignore_ascii_case("false") {
-        Ok(Some(false))
-    } else {
-        Err(crate::ClientError::invalid_response(
-            NatsErrorResponse::framework(
-                FrameworkError::InvalidResponse,
-                format!(
-                    "invalid header `{X_SUCCESS_HEADER}` value `{value}`; expected `true` or `false`"
-                ),
-            ),
-        ))
-    }
+    parse_bool_header(headers, X_SUCCESS_HEADER)
 }
 
 /// Reads the explicit optional-response marker from transport headers.
@@ -172,28 +178,7 @@ pub fn optional_response_from_headers<
 >(
     headers: Option<&crate::async_nats::HeaderMap>,
 ) -> Result<Option<bool>, crate::ClientError<E>> {
-    let Some(headers) = headers else {
-        return Ok(None);
-    };
-    let Some(value) = headers.get(X_OPTIONAL_RESPONSE_HEADER) else {
-        return Ok(None);
-    };
-
-    let value = value.as_str();
-    if value.eq_ignore_ascii_case("true") {
-        Ok(Some(true))
-    } else if value.eq_ignore_ascii_case("false") {
-        Ok(Some(false))
-    } else {
-        Err(crate::ClientError::invalid_response(
-            NatsErrorResponse::framework(
-                FrameworkError::InvalidResponse,
-                format!(
-                    "invalid header `{X_OPTIONAL_RESPONSE_HEADER}` value `{value}`; expected `true` or `false`"
-                ),
-            ),
-        ))
-    }
+    parse_bool_header(headers, X_OPTIONAL_RESPONSE_HEADER)
 }
 
 fn optional_response_is_none<

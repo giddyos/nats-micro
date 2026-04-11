@@ -28,8 +28,7 @@ impl Headers {
     pub fn get(&self, key: &str) -> Option<&Header> {
         self.0
             .iter()
-            .rev()
-            .find(|header| header.key.eq_ignore_ascii_case(key))
+            .rfind(|header| header.key.eq_ignore_ascii_case(key))
     }
 
     pub fn insert(&mut self, key: impl Into<String>, value: impl Into<String>) {

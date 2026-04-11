@@ -49,6 +49,7 @@ impl HandlerFn {
     }
 }
 
+#[derive(Clone)]
 pub struct RequestContext {
     pub request: NatsRequest,
     pub states: StateMap,
@@ -57,20 +58,6 @@ pub struct RequestContext {
     shutdown_signal: Option<ShutdownSignal>,
     #[cfg(feature = "encryption")]
     pub(crate) ephemeral_pub: Option<[u8; 32]>,
-}
-
-impl Clone for RequestContext {
-    fn clone(&self) -> Self {
-        Self {
-            request: self.request.clone(),
-            states: self.states.clone(),
-            subject_template: self.subject_template.clone(),
-            current_param_name: self.current_param_name.clone(),
-            shutdown_signal: self.shutdown_signal.clone(),
-            #[cfg(feature = "encryption")]
-            ephemeral_pub: self.ephemeral_pub,
-        }
-    }
 }
 
 impl RequestContext {

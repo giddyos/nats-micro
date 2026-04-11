@@ -297,10 +297,7 @@ where
             return Ok(None);
         }
 
-        match T::from_payload(ctx) {
-            Ok(value) => Ok(Some(value)),
-            Err(_) => Ok(None),
-        }
+        Ok(T::from_payload(ctx).ok())
     }
 }
 
@@ -325,7 +322,7 @@ where
     T: Message + Default + Send + 'static,
 {
     fn from_payload(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
-        T::decode(ctx.request.payload.clone())
+        T::decode(ctx.request.payload.as_ref())
             .map(Proto)
             .map_err(|e| {
                 NatsErrorResponse::framework(
@@ -339,7 +336,7 @@ where
 
 impl FromPayload for Bytes {
     fn from_payload(ctx: &RequestContext) -> Result<Self, NatsErrorResponse> {
-        Ok(Bytes::copy_from_slice(&ctx.request.payload))
+        Ok(ctx.request.payload.clone())
     }
 }
 

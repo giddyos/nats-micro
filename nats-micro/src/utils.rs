@@ -6,9 +6,6 @@ pub fn ensure_request_id(headers: &Headers) -> String {
     if let Some(v) = headers.get("x-request-id") {
         return v.as_str().to_string();
     }
-    if let Some(v) = headers.get("X-Request-Id") {
-        return v.as_str().to_string();
-    }
     Uuid::now_v7().to_string()
 }
 

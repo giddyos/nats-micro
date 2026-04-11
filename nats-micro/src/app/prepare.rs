@@ -32,7 +32,7 @@ pub(super) fn prepare_request_for_dispatch_with_state(
             .with_request_id(req.request_id.clone())
         })?;
 
-        if let Some(eph_pub) = &response_pub_key {
+        if let Some(eph_pub) = response_pub_key {
             let keypair = state.get::<ServiceKeyPair>().ok_or_else(|| {
                 NatsErrorResponse::framework(
                     FrameworkError::DecryptFailed,
@@ -41,7 +41,7 @@ pub(super) fn prepare_request_for_dispatch_with_state(
                 .with_request_id(req.request_id.clone())
             })?;
 
-            let shared_key = keypair.derive_shared_key(eph_pub);
+            let shared_key = keypair.derive_shared_key(&eph_pub);
 
             let sig_header = req.headers.get(SIGNATURE_HEADER_NAME).ok_or_else(|| {
                 NatsErrorResponse::framework(
@@ -63,11 +63,11 @@ pub(super) fn prepare_request_for_dispatch_with_state(
                     )
                     .with_request_id(req.request_id.clone())
                 })?;
-            let enc_hdr_val = req
+            let encrypted_headers = req
                 .headers
                 .get(ENCRYPTED_HEADERS_NAME)
                 .map(crate::request::Header::as_str);
-            verify_signature(&shared_key, &req.payload, enc_hdr_val, &signature).map_err(|_| {
+            verify_signature(&shared_key, &req.payload, encrypted_headers, &signature).map_err(|_| {
                 NatsErrorResponse::framework(
                     FrameworkError::SignatureInvalid,
                     "request signature verification failed; verify that the client used the correct service public key.",
@@ -75,7 +75,7 @@ pub(super) fn prepare_request_for_dispatch_with_state(
                 .with_request_id(req.request_id.clone())
             })?;
 
-            let decrypted_headers = if req.headers.get(ENCRYPTED_HEADERS_NAME).is_some() {
+            let decrypted_headers = if encrypted_headers.is_some() {
                 decrypt_headers(&req.headers, &shared_key).map_err(|error| {
                     NatsErrorResponse::framework(
                         FrameworkError::DecryptFailed,
@@ -105,7 +105,7 @@ pub(super) fn prepare_request_for_dispatch_with_state(
 
             Ok(PreparedRequest {
                 request: req,
-                ephemeral_pub: response_pub_key,
+                ephemeral_pub: Some(eph_pub),
             })
         } else {
             Ok(PreparedRequest {

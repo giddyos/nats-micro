@@ -3,28 +3,40 @@ use crate::handler::HandlerFn;
 
 #[must_use]
 pub fn build_subject(prefix: Option<&str>, version: &str, group: &str, subject: &str) -> String {
-    let mut segments = Vec::with_capacity(4);
-
-    if let Some(prefix) = prefix.filter(|value| !value.is_empty()) {
-        segments.push(prefix.to_string());
-    }
-
+    let prefix = prefix.filter(|value| !value.is_empty());
     let major = version
         .split('.')
         .next()
         .filter(|segment| !segment.is_empty())
         .unwrap_or("0");
-    segments.push(format!("v{major}"));
+
+    let mut full_subject = String::with_capacity(
+        prefix.map_or(0, |prefix| prefix.len() + 1)
+            + 1
+            + major.len()
+            + usize::from(!group.is_empty()) * (group.len() + 1)
+            + usize::from(!subject.is_empty()) * (subject.len() + 1),
+    );
+
+    if let Some(prefix) = prefix {
+        full_subject.push_str(prefix);
+        full_subject.push('.');
+    }
+
+    full_subject.push('v');
+    full_subject.push_str(major);
 
     if !group.is_empty() {
-        segments.push(group.to_string());
+        full_subject.push('.');
+        full_subject.push_str(group);
     }
 
     if !subject.is_empty() {
-        segments.push(subject.to_string());
+        full_subject.push('.');
+        full_subject.push_str(subject);
     }
 
-    segments.join(".")
+    full_subject
 }
 
 #[derive(Debug, Clone)]

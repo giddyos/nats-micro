@@ -68,6 +68,24 @@ impl EncryptionError {
     }
 }
 
+fn update_signature_mac(
+    mac: &mut HmacSha256,
+    payload: &[u8],
+    encrypted_headers_value: Option<&str>,
+) {
+    mac.update(payload);
+    if let Some(val) = encrypted_headers_value {
+        mac.update(val.as_bytes());
+    }
+}
+
+fn build_response_envelope(nonce: &[u8; NONCE_LEN], ciphertext: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(NONCE_LEN + ciphertext.len());
+    out.extend_from_slice(nonce);
+    out.extend_from_slice(ciphertext);
+    out
+}
+
 pub fn compute_signature(
     shared_key: &[u8; 32],
     payload: &[u8],
@@ -75,10 +93,7 @@ pub fn compute_signature(
 ) -> Vec<u8> {
     let mut mac =
         <HmacSha256 as Mac>::new_from_slice(shared_key).expect("HMAC accepts any key length");
-    mac.update(payload);
-    if let Some(val) = encrypted_headers_value {
-        mac.update(val.as_bytes());
-    }
+    update_signature_mac(&mut mac, payload, encrypted_headers_value);
     mac.finalize().into_bytes().to_vec()
 }
 
@@ -90,10 +105,7 @@ pub fn verify_signature(
 ) -> Result<(), EncryptionError> {
     let mut mac =
         <HmacSha256 as Mac>::new_from_slice(shared_key).expect("HMAC accepts any key length");
-    mac.update(payload);
-    if let Some(val) = encrypted_headers_value {
-        mac.update(val.as_bytes());
-    }
+    update_signature_mac(&mut mac, payload, encrypted_headers_value);
     mac.verify_slice(signature)
         .map_err(|_| EncryptionError::SignatureInvalid)
 }
@@ -201,10 +213,7 @@ impl ServiceKeyPair {
     ) -> Result<Vec<u8>, EncryptionError> {
         let key = self.derive_shared_key(ephemeral_pub_bytes);
         let (ciphertext, nonce) = encrypt_aead(&key, plaintext)?;
-        let mut out = Vec::with_capacity(NONCE_LEN + ciphertext.len());
-        out.extend_from_slice(&nonce);
-        out.extend_from_slice(&ciphertext);
-        Ok(out)
+        Ok(build_response_envelope(&nonce, &ciphertext))
     }
 
     pub fn decrypt_with_shared_key(
@@ -234,10 +243,7 @@ impl ServiceKeyPair {
         plaintext: &[u8],
     ) -> Result<Vec<u8>, EncryptionError> {
         let (ciphertext, nonce) = encrypt_aead(key, plaintext)?;
-        let mut out = Vec::with_capacity(NONCE_LEN + ciphertext.len());
-        out.extend_from_slice(&nonce);
-        out.extend_from_slice(&ciphertext);
-        Ok(out)
+        Ok(build_response_envelope(&nonce, &ciphertext))
     }
 }
 
