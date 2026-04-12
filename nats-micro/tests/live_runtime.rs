@@ -146,7 +146,6 @@ fn live_echoed_strings(value: &str) -> Vec<String> {
 
 #[cfg(feature = "client")]
 #[service_error]
-#[derive(Debug, thiserror::Error)]
 enum LiveGeneratedClientError {
     #[error("consumer event kind was empty")]
     InvalidEvent,

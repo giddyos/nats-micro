@@ -1,7 +1,7 @@
 use heck::AsShoutySnakeCase;
 use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
-use syn::{Data, DeriveInput, Fields};
+use syn::{Data, DeriveInput, Fields, Path, Token, punctuated::Punctuated};
 
 use crate::utils::{error_stream, nats_micro_path};
 
@@ -9,7 +9,9 @@ use crate::utils::{error_stream, nats_micro_path};
 pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
     let nats_micro = nats_micro_path();
     let span = input.ident.span();
-    let enum_ident = &input.ident;
+    let enum_ident = input.ident.clone();
+    let generics = input.generics.clone();
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
     let data_enum = match &input.data {
         Data::Enum(e) => e.clone(),
@@ -21,6 +23,14 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
             );
         }
     };
+
+    let has_error_attr = data_enum.variants.iter().any(variant_has_error_attr);
+    let has_error_derive = rewrite_service_error_derives(&mut input, &nats_micro);
+    if has_error_attr && !has_error_derive {
+        input
+            .attrs
+            .push(syn::parse_quote!(#[derive(#nats_micro::thiserror::Error)]));
+    }
 
     let mut variant_arms = Vec::new();
     let mut from_response_arms = Vec::new();
@@ -94,7 +104,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
                         },
                     ),
                     _ => build_unnamed_variant_tokens(
-                        enum_ident,
+                        &enum_ident,
                         v_ident,
                         code,
                         &v_code,
@@ -104,7 +114,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
                 }
             }
             Fields::Unnamed(fields) => build_unnamed_variant_tokens(
-                enum_ident,
+                &enum_ident,
                 v_ident,
                 code,
                 &v_code,
@@ -112,7 +122,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
                 is_internal,
             ),
             Fields::Named(fields) => {
-                build_named_variant_tokens(enum_ident, v_ident, code, &v_code, fields, is_internal)
+                build_named_variant_tokens(&enum_ident, v_ident, code, &v_code, fields, is_internal)
             }
         };
 
@@ -143,7 +153,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
     }
 
     let enum_impl = quote! {
-        impl #nats_micro::IntoNatsError for #enum_ident {
+        impl #impl_generics #nats_micro::IntoNatsError for #enum_ident #ty_generics #where_clause {
             fn into_nats_error(self, request_id: String) -> #nats_micro::NatsErrorResponse {
                 let __message = ::std::string::ToString::to_string(&self);
                 match self {
@@ -152,7 +162,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
             }
         }
 
-        impl #nats_micro::FromNatsErrorResponse for #enum_ident {
+        impl #impl_generics #nats_micro::FromNatsErrorResponse for #enum_ident #ty_generics #where_clause {
             fn from_nats_error_response(
                 response: #nats_micro::NatsErrorResponse,
             ) -> #nats_micro::ServiceErrorMatch<Self> {
@@ -180,15 +190,15 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
                 }
             }
 
-            impl ::std::convert::From<&#enum_ident> for #js_enum_ident {
-                fn from(value: &#enum_ident) -> Self {
+            impl #impl_generics ::std::convert::From<&#enum_ident #ty_generics> for #js_enum_ident #where_clause {
+                fn from(value: &#enum_ident #ty_generics) -> Self {
                     match value {
                         #(#napi_from_error_arms)*
                     }
                 }
             }
 
-            impl #nats_micro::__private::NapiServiceError for #enum_ident {}
+            impl #impl_generics #nats_micro::__private::NapiServiceError for #enum_ident #ty_generics #where_clause {}
         }
     } else {
         quote! {}
@@ -199,6 +209,62 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
     out.extend(enum_impl);
     out.extend(napi_impl);
     out
+}
+
+fn rewrite_service_error_derives(input: &mut DeriveInput, nats_micro: &syn::Path) -> bool {
+    let mut has_debug = false;
+    let mut has_error = false;
+    let mut attrs = Vec::with_capacity(input.attrs.len() + 2);
+
+    for attr in &input.attrs {
+        if !attr.path().is_ident("derive") {
+            attrs.push(attr.clone());
+            continue;
+        }
+
+        let Ok(paths) = attr.parse_args_with(Punctuated::<Path, Token![,]>::parse_terminated)
+        else {
+            attrs.push(attr.clone());
+            continue;
+        };
+
+        let mut rewritten = Punctuated::<Path, Token![,]>::new();
+        for path in paths {
+            let Some(segment) = path.segments.last() else {
+                rewritten.push(path);
+                continue;
+            };
+
+            if segment.ident == "Debug" {
+                has_debug = true;
+                rewritten.push(syn::parse_quote!(Debug));
+                continue;
+            }
+
+            if segment.ident == "Error" {
+                has_error = true;
+                rewritten.push(syn::parse_quote!(#nats_micro::thiserror::Error));
+                continue;
+            }
+
+            rewritten.push(path);
+        }
+
+        if !rewritten.is_empty() {
+            attrs.push(syn::parse_quote!(#[derive(#rewritten)]));
+        }
+    }
+
+    if !has_debug {
+        attrs.push(syn::parse_quote!(#[derive(Debug)]));
+    }
+
+    input.attrs = attrs;
+    has_error
+}
+
+fn variant_has_error_attr(variant: &syn::Variant) -> bool {
+    variant.attrs.iter().any(|attr| attr.path().is_ident("error"))
 }
 
 fn variant_is_internal(variant: &syn::Variant) -> bool {
@@ -317,3 +383,7 @@ fn singleton_or_tuple<T: ToTokens>(items: &[T]) -> TokenStream {
         quote! { (#(#items),*) }
     }
 }
+
+#[cfg(test)]
+#[path = "tests/service_error_tests.rs"]
+mod tests;

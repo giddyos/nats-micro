@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["encryption", "client", "napi"]
+default = ["encryption", "client"]
 client = ["nats-micro-macros/macros_client_feature"]
 napi = [
     "client",

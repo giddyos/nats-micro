@@ -4,10 +4,8 @@ use nats_micro::{
     service_error,
 };
 use prost::Message;
-use thiserror::Error;
 
 #[service_error]
-#[derive(Debug, Error)]
 enum ClientTestError {
     #[error("numbers must not be empty")]
     #[code(400)]

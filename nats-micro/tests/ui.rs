@@ -26,6 +26,7 @@ fn macro_ui_validation() {
     tests.pass("tests/ui/service_subject_prefix.rs");
     tests.pass("tests/ui/service_client_metadata.rs");
     tests.pass("tests/ui/service_client_generation.rs");
+    tests.pass("tests/ui/service_error_without_thiserror.rs");
 
     #[cfg(feature = "encryption")]
     tests.compile_fail("tests/ui/endpoint_nested_encrypted_response.rs");
