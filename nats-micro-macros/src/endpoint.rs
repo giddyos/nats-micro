@@ -58,15 +58,14 @@ fn build_endpoint_handler_item(
     let param_infos = extract_param_info(&method.sig)?;
     let payload_meta = payload_meta_tokens(client_endpoint.payload_meta.as_ref(), &nats_micro);
     let response_meta = response_meta_tokens(&client_endpoint.response_meta, &nats_micro);
-    let def_method_name = format_ident!("__ep_{}", fn_name);
     let accessor_name = format_ident!("{}_endpoint", fn_name);
     let fn_name_str = fn_name.to_string();
 
     Ok(GeneratedHandlerItem {
         attrs: conditional_attrs(method),
-        def_fn: quote! {
+        accessor_fn: quote! {
             #[doc(hidden)]
-            pub fn #def_method_name() -> #nats_micro::EndpointDefinition {
+            pub fn #accessor_name() -> #nats_micro::EndpointDefinition {
                 let __meta = Self::__nats_micro_service_meta();
                 #nats_micro::EndpointDefinition {
                     subject_prefix: __meta.subject_prefix.clone(),
@@ -84,12 +83,7 @@ fn build_endpoint_handler_item(
                 }
             }
         },
-        accessor_fn: quote! {
-            pub fn #accessor_name() -> #nats_micro::EndpointDefinition {
-                Self::#def_method_name()
-            }
-        },
-        def_call: quote! { Self::#def_method_name() },
+        accessor_call: quote! { Self::#accessor_name() },
         info_expr: quote! {
             #nats_micro::__macros::EndpointInfo {
                 fn_name: #fn_name_str.to_string(),

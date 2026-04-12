@@ -69,8 +69,6 @@ fn service_handlers_collect_endpoint_and_consumer_wiring() {
     assert!(expanded.contains("impl DemoService"));
     assert!(expanded.contains("NatsService for DemoService"));
     assert!(expanded.contains("inventory :: submit"));
-    assert!(expanded.contains("pub fn __ep_status"));
-    assert!(expanded.contains("pub fn __con_jobs"));
     assert!(expanded.contains("pub fn status_endpoint"));
     assert!(expanded.contains("pub fn jobs_consumer"));
     assert!(expanded.contains("async fn status ()"));
@@ -78,7 +76,8 @@ fn service_handlers_collect_endpoint_and_consumer_wiring() {
     assert!(!expanded.contains("# [ endpoint"));
     assert!(!expanded.contains("# [ consumer"));
     assert!(expanded.contains("cfg (feature = \"demo\")"));
-    assert!(expanded.contains("pub fn __ep_status"));
+    assert!(!expanded.contains("pub fn __ep_status"));
+    assert!(!expanded.contains("pub fn __con_jobs"));
 }
 
 #[test]

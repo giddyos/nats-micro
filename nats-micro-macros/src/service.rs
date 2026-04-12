@@ -104,22 +104,19 @@ pub fn expand_service(args: ServiceArgs, item_struct: &ItemStruct) -> TokenStrea
 
 pub(crate) struct GeneratedHandlerItem {
     pub attrs: Vec<syn::Attribute>,
-    pub def_fn: TokenStream,
     pub accessor_fn: TokenStream,
-    pub def_call: TokenStream,
+    pub accessor_call: TokenStream,
     pub info_expr: TokenStream,
 }
 
 #[derive(Default)]
 struct ServiceExpansion {
     cleaned_items: Vec<ImplItem>,
-    endpoint_def_fns: Vec<TokenStream>,
-    endpoint_accessor_fns: Vec<TokenStream>,
-    endpoint_def_calls: Vec<TokenStream>,
+    endpoint_fns: Vec<TokenStream>,
+    endpoint_calls: Vec<TokenStream>,
     endpoint_info_exprs: Vec<TokenStream>,
-    consumer_def_fns: Vec<TokenStream>,
-    consumer_accessor_fns: Vec<TokenStream>,
-    consumer_def_calls: Vec<TokenStream>,
+    consumer_fns: Vec<TokenStream>,
+    consumer_calls: Vec<TokenStream>,
     consumer_info_exprs: Vec<TokenStream>,
     client_endpoints: Vec<ClientEndpointSpec>,
 }
@@ -134,9 +131,8 @@ impl ServiceExpansion {
     ) {
         self.cleaned_items.push(cleaned_method(method, attr_index));
         push_generated_handler(
-            &mut self.endpoint_def_fns,
-            &mut self.endpoint_accessor_fns,
-            &mut self.endpoint_def_calls,
+            &mut self.endpoint_fns,
+            &mut self.endpoint_calls,
             &mut self.endpoint_info_exprs,
             generated,
         );
@@ -151,9 +147,8 @@ impl ServiceExpansion {
     ) {
         self.cleaned_items.push(cleaned_method(method, attr_index));
         push_generated_handler(
-            &mut self.consumer_def_fns,
-            &mut self.consumer_accessor_fns,
-            &mut self.consumer_def_calls,
+            &mut self.consumer_fns,
+            &mut self.consumer_calls,
             &mut self.consumer_info_exprs,
             generated,
         );
@@ -174,13 +169,11 @@ pub fn expand_service_handlers(item_impl: &ItemImpl) -> TokenStream {
     };
     let ServiceExpansion {
         cleaned_items,
-        endpoint_def_fns,
-        endpoint_accessor_fns,
-        endpoint_def_calls,
+        endpoint_fns,
+        endpoint_calls,
         endpoint_info_exprs,
-        consumer_def_fns,
-        consumer_accessor_fns,
-        consumer_def_calls,
+        consumer_fns,
+        consumer_calls,
         consumer_info_exprs,
         client_endpoints,
     } = expansion;
@@ -193,18 +186,16 @@ pub fn expand_service_handlers(item_impl: &ItemImpl) -> TokenStream {
         #cleaned_impl
 
         impl #struct_ident {
-            #(#endpoint_def_fns)*
-            #(#consumer_def_fns)*
-            #(#endpoint_accessor_fns)*
-            #(#consumer_accessor_fns)*
+            #(#endpoint_fns)*
+            #(#consumer_fns)*
         }
 
         impl #nats_micro::__macros::NatsService for #struct_ident {
             fn definition() -> #nats_micro::__macros::ServiceDefinition {
                 #nats_micro::__macros::ServiceDefinition {
                     metadata: #struct_ident::__nats_micro_service_meta(),
-                    endpoints: vec![#(#endpoint_def_calls),*],
-                    consumers: vec![#(#consumer_def_calls),*],
+                    endpoints: vec![#(#endpoint_calls),*],
+                    consumers: vec![#(#consumer_calls),*],
                     endpoint_info: vec![#(#endpoint_info_exprs),*],
                     consumer_info: vec![#(#consumer_info_exprs),*],
                 }
@@ -308,31 +299,25 @@ fn cleaned_method(method: &ImplItemFn, attr_index: usize) -> ImplItem {
 }
 
 fn push_generated_handler(
-    def_fns: &mut Vec<TokenStream>,
-    accessor_fns: &mut Vec<TokenStream>,
-    def_calls: &mut Vec<TokenStream>,
+    fns: &mut Vec<TokenStream>,
+    calls: &mut Vec<TokenStream>,
     info_exprs: &mut Vec<TokenStream>,
     generated: GeneratedHandlerItem,
 ) {
     let GeneratedHandlerItem {
         attrs,
-        def_fn,
         accessor_fn,
-        def_call,
+        accessor_call,
         info_expr,
     } = generated;
 
-    def_fns.push(quote! {
-        #(#attrs)*
-        #def_fn
-    });
-    accessor_fns.push(quote! {
+    fns.push(quote! {
         #(#attrs)*
         #accessor_fn
     });
-    def_calls.push(quote! {
+    calls.push(quote! {
         #(#attrs)*
-        #def_call
+        #accessor_call
     });
     info_exprs.push(quote! {
         #(#attrs)*

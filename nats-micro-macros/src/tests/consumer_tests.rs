@@ -21,7 +21,7 @@ fn consumer_methods_default_stream_and_durable_names() {
 
     let generated =
         process_consumer_method(&struct_ident, &method, consumer_attr(&method)).unwrap();
-    let def_tokens = generated.def_fn.to_string();
+    let def_tokens = generated.accessor_fn.to_string();
     let info_tokens = generated.info_expr.to_string();
 
     assert!(def_tokens.contains("stream : \"DEFAULT\" . to_string ()"));
@@ -54,7 +54,7 @@ fn consumer_methods_emit_config_auth_and_shutdown_metadata() {
 
     let generated =
         process_consumer_method(&struct_ident, &method, consumer_attr(&method)).unwrap();
-    let def_tokens = generated.def_fn.to_string();
+    let def_tokens = generated.accessor_fn.to_string();
     let info_tokens = generated.info_expr.to_string();
 
     assert_eq!(generated.attrs.len(), 1);

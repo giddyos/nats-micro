@@ -137,7 +137,7 @@ fn process_endpoint_method_emits_metadata_for_service_wiring() {
 
     let (generated, client_endpoint) =
         process_endpoint_method(&struct_ident, &method, endpoint_attr(&method)).unwrap();
-    let def_tokens = generated.def_fn.to_string();
+    let def_tokens = generated.accessor_fn.to_string();
     let info_tokens = generated.info_expr.to_string();
 
     assert_eq!(generated.attrs.len(), 1);

@@ -43,15 +43,14 @@ pub(crate) fn process_consumer_method(
     let handler = build_handler_body(&fn_path, &method.sig)?;
     let param_infos = extract_param_info(&method.sig)?;
     let attrs = conditional_attrs(method);
-    let def_method_name = format_ident!("__con_{}", fn_name);
     let accessor_name = format_ident!("{}_consumer", fn_name);
     let fn_name_str = fn_name.to_string();
 
     Ok(GeneratedHandlerItem {
         attrs,
-        def_fn: quote! {
+        accessor_fn: quote! {
             #[doc(hidden)]
-            pub fn #def_method_name() -> #nats_micro::ConsumerDefinition {
+            pub fn #accessor_name() -> #nats_micro::ConsumerDefinition {
                 #nats_micro::ConsumerDefinition {
                     stream: #stream.to_string(),
                     durable: #durable.to_string(),
@@ -62,12 +61,7 @@ pub(crate) fn process_consumer_method(
                 }
             }
         },
-        accessor_fn: quote! {
-            pub fn #accessor_name() -> #nats_micro::ConsumerDefinition {
-                Self::#def_method_name()
-            }
-        },
-        def_call: quote! { Self::#def_method_name() },
+        accessor_call: quote! { Self::#accessor_name() },
         info_expr: quote! {
             #nats_micro::__macros::ConsumerInfo {
                 fn_name: #fn_name_str.to_string(),
