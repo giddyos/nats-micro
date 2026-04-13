@@ -250,14 +250,14 @@ impl LiveGeneratedClientService {
     async fn maybe_json_response(
         payload: Payload<Option<Json<LiveOptionalJsonPayload>>>,
     ) -> Result<Option<Json<LiveOptionalJsonPayload>>, NatsErrorResponse> {
-        Ok(payload.into_inner())
+        Ok(payload.into_wrapped())
     }
 
     #[endpoint(subject = "maybe-proto-response", group = "live-client")]
     async fn maybe_proto_response(
         payload: Payload<Option<Proto<LiveOptionalProtoPayload>>>,
     ) -> Result<Option<Proto<LiveOptionalProtoPayload>>, NatsErrorResponse> {
-        Ok(payload.into_inner())
+        Ok(payload.into_wrapped())
     }
 
     #[endpoint(subject = "json-collection", group = "live-client")]
@@ -329,7 +329,7 @@ impl LiveGeneratedClientService {
         payload: Payload<Option<Encrypted<String>>>,
         _shutdown: ShutdownSignal,
     ) -> Result<Option<Encrypted<String>>, NatsErrorResponse> {
-        Ok(payload.into_inner())
+        Ok(payload.into_wrapped())
     }
 
     #[cfg(feature = "encryption")]
@@ -354,8 +354,7 @@ impl LiveGeneratedClientService {
         payload: Payload<Option<Encrypted<String>>>,
         _shutdown: ShutdownSignal,
     ) -> Result<Option<Encrypted<Vec<LiveOptionalJsonPayload>>>, NatsErrorResponse> {
-        Ok(payload.into_inner().map(|payload| {
-            let value = payload.into_inner();
+        Ok(payload.into_inner().map(|value| {
             Encrypted(live_json_collection([
                 value.clone(),
                 format!("{value}-echo"),

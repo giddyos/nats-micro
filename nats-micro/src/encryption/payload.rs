@@ -1,7 +1,7 @@
 use super::{RESPONSE_PUB_KEY_NAME, ServiceKeyPair};
 use crate::{
     error::NatsErrorResponse,
-    extractors::FromPayload,
+    extractors::{FromPayload, IntoPayloadInner},
     handler::RequestContext,
     response::{IntoNatsResponse, NatsResponse},
 };
@@ -10,16 +10,38 @@ use nats_micro_shared::FrameworkError;
 pub struct Encrypted<T>(pub T);
 
 impl<T> Encrypted<T> {
-    pub fn into_inner(self) -> T {
+    #[must_use]
+    pub fn into_inner(self) -> <Self as IntoPayloadInner>::Inner
+    where
+        Self: IntoPayloadInner,
+    {
+        <Self as IntoPayloadInner>::into_payload_inner(self)
+    }
+
+    #[must_use]
+    pub fn into_wrapped(self) -> T {
         self.0
     }
 
+    #[must_use]
     pub fn as_inner(&self) -> &T {
         &self.0
     }
 
+    #[must_use]
     pub fn as_inner_mut(&mut self) -> &mut T {
         &mut self.0
+    }
+}
+
+impl<T> IntoPayloadInner for Encrypted<T>
+where
+    T: IntoPayloadInner,
+{
+    type Inner = T::Inner;
+
+    fn into_payload_inner(self) -> Self::Inner {
+        self.0.into_payload_inner()
     }
 }
 

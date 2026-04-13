@@ -33,8 +33,8 @@ pub use error::{
     NatsErrorResponse, ServiceErrorMatch,
 };
 pub use extractors::{
-    FromPayload, FromRequest, FromSubjectParam, Json, Payload, Proto, RequestId, State, Subject,
-    SubjectParam,
+    FromPayload, FromRequest, FromSubjectParam, IntoPayloadInner, Json, Payload, Proto, RequestId,
+    State, Subject, SubjectParam,
 };
 pub use handler::{HandlerFn, RequestContext};
 #[cfg(feature = "napi")]

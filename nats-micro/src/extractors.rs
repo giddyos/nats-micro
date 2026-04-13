@@ -46,12 +46,34 @@ pub trait FromPayload: Sized + Send + 'static {
     fn from_payload(ctx: &RequestContext) -> Result<Self, NatsErrorResponse>;
 }
 
+/// Recursively extracts the domain payload from built-in request wrappers.
+///
+/// `Payload::into_inner()` and `Encrypted::into_inner()` delegate to this
+/// trait so nested wrapper stacks such as `Payload<Proto<T>>` and
+/// `Payload<Option<Json<T>>>` return `T` and `Option<T>` respectively.
+///
+/// Custom payload leaf types can implement this trait to opt into the same
+/// recursive unwrapping behavior.
+pub trait IntoPayloadInner: Sized {
+    type Inner;
+
+    fn into_payload_inner(self) -> Self::Inner;
+}
+
 #[derive(Debug, Clone)]
 pub struct Payload<T>(pub T);
 
 impl<T> Payload<T> {
     #[must_use]
-    pub fn into_inner(self) -> T {
+    pub fn into_inner(self) -> <Self as IntoPayloadInner>::Inner
+    where
+        Self: IntoPayloadInner,
+    {
+        <Self as IntoPayloadInner>::into_payload_inner(self)
+    }
+
+    #[must_use]
+    pub fn into_wrapped(self) -> T {
         self.0
     }
 
@@ -85,13 +107,24 @@ impl<T: FromPayload> FromRequest for Payload<T> {
     }
 }
 
+impl<T> IntoPayloadInner for Payload<T>
+where
+    T: IntoPayloadInner,
+{
+    type Inner = T::Inner;
+
+    fn into_payload_inner(self) -> Self::Inner {
+        self.0.into_payload_inner()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Json<T>(pub T);
 
 impl<T> Json<T> {
     #[must_use]
     pub fn into_inner(self) -> T {
-        self.0
+        <Self as IntoPayloadInner>::into_payload_inner(self)
     }
 
     #[must_use]
@@ -119,13 +152,21 @@ impl<T> std::ops::DerefMut for Json<T> {
     }
 }
 
+impl<T> IntoPayloadInner for Json<T> {
+    type Inner = T;
+
+    fn into_payload_inner(self) -> Self::Inner {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Proto<T>(pub T);
 
 impl<T> Proto<T> {
     #[must_use]
     pub fn into_inner(self) -> T {
-        self.0
+        <Self as IntoPayloadInner>::into_payload_inner(self)
     }
 
     #[must_use]
@@ -172,6 +213,49 @@ impl<T> std::ops::Deref for Proto<T> {
 impl<T> std::ops::DerefMut for Proto<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
+    }
+}
+
+impl<T> IntoPayloadInner for Proto<T> {
+    type Inner = T;
+
+    fn into_payload_inner(self) -> Self::Inner {
+        self.0
+    }
+}
+
+impl<T> IntoPayloadInner for Option<T>
+where
+    T: IntoPayloadInner,
+{
+    type Inner = Option<T::Inner>;
+
+    fn into_payload_inner(self) -> Self::Inner {
+        self.map(IntoPayloadInner::into_payload_inner)
+    }
+}
+
+impl IntoPayloadInner for Bytes {
+    type Inner = Self;
+
+    fn into_payload_inner(self) -> Self::Inner {
+        self
+    }
+}
+
+impl IntoPayloadInner for Vec<u8> {
+    type Inner = Self;
+
+    fn into_payload_inner(self) -> Self::Inner {
+        self
+    }
+}
+
+impl IntoPayloadInner for String {
+    type Inner = Self;
+
+    fn into_payload_inner(self) -> Self::Inner {
+        self
     }
 }
 

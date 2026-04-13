@@ -3,10 +3,14 @@
 use async_nats::HeaderMap;
 use bytes::Bytes;
 use nats_micro::{
-    Auth, AuthError, FromAuthRequest, FromPayload, FromRequest, FromSubjectParam, Headers,
-    NatsRequest, Proto, RequestContext, ShutdownSignal, StateMap, Subject, SubjectParam,
+    Auth, AuthError, FromAuthRequest, FromPayload, FromRequest, FromSubjectParam, Headers, Json,
+    NatsRequest, Payload, Proto, RequestContext, ShutdownSignal, StateMap, Subject, SubjectParam,
 };
 use prost::Message;
+use serde::{Deserialize, Serialize};
+
+#[cfg(feature = "encryption")]
+use nats_micro::Encrypted;
 
 #[derive(Clone, PartialEq, Message)]
 struct ExampleProto {
@@ -14,6 +18,11 @@ struct ExampleProto {
     name: String,
     #[prost(uint32, tag = "2")]
     count: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ExampleJson {
+    value: String,
 }
 
 fn request_context(payload: Vec<u8>) -> RequestContext {
@@ -116,6 +125,56 @@ fn prost_messages_decode_before_handler_execution() {
     let decoded = Proto::<ExampleProto>::from_payload(&ctx).expect("protobuf payload decodes");
 
     assert_eq!(decoded.0, expected);
+}
+
+#[test]
+fn payload_into_inner_recursively_unwraps_proto_payloads() {
+    let expected = ExampleProto {
+        name: "created".to_string(),
+        count: 7,
+    };
+
+    let payload = Payload(Proto(expected.clone()));
+    let inner: ExampleProto = payload.into_inner();
+
+    assert_eq!(inner, expected);
+}
+
+#[test]
+fn payload_into_inner_preserves_optional_shape_while_unwrapping_json() {
+    let expected = ExampleJson {
+        value: "hello".to_string(),
+    };
+
+    let payload = Payload(Some(Json(expected.clone())));
+    let inner: Option<ExampleJson> = payload.into_inner();
+
+    assert_eq!(inner, Some(expected));
+}
+
+#[test]
+fn payload_into_wrapped_preserves_the_immediate_wrapper() {
+    let expected = ExampleJson {
+        value: "hello".to_string(),
+    };
+
+    let payload = Payload(Some(Json(expected.clone())));
+    let inner: Option<Json<ExampleJson>> = payload.into_wrapped();
+
+    assert_eq!(inner.map(|value| value.0), Some(expected));
+}
+
+#[cfg(feature = "encryption")]
+#[test]
+fn encrypted_into_inner_recursively_unwraps_nested_json() {
+    let expected = ExampleJson {
+        value: "secret".to_string(),
+    };
+
+    let encrypted = Encrypted(Json(expected.clone()));
+    let inner: ExampleJson = encrypted.into_inner();
+
+    assert_eq!(inner, expected);
 }
 
 #[test]

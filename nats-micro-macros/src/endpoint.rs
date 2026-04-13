@@ -215,11 +215,11 @@ fn response_into_transport(response_meta: &ResponseMeta, nats_micro: &syn::Path)
         (ResponseEncoding::Serde, true, false) => quote! { response.map(#nats_micro::Json) },
         (ResponseEncoding::Serde, false, true) => quote! {{
             let __nats_micro_encrypted = response;
-            #nats_micro::Encrypted(#nats_micro::Json(__nats_micro_encrypted.into_inner()))
+            #nats_micro::Encrypted(#nats_micro::Json(__nats_micro_encrypted.into_wrapped()))
         }},
         (ResponseEncoding::Serde, true, true) => quote! {
             response.map(|__nats_micro_encrypted| {
-                #nats_micro::Encrypted(#nats_micro::Json(__nats_micro_encrypted.into_inner()))
+                #nats_micro::Encrypted(#nats_micro::Json(__nats_micro_encrypted.into_wrapped()))
             })
         },
         _ => quote! { response },

@@ -5,8 +5,8 @@ pub use crate::auth::{Auth, AuthError, FromAuthRequest};
 pub use crate::consumer::{ConsumerDefinition, ConsumerHandlerFn};
 pub use crate::error::{ClientError, IntoNatsError, NatsError, NatsErrorResponse};
 pub use crate::extractors::{
-    FromPayload, FromRequest, FromSubjectParam, Json, Payload, Proto, RequestId, State, Subject,
-    SubjectParam,
+    FromPayload, FromRequest, FromSubjectParam, IntoPayloadInner, Json, Payload, Proto, RequestId,
+    State, Subject, SubjectParam,
 };
 pub use crate::handler::{HandlerFn, RequestContext};
 pub use crate::request::NatsRequest;
