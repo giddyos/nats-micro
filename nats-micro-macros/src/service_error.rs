@@ -1,4 +1,4 @@
-use heck::AsShoutySnakeCase;
+use heck::{AsShoutySnakeCase, ToSnakeCase};
 use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
 use syn::{Data, DeriveInput, Fields, Path, Token, punctuated::Punctuated};
@@ -10,6 +10,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
     let nats_micro = nats_micro_path();
     let span = input.ident.span();
     let enum_ident = input.ident.clone();
+    let enum_vis = input.vis.clone();
     let generics = input.generics.clone();
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
 
@@ -24,14 +25,9 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
         }
     };
 
-    let has_error_attr = data_enum.variants.iter().any(variant_has_error_attr);
-    let has_error_derive = rewrite_service_error_derives(&mut input, &nats_micro);
-    if has_error_attr && !has_error_derive {
-        input
-            .attrs
-            .push(syn::parse_quote!(#[derive(#nats_micro::thiserror::Error)]));
-    }
+    normalize_service_error_derives(&mut input);
 
+    let mut display_arms = Vec::new();
     let mut variant_arms = Vec::new();
     let mut from_response_arms = Vec::new();
     let mut napi_js_variants = Vec::new();
@@ -44,6 +40,10 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
         let v_name = v_ident.to_string();
         let v_code = format!("{}", AsShoutySnakeCase(&v_name));
         let js_variant_ident = format_ident!("{}", v_code);
+        let error_message = match variant_error_message(variant) {
+            Ok(message) => message,
+            Err(error) => return error.to_compile_error(),
+        };
 
         let is_internal = variant_is_internal(variant);
         let code = variant_code(variant, is_internal);
@@ -60,6 +60,12 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
             Fields::Named(_) => quote! { #enum_ident::#v_ident { .. } },
         };
 
+        let display_arm = match display_arm_tokens(&enum_ident, variant, &error_message) {
+            Ok(tokens) => tokens,
+            Err(error) => return error.to_compile_error(),
+        };
+
+        display_arms.push(display_arm);
         napi_js_variants.push(quote! { #js_variant_ident });
         napi_as_ref_arms.push(quote! {
             Self::#js_variant_ident => #v_code,
@@ -146,11 +152,25 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
 
     if let Data::Enum(ref mut data_enum) = input.data {
         for variant in &mut data_enum.variants {
-            variant
-                .attrs
-                .retain(|attr| !attr.path().is_ident("internal") && !attr.path().is_ident("code"));
+            variant.attrs.retain(|attr| {
+                !attr.path().is_ident("internal")
+                    && !attr.path().is_ident("code")
+                    && !attr.path().is_ident("error")
+            });
         }
     }
+
+    let display_impl = quote! {
+        impl #impl_generics ::std::fmt::Display for #enum_ident #ty_generics #where_clause {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                match self {
+                    #(#display_arms)*
+                }
+            }
+        }
+
+        impl #impl_generics ::std::error::Error for #enum_ident #ty_generics #where_clause {}
+    };
 
     let enum_impl = quote! {
         impl #impl_generics #nats_micro::IntoNatsError for #enum_ident #ty_generics #where_clause {
@@ -175,29 +195,41 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
     };
 
     let napi_impl = if cfg!(feature = "macros_napi_feature") {
+        let napi_module_ident = format_ident!(
+            "__nats_micro_service_error_napi_{}",
+            enum_ident.to_string().to_snake_case()
+        );
+
         quote! {
-            #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-            #[#nats_micro::napi_derive::napi(string_enum)]
-            pub enum #js_enum_ident {
-                #(#napi_js_variants,)*
-            }
+            #[doc(hidden)]
+            mod #napi_module_ident {
+                use super::*;
+                use #nats_micro::napi as napi;
 
-            impl ::std::convert::AsRef<str> for #js_enum_ident {
-                fn as_ref(&self) -> &str {
-                    match self {
-                        #(#napi_as_ref_arms)*
+                #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+                #[#nats_micro::napi_derive::napi(string_enum)]
+                pub enum #js_enum_ident {
+                    #(#napi_js_variants,)*
+                }
+
+                impl ::std::convert::AsRef<str> for #js_enum_ident {
+                    fn as_ref(&self) -> &str {
+                        match self {
+                            #(#napi_as_ref_arms)*
+                        }
+                    }
+                }
+
+                impl #impl_generics ::std::convert::From<&#enum_ident #ty_generics> for #js_enum_ident #where_clause {
+                    fn from(value: &#enum_ident #ty_generics) -> Self {
+                        match value {
+                            #(#napi_from_error_arms)*
+                        }
                     }
                 }
             }
 
-            impl #impl_generics ::std::convert::From<&#enum_ident #ty_generics> for #js_enum_ident #where_clause {
-                fn from(value: &#enum_ident #ty_generics) -> Self {
-                    match value {
-                        #(#napi_from_error_arms)*
-                    }
-                }
-            }
-
+            #enum_vis use #napi_module_ident::#js_enum_ident;
             impl #impl_generics #nats_micro::__private::NapiServiceError for #enum_ident #ty_generics #where_clause {}
         }
     } else {
@@ -206,14 +238,14 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
 
     let mut out = TokenStream::new();
     out.extend(input.into_token_stream());
+    out.extend(display_impl);
     out.extend(enum_impl);
     out.extend(napi_impl);
     out
 }
 
-fn rewrite_service_error_derives(input: &mut DeriveInput, nats_micro: &syn::Path) -> bool {
+fn normalize_service_error_derives(input: &mut DeriveInput) {
     let mut has_debug = false;
-    let mut has_error = false;
     let mut attrs = Vec::with_capacity(input.attrs.len() + 2);
 
     for attr in &input.attrs {
@@ -242,8 +274,6 @@ fn rewrite_service_error_derives(input: &mut DeriveInput, nats_micro: &syn::Path
             }
 
             if segment.ident == "Error" {
-                has_error = true;
-                rewritten.push(syn::parse_quote!(#nats_micro::thiserror::Error));
                 continue;
             }
 
@@ -260,11 +290,236 @@ fn rewrite_service_error_derives(input: &mut DeriveInput, nats_micro: &syn::Path
     }
 
     input.attrs = attrs;
-    has_error
 }
 
-fn variant_has_error_attr(variant: &syn::Variant) -> bool {
-    variant.attrs.iter().any(|attr| attr.path().is_ident("error"))
+fn variant_error_message(variant: &syn::Variant) -> Result<syn::LitStr, syn::Error> {
+    let Some(attr) = variant
+        .attrs
+        .iter()
+        .find(|attr| attr.path().is_ident("error"))
+    else {
+        return Err(syn::Error::new_spanned(
+            variant,
+            "service_error variants require #[error(\"...\")]",
+        ));
+    };
+
+    attr.parse_args::<syn::LitStr>().map_err(|_| {
+        syn::Error::new_spanned(
+            attr,
+            "service_error only supports #[error(\"...\")] string literals",
+        )
+    })
+}
+
+fn display_arm_tokens(
+    enum_ident: &syn::Ident,
+    variant: &syn::Variant,
+    message: &syn::LitStr,
+) -> Result<TokenStream, syn::Error> {
+    let (format_string, placeholders) = parse_error_format(message)?;
+    let format_lit = syn::LitStr::new(&format_string, message.span());
+    let v_ident = &variant.ident;
+
+    match &variant.fields {
+        Fields::Unit => {
+            if !placeholders.is_empty() {
+                return Err(syn::Error::new_spanned(
+                    variant,
+                    "service_error format placeholders require enum fields",
+                ));
+            }
+
+            Ok(quote! {
+                Self::#v_ident => ::std::write!(f, #format_lit),
+            })
+        }
+        Fields::Unnamed(fields) => {
+            let bindings: Vec<syn::Ident> = (0..fields.unnamed.len())
+                .map(|index| {
+                    syn::Ident::new(&format!("__field_{index}"), proc_macro2::Span::call_site())
+                })
+                .collect();
+            let args = display_args_tokens(variant, &bindings, &[], &placeholders)?;
+
+            Ok(if args.is_empty() {
+                quote! {
+                    #enum_ident::#v_ident(#(#bindings),*) => ::std::write!(f, #format_lit),
+                }
+            } else {
+                quote! {
+                    #enum_ident::#v_ident(#(#bindings),*) => ::std::write!(f, #format_lit, #(#args),*),
+                }
+            })
+        }
+        Fields::Named(fields) => {
+            let field_idents: Vec<_> = fields
+                .named
+                .iter()
+                .map(|field| field.ident.clone().expect("named field"))
+                .collect();
+            let bindings: Vec<syn::Ident> = field_idents
+                .iter()
+                .map(|ident| syn::Ident::new(&format!("__{ident}"), ident.span()))
+                .collect();
+            let args = display_args_tokens(variant, &bindings, &field_idents, &placeholders)?;
+
+            Ok(if args.is_empty() {
+                quote! {
+                    #enum_ident::#v_ident { #(#field_idents: #bindings),* } => ::std::write!(f, #format_lit),
+                }
+            } else {
+                quote! {
+                    #enum_ident::#v_ident { #(#field_idents: #bindings),* } => ::std::write!(f, #format_lit, #(#args),*),
+                }
+            })
+        }
+    }
+}
+
+fn display_args_tokens(
+    variant: &syn::Variant,
+    bindings: &[syn::Ident],
+    field_idents: &[syn::Ident],
+    placeholders: &[FormatPlaceholder],
+) -> Result<Vec<TokenStream>, syn::Error> {
+    let mut args = Vec::with_capacity(placeholders.len());
+    let mut next_implicit = 0usize;
+
+    for placeholder in placeholders {
+        let index = match &placeholder.key {
+            PlaceholderKey::Implicit => {
+                let index = next_implicit;
+                next_implicit += 1;
+                index
+            }
+            PlaceholderKey::Index(index) => *index,
+            PlaceholderKey::Name(name) => field_idents
+                .iter()
+                .position(|ident| ident == name)
+                .ok_or_else(|| {
+                    syn::Error::new_spanned(
+                        variant,
+                        format!("unknown service_error format field `{name}`"),
+                    )
+                })?,
+        };
+
+        let Some(binding) = bindings.get(index) else {
+            return Err(syn::Error::new_spanned(
+                variant,
+                format!("service_error format placeholder {{{index}}} is out of bounds"),
+            ));
+        };
+
+        args.push(quote! { #binding });
+    }
+
+    Ok(args)
+}
+
+fn parse_error_format(
+    message: &syn::LitStr,
+) -> Result<(String, Vec<FormatPlaceholder>), syn::Error> {
+    let value = message.value();
+    let chars: Vec<_> = value.chars().collect();
+    let mut formatted = String::new();
+    let mut placeholders = Vec::new();
+    let mut index = 0usize;
+
+    while index < chars.len() {
+        match chars[index] {
+            '{' => {
+                if chars.get(index + 1) == Some(&'{') {
+                    formatted.push_str("{{");
+                    index += 2;
+                    continue;
+                }
+
+                let start = index + 1;
+                let mut end = start;
+                while end < chars.len() && chars[end] != '}' {
+                    if chars[end] == '{' {
+                        return Err(syn::Error::new(
+                            message.span(),
+                            "nested braces are not supported in service_error format strings",
+                        ));
+                    }
+                    end += 1;
+                }
+
+                if end == chars.len() {
+                    return Err(syn::Error::new(
+                        message.span(),
+                        "unterminated format placeholder in service_error message",
+                    ));
+                }
+
+                let placeholder = chars[start..end].iter().collect::<String>();
+                let (key, format_spec) = parse_placeholder_key(&placeholder, message)?;
+                placeholders.push(FormatPlaceholder { key });
+                formatted.push('{');
+                formatted.push_str(&format_spec);
+                formatted.push('}');
+                index = end + 1;
+            }
+            '}' => {
+                if chars.get(index + 1) == Some(&'}') {
+                    formatted.push_str("}}");
+                    index += 2;
+                } else {
+                    return Err(syn::Error::new(
+                        message.span(),
+                        "unmatched closing brace in service_error message",
+                    ));
+                }
+            }
+            ch => {
+                formatted.push(ch);
+                index += 1;
+            }
+        }
+    }
+
+    Ok((formatted, placeholders))
+}
+
+fn parse_placeholder_key(
+    placeholder: &str,
+    message: &syn::LitStr,
+) -> Result<(PlaceholderKey, String), syn::Error> {
+    let (raw_key, raw_spec) = match placeholder.split_once(':') {
+        Some((key, spec)) => (key, format!(":{spec}")),
+        None => (placeholder, String::new()),
+    };
+    let key = raw_key.trim();
+
+    if key.is_empty() {
+        return Ok((PlaceholderKey::Implicit, raw_spec));
+    }
+
+    if let Ok(index) = key.parse::<usize>() {
+        return Ok((PlaceholderKey::Index(index), raw_spec));
+    }
+
+    if syn::parse_str::<syn::Ident>(key).is_ok() {
+        return Ok((PlaceholderKey::Name(format_ident!("{key}")), raw_spec));
+    }
+
+    Err(syn::Error::new(
+        message.span(),
+        format!("unsupported service_error placeholder `{{{key}}}`"),
+    ))
+}
+
+struct FormatPlaceholder {
+    key: PlaceholderKey,
+}
+
+enum PlaceholderKey {
+    Implicit,
+    Index(usize),
+    Name(syn::Ident),
 }
 
 fn variant_is_internal(variant: &syn::Variant) -> bool {

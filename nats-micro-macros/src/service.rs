@@ -345,8 +345,13 @@ fn render_napi_items(
         return quote! {};
     }
 
+    let nats_micro = nats_micro_path();
     let service_name = struct_ident.to_string();
     let service_config_module = service_config_module_ident(struct_ident);
+    let napi_module_ident = format_ident!(
+        "__nats_micro_napi_{}",
+        struct_ident.to_string().to_snake_case()
+    );
     let napi_asserts = gen_napi_asserts(client_endpoints);
     let napi_client_module =
         generate_client_napi_module(struct_ident, &service_name, client_endpoints);
@@ -354,7 +359,16 @@ fn render_napi_items(
     quote! {
         #service_config_module::emit_napi_items! {
             #napi_asserts
-            #napi_client_module
+
+            #[doc(hidden)]
+            mod #napi_module_ident {
+                use super::*;
+                use #nats_micro::napi as napi;
+
+                #napi_client_module
+            }
+
+            pub use #napi_module_ident::*;
         }
     }
 }

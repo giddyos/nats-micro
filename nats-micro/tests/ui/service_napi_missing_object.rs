@@ -1,6 +1,4 @@
 use nats_micro::{Json, NatsErrorResponse, Payload, service, service_handlers};
-#[cfg(feature = "napi")]
-use nats_micro::napi;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]

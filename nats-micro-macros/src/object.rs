@@ -1,5 +1,5 @@
 use proc_macro2::TokenStream;
-use quote::{quote, quote_spanned};
+use quote::{format_ident, quote, quote_spanned};
 use syn::{Fields, ItemStruct, Visibility, spanned::Spanned};
 
 use crate::utils::nats_micro_path;
@@ -32,11 +32,25 @@ pub(crate) fn expand_object(item: &ItemStruct) -> TokenStream {
 
     let nats_micro = nats_micro_path();
     let ident = &item.ident;
+    let vis = &item.vis;
     let (impl_generics, ty_generics, where_clause) = item.generics.split_for_impl();
+    let module_name = ident.to_string();
+    let module_ident = format_ident!(
+        "__nats_micro_object_{}",
+        heck::ToSnakeCase::to_snake_case(module_name.as_str())
+    );
 
     quote! {
-        #[#nats_micro::napi_derive::napi(object)]
-        #item
+        #[doc(hidden)]
+        mod #module_ident {
+            use super::*;
+            use #nats_micro::napi as napi;
+
+            #[#nats_micro::napi_derive::napi(object)]
+            #item
+        }
+
+        #vis use #module_ident::#ident;
 
         impl #impl_generics #nats_micro::__private::NapiObject for #ident #ty_generics #where_clause {}
     }
