@@ -1,7 +1,7 @@
 use nats_micro::{FromNatsErrorResponse, IntoNatsError, ServiceErrorMatch, service_error};
 
 #[service_error]
-enum DemoError {
+pub enum DemoError {
     #[error("numbers must not be empty")]
     EmptyNumbers,
 

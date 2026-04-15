@@ -25,6 +25,14 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
         }
     };
 
+    if cfg!(feature = "macros_client_feature") && !matches!(input.vis, syn::Visibility::Public(_)) {
+        return error_stream(
+            span,
+            "#[service_error] enums must be declared `pub` when the `client` feature is enabled",
+            &input,
+        );
+    }
+
     normalize_service_error_derives(&mut input);
 
     let mut display_arms = Vec::new();

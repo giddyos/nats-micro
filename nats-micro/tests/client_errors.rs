@@ -6,7 +6,7 @@ use nats_micro::{
 use prost::Message;
 
 #[service_error]
-enum ClientTestError {
+pub enum ClientTestError {
     #[error("numbers must not be empty")]
     #[code(400)]
     EmptyNumbers,

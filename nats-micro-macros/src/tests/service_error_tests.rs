@@ -5,7 +5,7 @@ use syn::parse_quote;
 fn service_error_adds_debug_and_error_impls() {
     let input = parse_quote! {
         #[derive(Clone)]
-        enum DemoError {
+        pub enum DemoError {
             #[error("boom")]
             Boom,
         }
@@ -23,7 +23,7 @@ fn service_error_adds_debug_and_error_impls() {
 fn service_error_strips_existing_error_derive() {
     let input = parse_quote! {
         #[derive(Debug, thiserror::Error)]
-        enum DemoError {
+        pub enum DemoError {
             #[error("boom")]
             Boom,
         }
@@ -38,7 +38,7 @@ fn service_error_strips_existing_error_derive() {
 #[test]
 fn service_error_formats_tuple_and_named_fields_without_thiserror() {
     let input = parse_quote! {
-        enum DemoError {
+        pub enum DemoError {
             #[error("retry after {0} seconds")]
             RetryAfter(u64),
             #[error("invalid range {min}..{max}")]
@@ -55,7 +55,7 @@ fn service_error_formats_tuple_and_named_fields_without_thiserror() {
 #[test]
 fn service_error_napi_output_respects_macro_feature() {
     let input = parse_quote! {
-        enum DemoError {
+        pub enum DemoError {
             #[error("boom")]
             Boom,
         }
