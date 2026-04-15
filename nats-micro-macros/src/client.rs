@@ -35,7 +35,7 @@ impl ClientModuleSpec {
             pub mod #module_name {
                 use super::*;
 
-                #[derive(Clone)]
+                #[derive(Clone, Debug)]
                 pub struct #client_struct_name {
                     client: #nats_micro::async_nats::Client,
                     prefix: Option<String>,

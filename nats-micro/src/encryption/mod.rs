@@ -247,7 +247,7 @@ impl ServiceKeyPair {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ServiceRecipient {
     public_key: PublicKey,
     client: Option<async_nats::Client>,
