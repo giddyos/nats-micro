@@ -464,7 +464,7 @@ impl ClientCallOptions {
             let recipient = self.recipient.ok_or_else(|| {
                 NatsErrorResponse::framework(
                     FrameworkError::MissingRecipientPubkey,
-                    "Encrypted headers require a recipient public key. Configure the generated client with a default recipient public key.",
+                    "Encrypted headers require a recipient public key. Configure the generated client with a recipient public key.",
                 )
             })?;
             let recipient = recipient.with_client(client.clone());
@@ -515,7 +515,7 @@ impl ClientCallOptions {
         let recipient = self.recipient.ok_or_else(|| {
             NatsErrorResponse::framework(
                 FrameworkError::MissingRecipientPubkey,
-                "Encrypted payloads require a recipient public key. Configure the generated client with a default recipient public key.",
+                "This endpoint expects an encrypted payload. Encrypted payloads require a recipient public key. Configure the generated client with a recipient public key.",
             )
         })?;
         let recipient = recipient.with_client(client.clone());
