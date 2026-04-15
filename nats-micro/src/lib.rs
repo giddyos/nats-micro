@@ -54,7 +54,10 @@ pub use shutdown_signal::ShutdownSignal;
 pub use state::StateMap;
 
 #[cfg(feature = "client")]
-pub use client::{ClientCallOptions, X_CLIENT_VERSION_HEADER};
+pub use client::{
+    AuthOptions, ClientCallOptions, ConnectOptions, ConnectedClient, X_CLIENT_VERSION_HEADER,
+    connect,
+};
 
 #[cfg(feature = "encryption")]
 pub use encryption::{
@@ -107,10 +110,8 @@ pub mod __private {
 #[doc(hidden)]
 pub mod __napi {
     pub use crate::error::NapiClientError;
-    pub use crate::napi_support::{
-        ConnectedClient, NapiAuthOptions, NapiClientHeaderValue, NapiConnectOptions,
-        client_call_options_from_headers, connect,
-    };
+    pub use crate::napi_support::{NapiClientHeaderValue, client_call_options_from_headers};
+    pub use crate::{AuthOptions, ConnectOptions, ConnectedClient, connect};
 }
 
 #[doc(hidden)]

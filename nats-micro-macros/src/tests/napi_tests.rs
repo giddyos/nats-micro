@@ -82,6 +82,11 @@ fn generated_napi_module_wraps_generated_rust_client() {
     assert!(expanded.contains("DemoServiceClientConnectOptions"));
     assert!(expanded.contains("demo_service_client :: DemoServiceClient"));
     assert!(expanded.contains("pub async fn connect"));
+    assert!(expanded.contains(
+        "impl From < DemoServiceClientAuthOptions > for :: nats_micro :: __napi :: AuthOptions"
+    ));
+    assert!(expanded.contains("impl From < DemoServiceClientConnectOptions > for :: nats_micro :: __napi :: ConnectOptions"));
+    assert!(expanded.contains("demo_service_client :: DemoServiceClient :: connect"));
     assert!(expanded.contains("JsDemoClientFrameworkError"));
     assert!(expanded.contains("JsDemoClientTransportError"));
     assert!(expanded.contains("__demo_service_generic_napi_error"));

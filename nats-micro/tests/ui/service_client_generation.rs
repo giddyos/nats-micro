@@ -57,6 +57,39 @@ impl DemoService {
 fn _assert_client_module() {
     use demo_service_client::DemoServiceClient;
 
+    fn _assert_connect() {
+        let _ = nats_micro::AuthOptions::default();
+        let _ = nats_micro::ConnectOptions::default();
+
+        let _ = async {
+            let _typed: Result<DemoServiceClient, nats_micro::NatsErrorResponse> =
+                DemoServiceClient::connect("nats://127.0.0.1:4222", None).await;
+
+            #[cfg(feature = "encryption")]
+            let _configured: Result<DemoServiceClient, nats_micro::NatsErrorResponse> =
+                DemoServiceClient::connect(
+                    "nats://127.0.0.1:4222",
+                    Some(nats_micro::ConnectOptions {
+                        subject_prefix: Some("demo".to_string()),
+                        recipient_public_key: Some(vec![7u8; 32]),
+                        ..Default::default()
+                    }),
+                )
+                .await;
+
+            #[cfg(not(feature = "encryption"))]
+            let _configured: Result<DemoServiceClient, nats_micro::NatsErrorResponse> =
+                DemoServiceClient::connect(
+                    "nats://127.0.0.1:4222",
+                    Some(nats_micro::ConnectOptions {
+                        subject_prefix: Some("demo".to_string()),
+                        ..Default::default()
+                    }),
+                )
+                .await;
+        };
+    }
+
     #[cfg(feature = "encryption")]
     fn _assert_constructors(client: nats_micro::async_nats::Client) {
         let recipient = [7u8; 32];

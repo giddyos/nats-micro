@@ -41,6 +41,10 @@ fn generated_client_uses_service_metadata_prefix() {
     let expanded = generate_client_module(&struct_ident, "DemoService", &[]).to_string();
 
     assert!(expanded.contains("let service_meta = DemoService :: __nats_micro_service_meta ()"));
+    assert!(expanded.contains("pub async fn connect"));
+    assert!(expanded.contains("Option < :: nats_micro :: ConnectOptions >"));
+    assert!(expanded.contains(":: nats_micro :: connect (server , options) . await ?"));
+    assert!(expanded.contains("from_connected_client"));
     assert!(expanded.contains("prefix : service_meta . subject_prefix"));
     assert!(expanded.contains("service_version : String"));
     assert!(expanded.contains("build_subject"));
@@ -51,6 +55,7 @@ fn generated_client_uses_service_metadata_prefix() {
     if cfg!(feature = "macros_encryption_feature") {
         assert!(expanded.contains("recipient : Option <"));
         assert!(expanded.contains("recipient_public_key : Option < [u8 ; 32] >"));
+        assert!(expanded.contains("recipient ,"));
         assert!(expanded.contains(
             "Some (recipient) => options . with_default_recipient (recipient . clone ())"
         ));

@@ -486,7 +486,7 @@ fn render_connect_support(service_name: &str, nats_micro: &syn::Path) -> TokenSt
             pub nkey: Option<String>,
         }
 
-        impl From<#auth_options_name> for #nats_micro::__napi::NapiAuthOptions {
+        impl From<#auth_options_name> for #nats_micro::__napi::AuthOptions {
             fn from(value: #auth_options_name) -> Self {
                 Self {
                     token: value.token,
@@ -524,7 +524,7 @@ fn render_connect_support(service_name: &str, nats_micro: &syn::Path) -> TokenSt
             #recipient_field
         }
 
-        impl From<#connect_options_name> for #nats_micro::__napi::NapiConnectOptions {
+        impl From<#connect_options_name> for #nats_micro::__napi::ConnectOptions {
             fn from(value: #connect_options_name) -> Self {
                 Self {
                     name: value.name,
@@ -824,26 +824,10 @@ pub(crate) fn generate_client_napi_module(
                 has_default_recipient,
             )?;
 
-            let #nats_micro::__napi::ConnectedClient {
-                client,
-                subject_prefix,
-                recipient,
-            } = #nats_micro::__napi::connect(server, options.into()).await?;
-
-            let recipient_public_key = recipient.as_ref().map(#nats_micro::ServiceRecipient::to_bytes);
-            let inner = match subject_prefix {
-                Some(subject_prefix) => {
-                    #rust_client_module::#rust_client_struct::with_prefix(
-                        client,
-                        subject_prefix,
-                        recipient_public_key,
-                    )
-                }
-                None => #rust_client_module::#rust_client_struct::new(
-                    client,
-                    recipient_public_key,
-                ),
-            };
+            let inner = #rust_client_module::#rust_client_struct::connect(
+                server,
+                Some(options.into()),
+            ).await?;
 
             Ok(Self {
                 inner,
@@ -857,17 +841,10 @@ pub(crate) fn generate_client_napi_module(
             #default_headers_init
             let _ = #nats_micro::__napi::client_call_options_from_headers(default_headers.clone(), false)?;
 
-            let #nats_micro::__napi::ConnectedClient {
-                client,
-                subject_prefix,
-            } = #nats_micro::__napi::connect(server, options.into()).await?;
-
-            let inner = match subject_prefix {
-                Some(subject_prefix) => {
-                    #rust_client_module::#rust_client_struct::with_prefix(client, subject_prefix)
-                }
-                None => #rust_client_module::#rust_client_struct::new(client),
-            };
+            let inner = #rust_client_module::#rust_client_struct::connect(
+                server,
+                Some(options.into()),
+            ).await?;
 
             Ok(Self {
                 inner,

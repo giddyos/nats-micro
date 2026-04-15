@@ -26,7 +26,9 @@ impl ClientModuleSpec {
         let client_struct_name = &self.client_struct_name;
         let methods: Vec<_> = self.endpoints.iter().map(render_client_method).collect();
         let recipient_field = self.recipient_field_tokens(&nats_micro);
+        let connect_fn = Self::connect_fn_tokens(&nats_micro);
         let new_fn = self.new_fn_tokens(&nats_micro);
+        let from_connected_client_fn = self.connected_client_ctor_fn_tokens(&nats_micro);
         let with_prefix_fn = self.with_prefix_fn_tokens(&nats_micro);
         let with_recipient_fn = self.with_recipient_fn_tokens(&nats_micro);
         let apply_client_defaults_fn = self.apply_client_defaults_fn_tokens(&nats_micro);
@@ -44,7 +46,12 @@ impl ClientModuleSpec {
                 }
 
                 impl #client_struct_name {
+                    #connect_fn
+
                     #new_fn
+
+                    #[doc(hidden)]
+                    #from_connected_client_fn
 
                     #[doc(hidden)]
                     #with_prefix_fn
@@ -64,6 +71,18 @@ impl ClientModuleSpec {
 
                     #(#methods)*
                 }
+            }
+        }
+    }
+
+    fn connect_fn_tokens(nats_micro: &syn::Path) -> TokenStream {
+        quote! {
+            pub async fn connect(
+                server: impl Into<String>,
+                options: Option<#nats_micro::ConnectOptions>,
+            ) -> Result<Self, #nats_micro::NatsErrorResponse> {
+                let connected = #nats_micro::connect(server, options).await?;
+                Ok(Self::from_connected_client(connected))
             }
         }
     }
@@ -104,6 +123,46 @@ impl ClientModuleSpec {
                     Self {
                         client,
                         prefix: service_meta.subject_prefix,
+                        service_version: service_meta.version,
+                    }
+                }
+            }
+        }
+    }
+
+    fn connected_client_ctor_fn_tokens(&self, nats_micro: &syn::Path) -> TokenStream {
+        let service_ident = &self.service_ident;
+        let service_meta = service_meta_tokens(service_ident);
+        if self.encryption_enabled {
+            quote! {
+                fn from_connected_client(connected: #nats_micro::ConnectedClient) -> Self {
+                    #service_meta
+                    let #nats_micro::ConnectedClient {
+                        client,
+                        subject_prefix,
+                        recipient,
+                    } = connected;
+
+                    Self {
+                        client,
+                        prefix: subject_prefix.or(service_meta.subject_prefix),
+                        service_version: service_meta.version,
+                        recipient,
+                    }
+                }
+            }
+        } else {
+            quote! {
+                fn from_connected_client(connected: #nats_micro::ConnectedClient) -> Self {
+                    #service_meta
+                    let #nats_micro::ConnectedClient {
+                        client,
+                        subject_prefix,
+                    } = connected;
+
+                    Self {
+                        client,
+                        prefix: subject_prefix.or(service_meta.subject_prefix),
                         service_version: service_meta.version,
                     }
                 }

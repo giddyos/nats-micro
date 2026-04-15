@@ -20,7 +20,9 @@ pub use crate::state::StateMap;
 pub use crate::{NatsApp, NatsAppConfig, WorkerFailurePolicy};
 
 #[cfg(feature = "client")]
-pub use crate::{ClientCallOptions, X_CLIENT_VERSION_HEADER};
+pub use crate::{
+    AuthOptions, ClientCallOptions, ConnectOptions, ConnectedClient, X_CLIENT_VERSION_HEADER,
+};
 
 #[cfg(feature = "encryption")]
 pub use crate::{

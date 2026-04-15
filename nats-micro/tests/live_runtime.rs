@@ -24,8 +24,8 @@ use futures::StreamExt;
 use nats_micro::napi;
 #[cfg(feature = "client")]
 use nats_micro::{
-    ClientCallOptions, Headers, Json, NatsService, Proto, RequestId, Subject, SubjectParam,
-    X_CLIENT_VERSION_HEADER,
+    AuthOptions, ClientCallOptions, ConnectOptions, FrameworkError, Headers, Json, NatsService,
+    Proto, RequestId, Subject, SubjectParam, X_CLIENT_VERSION_HEADER,
 };
 use nats_micro::{
     ConsumerDefinition, EndpointDefinition, NatsApp, NatsErrorResponse, Payload, ServiceDefinition,
@@ -651,10 +651,11 @@ async fn live_client_drain_triggers_supervised_shutdown() -> Result<()> {
 #[tokio::test]
 async fn live_generated_client_round_trips_standard_endpoints() -> Result<()> {
     let server = nats_server::run_basic_server();
-    let client = async_nats::connect(server.client_url()).await?;
+    let server_url = server.client_url();
+    let client = async_nats::connect(server_url.clone()).await?;
 
     let (shutdown_tx, app_handle, service_client) =
-        spawn_live_generated_client_service(client.clone()).await?;
+        spawn_live_generated_client_service(server_url, client.clone()).await?;
 
     let standard_result = async {
         let health = service_client
@@ -709,10 +710,11 @@ async fn live_generated_client_round_trips_standard_endpoints() -> Result<()> {
 #[tokio::test]
 async fn live_generated_client_optional_payload_variants_round_trip() -> Result<()> {
     let server = nats_server::run_basic_server();
-    let client = async_nats::connect(server.client_url()).await?;
+    let server_url = server.client_url();
+    let client = async_nats::connect(server_url.clone()).await?;
 
     let (shutdown_tx, app_handle, service_client) =
-        spawn_live_generated_client_service(client.clone()).await?;
+        spawn_live_generated_client_service(server_url, client.clone()).await?;
 
     let optional_result = async {
         let json_some = service_client
@@ -773,10 +775,11 @@ async fn live_generated_client_optional_payload_variants_round_trip() -> Result<
 #[tokio::test]
 async fn live_generated_client_optional_response_variants_round_trip() -> Result<()> {
     let server = nats_server::run_basic_server();
-    let client = async_nats::connect(server.client_url()).await?;
+    let server_url = server.client_url();
+    let client = async_nats::connect(server_url.clone()).await?;
 
     let (shutdown_tx, app_handle, service_client) =
-        spawn_live_generated_client_service(client.clone()).await?;
+        spawn_live_generated_client_service(server_url, client.clone()).await?;
 
     let optional_result = async {
         let string_some = service_client
@@ -864,10 +867,11 @@ async fn live_generated_client_optional_response_variants_round_trip() -> Result
 #[tokio::test]
 async fn live_generated_client_collection_response_variants_round_trip() -> Result<()> {
     let server = nats_server::run_basic_server();
-    let client = async_nats::connect(server.client_url()).await?;
+    let server_url = server.client_url();
+    let client = async_nats::connect(server_url.clone()).await?;
 
     let (shutdown_tx, app_handle, service_client) =
-        spawn_live_generated_client_service(client.clone()).await?;
+        spawn_live_generated_client_service(server_url, client.clone()).await?;
 
     let collection_result = async {
         let json_collection = service_client
@@ -979,15 +983,17 @@ async fn live_generated_client_collection_response_variants_round_trip() -> Resu
 #[tokio::test]
 async fn live_generated_client_headers_subjects_and_return_types_round_trip() -> Result<()> {
     let server = nats_server::run_basic_server();
-    let client = async_nats::connect(server.client_url()).await?;
+    let server_url = server.client_url();
+    let client = async_nats::connect(server_url.clone()).await?;
 
     let spawned = spawn_live_generated_client_service_app(client.clone()).await?;
     let service_client = build_live_generated_client(
-        client,
+        server_url,
         spawned.prefix.clone(),
         #[cfg(feature = "encryption")]
         spawned.recipient,
-    );
+    )
+    .await?;
 
     let client_result = async {
         let request_snapshot = service_client
@@ -1055,10 +1061,11 @@ async fn live_generated_client_headers_subjects_and_return_types_round_trip() ->
 #[tokio::test]
 async fn live_generated_client_preserves_service_error_metadata() -> Result<()> {
     let server = nats_server::run_basic_server();
-    let client = async_nats::connect(server.client_url()).await?;
+    let server_url = server.client_url();
+    let client = async_nats::connect(server_url.clone()).await?;
 
     let (shutdown_tx, app_handle, service_client) =
-        spawn_live_generated_client_service(client.clone()).await?;
+        spawn_live_generated_client_service(server_url, client.clone()).await?;
 
     let service_result = async {
         let error = service_client
@@ -1080,6 +1087,92 @@ async fn live_generated_client_preserves_service_error_metadata() -> Result<()> 
 
     service_result?;
     shutdown_result?;
+    Ok(())
+}
+
+#[cfg(feature = "client")]
+#[tokio::test]
+async fn live_generated_rust_client_connect_surfaces_auth_mode_conflict() -> Result<()> {
+    let error =
+        match live_generated_client_service_client::LiveGeneratedClientServiceClient::connect(
+            "nats://127.0.0.1:4222",
+            Some(ConnectOptions {
+                auth: Some(AuthOptions {
+                    token: Some("token".to_string()),
+                    username: Some("user".to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        )
+        .await
+        {
+            Ok(_) => {
+                anyhow::bail!("generated Rust client connect should reject conflicting auth modes")
+            }
+            Err(error) => error,
+        };
+
+    assert_eq!(error.kind, FrameworkError::AuthModeConflict.as_code());
+    assert!(
+        error
+            .message
+            .contains("Choose exactly one authentication mode")
+    );
+
+    Ok(())
+}
+
+#[cfg(feature = "client")]
+#[tokio::test]
+async fn live_generated_rust_client_connect_surfaces_missing_auth_password() -> Result<()> {
+    let error =
+        match live_generated_client_service_client::LiveGeneratedClientServiceClient::connect(
+            "nats://127.0.0.1:4222",
+            Some(ConnectOptions {
+                auth: Some(AuthOptions {
+                    username: Some("user".to_string()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        )
+        .await
+        {
+            Ok(_) => anyhow::bail!(
+                "generated Rust client connect should require a password with username auth"
+            ),
+            Err(error) => error,
+        };
+
+    assert_eq!(error.kind, FrameworkError::AuthPasswordRequired.as_code());
+    assert!(error.message.contains("password is required"));
+
+    Ok(())
+}
+
+#[cfg(all(feature = "client", feature = "encryption"))]
+#[tokio::test]
+async fn live_generated_rust_client_connect_surfaces_invalid_recipient_public_key() -> Result<()> {
+    let error =
+        match live_generated_client_service_client::LiveGeneratedClientServiceClient::connect(
+            "nats://127.0.0.1:4222",
+            Some(ConnectOptions {
+                recipient_public_key: Some(vec![1, 2, 3]),
+                ..Default::default()
+            }),
+        )
+        .await
+        {
+            Ok(_) => anyhow::bail!(
+                "generated Rust client connect should reject invalid recipient public keys"
+            ),
+            Err(error) => error,
+        };
+
+    assert_eq!(error.kind, FrameworkError::MissingRecipientPubkey.as_code());
+    assert!(error.message.contains("exactly 32 bytes"));
+
     Ok(())
 }
 
@@ -2081,26 +2174,25 @@ fn live_generated_client_service_definition(prefix: String) -> ServiceDefinition
 }
 
 #[cfg(feature = "client")]
-fn build_live_generated_client(
-    client: async_nats::Client,
+async fn build_live_generated_client(
+    server: String,
     prefix: String,
     #[cfg(feature = "encryption")] recipient: [u8; 32],
-) -> live_generated_client_service_client::LiveGeneratedClientServiceClient {
-    #[cfg(feature = "encryption")]
-    {
-        live_generated_client_service_client::LiveGeneratedClientServiceClient::with_prefix(
-            client,
-            prefix,
-            Some(recipient),
-        )
-    }
+) -> Result<live_generated_client_service_client::LiveGeneratedClientServiceClient> {
+    let options = ConnectOptions {
+        subject_prefix: Some(prefix),
+        #[cfg(feature = "encryption")]
+        recipient_public_key: Some(recipient.to_vec()),
+        ..Default::default()
+    };
 
-    #[cfg(not(feature = "encryption"))]
-    {
-        live_generated_client_service_client::LiveGeneratedClientServiceClient::with_prefix(
-            client, prefix,
+    Ok(
+        live_generated_client_service_client::LiveGeneratedClientServiceClient::connect(
+            server,
+            Some(options),
         )
-    }
+        .await?,
+    )
 }
 
 #[cfg(all(feature = "client", feature = "napi"))]
@@ -2177,6 +2269,7 @@ async fn spawn_live_generated_client_service_app(
 
 #[cfg(feature = "client")]
 async fn spawn_live_generated_client_service(
+    server: String,
     client: async_nats::Client,
 ) -> Result<(
     oneshot::Sender<()>,
@@ -2185,11 +2278,12 @@ async fn spawn_live_generated_client_service(
 )> {
     let spawned = spawn_live_generated_client_service_app(client.clone()).await?;
     let service_client = build_live_generated_client(
-        client,
+        server,
         spawned.prefix.clone(),
         #[cfg(feature = "encryption")]
         spawned.recipient,
-    );
+    )
+    .await?;
 
     Ok((spawned.shutdown_tx, spawned.app_handle, service_client))
 }
