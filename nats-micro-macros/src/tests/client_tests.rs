@@ -83,6 +83,107 @@ fn generated_client_omits_recipient_constructor_args_without_encryption() {
 }
 
 #[test]
+fn generated_client_docs_preserve_handler_docs_and_emit_contract_banner() {
+    let struct_ident = parse_quote!(DemoService);
+    let method: ImplItemFn = parse_quote! {
+        /// Fetches the current user profile.
+        ///
+        /// Includes private profile fields for the authenticated caller.
+        async fn current_profile(
+            auth: nats_micro::Auth<UserClaims>,
+            payload: nats_micro::Payload<nats_micro::Encrypted<String>>,
+        ) -> Result<nats_micro::Encrypted<String>, DemoError> {
+            let _ = auth;
+            let _ = payload;
+            Ok(nats_micro::Encrypted(String::new()))
+        }
+    };
+    let endpoint = endpoint_spec_for(&method, "users.profile", Some("demo"));
+    let expanded = generate_client_module(&struct_ident, "DemoService", &[endpoint]).to_string();
+
+    assert_eq!(
+        expanded.matches("Authentication: required.").count(),
+        2
+    );
+    assert_eq!(
+        expanded.matches("Request payload: encrypted.").count(),
+        2
+    );
+    assert_eq!(
+        expanded.matches("Response payload: encrypted.").count(),
+        2
+    );
+    assert_eq!(
+        expanded.matches("Fetches the current user profile.").count(),
+        2
+    );
+    assert_eq!(
+        expanded
+            .matches("Includes private profile fields for the authenticated caller.")
+            .count(),
+        2
+    );
+    assert_eq!(
+        expanded
+            .matches("Call options: accepts custom `ClientCallOptions`.")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn generated_client_docs_show_plaintext_and_no_auth_contracts() {
+    let struct_ident = parse_quote!(DemoService);
+    let method: ImplItemFn = parse_quote! {
+        /// Returns service health.
+        async fn health() -> Result<(), nats_micro::NatsErrorResponse> {
+            Ok(())
+        }
+    };
+    let endpoint = endpoint_spec_for(&method, "health", Some("demo"));
+    let expanded = generate_client_module(&struct_ident, "DemoService", &[endpoint]).to_string();
+
+    assert_eq!(
+        expanded.matches("Authentication: not required.").count(),
+        2
+    );
+    assert_eq!(expanded.matches("Request payload: none.").count(), 2);
+    assert_eq!(expanded.matches("Response payload: none.").count(), 2);
+    assert_eq!(expanded.matches("Returns service health.").count(), 2);
+}
+
+#[test]
+fn triple_slash_doc_comments_are_preserved_for_generated_clients() {
+    let struct_ident = parse_quote!(DemoService);
+    let method: ImplItemFn = parse_quote! {
+        /// First line from a triple-slash doc comment.
+        ///
+        /// Second line from a triple-slash doc comment.
+        async fn documented() -> Result<(), nats_micro::NatsErrorResponse> {
+            Ok(())
+        }
+    };
+
+    let endpoint = endpoint_spec_for(&method, "documented", Some("demo"));
+    assert_eq!(endpoint.doc_attrs.len(), 3);
+
+    let expanded = generate_client_module(&struct_ident, "DemoService", &[endpoint]).to_string();
+
+    assert_eq!(
+        expanded
+            .matches("First line from a triple-slash doc comment.")
+            .count(),
+        2
+    );
+    assert_eq!(
+        expanded
+            .matches("Second line from a triple-slash doc comment.")
+            .count(),
+        2
+    );
+}
+
+#[test]
 fn client_module_spec_exposes_endpoint_shapes_for_future_emitters() {
     let struct_ident = parse_quote!(DemoService);
     let method: ImplItemFn = parse_quote! {

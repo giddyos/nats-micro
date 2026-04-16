@@ -282,7 +282,7 @@ pub(crate) fn gen_napi_asserts(endpoints: &[ClientEndpointSpec]) -> TokenStream 
     let mut asserts = Vec::new();
 
     for endpoint in endpoints {
-        let attrs = &endpoint.attrs;
+        let attrs = &endpoint.cfg_attrs;
         push_napi_assert(&mut asserts, attrs, dto_payload_type(endpoint));
         push_napi_assert(&mut asserts, attrs, dto_response_type(endpoint));
     }
@@ -564,7 +564,7 @@ fn render_method(
     map_generic_error_fn: &syn::Ident,
     map_connect_error_fn: &syn::Ident,
 ) -> (Option<TokenStream>, TokenStream, TokenStream) {
-    let attrs = &endpoint.attrs;
+    let attrs = &endpoint.cfg_attrs;
     let fn_ident = &endpoint.fn_name;
     let fn_with_ident = format_ident!("{}_with", fn_ident);
     let fn_with_headers_ident = format_ident!("{}_with_headers", fn_ident);

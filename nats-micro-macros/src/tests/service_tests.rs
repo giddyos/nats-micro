@@ -19,8 +19,10 @@ fn service_metadata_includes_prefix_when_present() {
     );
 
     let expanded = tokens.to_string();
+    let compact: String = expanded.split_whitespace().collect();
     assert!(expanded.contains("ServiceMetadata :: new"));
     assert!(expanded.contains("Some (\"api\" . to_string ())"));
+    assert!(compact.contains("#[doc(hidden)]pubfn__nats_micro_service_meta"));
 }
 
 #[cfg(feature = "macros_napi_feature")]

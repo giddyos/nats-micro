@@ -1,12 +1,12 @@
 use heck::ToSnakeCase;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{ImplItemFn, Type};
+use syn::{Attribute, ImplItemFn, Type};
 
 use crate::endpoint::{
     EndpointArgs, PayloadEncoding, PayloadMeta, ResponseEncoding, ResponseMeta, SubjectParamMeta,
     extract_client_meta, extract_result_types, last_segment_ident, parse_subject_template,
-    validate_template_bindings,
+    requires_auth, validate_template_bindings,
 };
 use crate::utils::{nats_micro_path, spanned_trait_assertion};
 
@@ -53,7 +53,6 @@ impl ClientModuleSpec {
                     #[doc(hidden)]
                     #from_connected_client_fn
 
-                    #[doc(hidden)]
                     #with_prefix_fn
 
                     #with_recipient_fn
@@ -269,11 +268,13 @@ fn recipient_init_tokens(nats_micro: &syn::Path) -> TokenStream {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ClientEndpointSpec {
-    pub attrs: Vec<syn::Attribute>,
+    pub cfg_attrs: Vec<syn::Attribute>,
+    pub doc_attrs: Vec<syn::Attribute>,
     pub fn_name: syn::Ident,
     pub error_type: Type,
     pub group: String,
     pub subject: ClientSubjectSpec,
+    pub auth_required: bool,
     pub payload_meta: Option<PayloadMeta>,
     pub response_meta: ResponseMeta,
     pub payload: Option<ClientPayloadSpec>,
@@ -626,7 +627,7 @@ fn render_client_assertions(endpoint: &ClientEndpointSpec) -> Vec<TokenStream> {
 pub(crate) fn build_endpoint_client_spec(
     method: &ImplItemFn,
     args: &EndpointArgs,
-    attrs: Vec<syn::Attribute>,
+    cfg_attrs: Vec<syn::Attribute>,
 ) -> Result<ClientEndpointSpec, TokenStream> {
     let (pattern, template_params) = parse_subject_template(&args.subject, &method.sig.ident)?;
     validate_template_bindings(&method.sig, &template_params)?;
@@ -634,13 +635,20 @@ pub(crate) fn build_endpoint_client_spec(
     let (_, error_type) =
         extract_result_types(&method.sig).map_err(|error| error.to_compile_error())?;
     let client_meta = extract_client_meta(&method.sig)?;
+    let doc_attrs = method
+        .attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("doc"))
+        .cloned()
+        .collect();
     let payload_meta = client_meta.payload;
     let response_meta = client_meta.response;
     let payload = payload_meta.as_ref().map(ClientPayloadSpec::from_meta);
     let response = ClientResponseSpec::from_meta(&response_meta);
 
     Ok(ClientEndpointSpec {
-        attrs,
+        cfg_attrs,
+        doc_attrs,
         fn_name: method.sig.ident.clone(),
         error_type: error_type.clone(),
         group: args.group.clone().unwrap_or_default(),
@@ -649,6 +657,7 @@ pub(crate) fn build_endpoint_client_spec(
             pattern,
             params: client_meta.subject_params,
         },
+        auth_required: requires_auth(&method.sig),
         payload_meta,
         response_meta,
         payload,
@@ -693,9 +702,87 @@ fn empty_body_expr() -> TokenStream {
     quote! { #nats_micro::Bytes::new() }
 }
 
+fn render_client_doc_attrs(endpoint: &ClientEndpointSpec, accepts_call_options: bool) -> Vec<Attribute> {
+    let mut attrs: Vec<_> = client_contract_doc_lines(endpoint, accepts_call_options)
+        .into_iter()
+        .map(|line| syn::parse_quote!(#[doc = #line]))
+        .collect();
+
+    if !endpoint.doc_attrs.is_empty() {
+        attrs.push(syn::parse_quote!(#[doc = ""]));
+        attrs.extend(endpoint.doc_attrs.clone());
+    }
+
+    attrs
+}
+
+fn client_contract_doc_lines(
+    endpoint: &ClientEndpointSpec,
+    accepts_call_options: bool,
+) -> Vec<String> {
+    let mut lines = vec![
+        "**Client contract**".to_string(),
+        String::new(),
+        format!(
+            "- Authentication: {}.",
+            if endpoint.auth_required {
+                "required"
+            } else {
+                "not required"
+            }
+        ),
+        format!(
+            "- Request payload: {}",
+            request_payload_doc_summary(endpoint.payload.as_ref())
+        ),
+        format!(
+            "- Response payload: {}",
+            response_payload_doc_summary(&endpoint.response)
+        ),
+    ];
+
+    if accepts_call_options {
+        lines.push("- Call options: accepts custom `ClientCallOptions`.".to_string());
+    }
+
+    lines
+}
+
+fn request_payload_doc_summary(payload: Option<&ClientPayloadSpec>) -> String {
+    let Some(payload) = payload else {
+        return "none.".to_string();
+    };
+
+    match (payload.optional, payload.encrypted) {
+        (false, false) => "plaintext.".to_string(),
+        (true, false) => "optional plaintext when provided.".to_string(),
+        (false, true) => "encrypted.".to_string(),
+        (true, true) => "optional encrypted when provided.".to_string(),
+    }
+}
+
+fn response_payload_doc_summary(response: &ClientResponseSpec) -> String {
+    if matches!(response.shape, ClientResponseShape::Unit) {
+        return if response.optional {
+            "none (optional response marker).".to_string()
+        } else {
+            "none.".to_string()
+        };
+    }
+
+    match (response.optional, response.encrypted) {
+        (false, false) => "plaintext.".to_string(),
+        (true, false) => "optional plaintext.".to_string(),
+        (false, true) => "encrypted.".to_string(),
+        (true, true) => "optional encrypted.".to_string(),
+    }
+}
+
 fn render_client_method(endpoint: &ClientEndpointSpec) -> TokenStream {
     let nats_micro = nats_micro_path();
-    let attrs = &endpoint.attrs;
+    let cfg_attrs = &endpoint.cfg_attrs;
+    let docs = render_client_doc_attrs(endpoint, false);
+    let with_docs = render_client_doc_attrs(endpoint, true);
     let fn_ident = &endpoint.fn_name;
     let fn_with_ident = format_ident!("{}_with", fn_ident);
     let error_type = &endpoint.error_type;
@@ -720,7 +807,8 @@ fn render_client_method(endpoint: &ClientEndpointSpec) -> TokenStream {
     let with_body = render_with_body(endpoint);
 
     quote! {
-        #(#attrs)*
+        #(#cfg_attrs)*
+        #(#docs)*
         pub async fn #fn_ident(
             &self,
             #(#all_with_args,)*
@@ -729,7 +817,8 @@ fn render_client_method(endpoint: &ClientEndpointSpec) -> TokenStream {
                 .await
         }
 
-        #(#attrs)*
+        #(#cfg_attrs)*
+        #(#with_docs)*
         pub async fn #fn_with_ident(
             &self,
             #(#all_with_args,)*
