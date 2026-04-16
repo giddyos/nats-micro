@@ -109,17 +109,22 @@ pub mod __private {
 #[cfg(feature = "napi")]
 #[doc(hidden)]
 pub mod __napi {
+    #[doc(hidden)]
     pub use crate::error::NapiClientError;
+    #[doc(hidden)]
     pub use crate::napi_support::{NapiClientHeaderValue, client_call_options_from_headers};
+    #[doc(hidden)]
     pub use crate::{AuthOptions, ConnectOptions, ConnectedClient, connect};
 }
 
 #[doc(hidden)]
 pub mod __test_support {
 
+    #[doc(hidden)]
     pub use crate::app::success_headers;
 
     #[cfg(feature = "encryption")]
+    #[doc(hidden)]
     pub fn prepare_request_for_dispatch_with_state(
         state: &crate::StateMap,
         req: crate::NatsRequest,

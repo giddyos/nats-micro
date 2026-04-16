@@ -524,6 +524,7 @@ impl ClientCallOptions {
     }
 
     #[cfg(feature = "encryption")]
+    #[doc(hidden)]
     pub async fn into_encrypted_request(
         self,
         client: &async_nats::Client,

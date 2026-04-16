@@ -85,6 +85,7 @@ pub fn expand_service(args: ServiceArgs, item_struct: &ItemStruct) -> TokenStrea
         #item_struct
 
         impl #ident {
+            #[doc(hidden)]
             pub fn __nats_micro_service_meta() -> #nats_micro::ServiceMetadata {
                 #nats_micro::ServiceMetadata::new(
                     #service_name,
@@ -368,6 +369,7 @@ fn render_napi_items(
                 #napi_client_module
             }
 
+            #[doc(hidden)]
             pub use #napi_module_ident::*;
         }
     }
