@@ -368,6 +368,24 @@ impl ClientCallOptions {
         self
     }
 
+    pub fn bearer_token(mut self, token: impl Into<String>) -> Self {
+        let token = token.into();
+
+        let header_name = "authorization";
+        let header_value = format!("Bearer {token}")
+            .parse::<async_nats::HeaderValue>()
+            .expect("generated client headers must be valid HTTP header values");
+
+        if cfg!(feature = "encryption") {
+            self.encrypted_headers
+                .push((header_name.to_string(), header_value.to_string()));
+        } else {
+            self.plaintext_headers.insert(header_name, header_value);
+        }
+
+        self
+    }
+
     #[cfg(feature = "encryption")]
     pub fn encrypted_header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         self.encrypted_headers.push((key.into(), value.into()));
