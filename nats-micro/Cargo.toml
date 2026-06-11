@@ -24,7 +24,7 @@ encryption = [
 ]
 
 [dependencies]
-async-nats = { version = ">=0.47, <0.50", features = ["service", "jetstream"] }
+async-nats = { version = ">=0.47, <0.50", features = ["service", "jetstream", "kv"] }
 inventory = ">=0.3, <0.4"
 nats-micro-macros = { path = "../nats-micro-macros", default-features = false }
 
