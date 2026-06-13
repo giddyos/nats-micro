@@ -68,11 +68,7 @@ pub fn expand_service(args: ServiceArgs, item_struct: &ItemStruct) -> TokenStrea
     let service_name = name;
     let description = description.unwrap_or_default();
     let service_config_module = service_config_module_ident(ident);
-    let prefix = if let Some(prefix) = prefix {
-        quote! { Some(#prefix.to_string()) }
-    } else {
-        quote! { None }
-    };
+    let prefix = service_subject_prefix_tokens(&service_name, prefix);
 
     #[cfg(feature = "macros_napi_feature")]
     let napi_enabled = napi;
@@ -227,6 +223,11 @@ fn service_config_module_ident(service_ident: &syn::Ident) -> syn::Ident {
         "__nats_micro_service_config_{}",
         service_ident.to_string().to_snake_case()
     )
+}
+
+fn service_subject_prefix_tokens(service_name: &str, prefix: Option<String>) -> TokenStream {
+    let subject_prefix = prefix.unwrap_or_else(|| service_name.to_string());
+    quote! { Some(#subject_prefix.to_string()) }
 }
 
 fn emit_napi_items_tokens(napi_enabled: bool) -> TokenStream {

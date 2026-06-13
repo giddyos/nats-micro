@@ -101,20 +101,13 @@ fn generated_client_docs_preserve_handler_docs_and_emit_contract_banner() {
     let endpoint = endpoint_spec_for(&method, "users.profile", Some("demo"));
     let expanded = generate_client_module(&struct_ident, "DemoService", &[endpoint]).to_string();
 
+    assert_eq!(expanded.matches("Authentication: required.").count(), 2);
+    assert_eq!(expanded.matches("Request payload: encrypted.").count(), 2);
+    assert_eq!(expanded.matches("Response payload: encrypted.").count(), 2);
     assert_eq!(
-        expanded.matches("Authentication: required.").count(),
-        2
-    );
-    assert_eq!(
-        expanded.matches("Request payload: encrypted.").count(),
-        2
-    );
-    assert_eq!(
-        expanded.matches("Response payload: encrypted.").count(),
-        2
-    );
-    assert_eq!(
-        expanded.matches("Fetches the current user profile.").count(),
+        expanded
+            .matches("Fetches the current user profile.")
+            .count(),
         2
     );
     assert_eq!(
@@ -143,10 +136,7 @@ fn generated_client_docs_show_plaintext_and_no_auth_contracts() {
     let endpoint = endpoint_spec_for(&method, "health", Some("demo"));
     let expanded = generate_client_module(&struct_ident, "DemoService", &[endpoint]).to_string();
 
-    assert_eq!(
-        expanded.matches("Authentication: not required.").count(),
-        2
-    );
+    assert_eq!(expanded.matches("Authentication: not required.").count(), 2);
     assert_eq!(expanded.matches("Request payload: none.").count(), 2);
     assert_eq!(expanded.matches("Response payload: none.").count(), 2);
     assert_eq!(expanded.matches("Returns service health.").count(), 2);

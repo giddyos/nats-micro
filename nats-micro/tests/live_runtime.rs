@@ -516,13 +516,17 @@ async fn live_queue_groups_receive_independent_copies() -> Result<()> {
 
     let unique = unique_name("queue-groups");
     let group = format!("live.{unique}");
-    let full_subject = format!("v1.{group}.jobs");
+    let prefix = unique_name("queue-groups-prefix");
 
     let mut alpha_endpoint = LiveQueueAlphaService::jobs_endpoint();
     alpha_endpoint.group = group.clone();
+    alpha_endpoint.subject_prefix = Some(prefix.clone());
+    let full_subject = alpha_endpoint.full_subject();
 
     let mut beta_endpoint = LiveQueueBetaService::jobs_endpoint();
     beta_endpoint.group = group.clone();
+    beta_endpoint.subject_prefix = Some(prefix);
+    assert_eq!(beta_endpoint.full_subject(), full_subject);
 
     let (alpha_shutdown, alpha_handle) =
         spawn_app_until_shutdown(NatsApp::new(client.clone()).service_def(endpoint_service(
@@ -613,10 +617,10 @@ async fn live_client_drain_triggers_supervised_shutdown() -> Result<()> {
 
     let unique = unique_name("supervision");
     let group = format!("live.{unique}");
-    let full_subject = format!("v1.{group}.status");
 
     let mut endpoint = LiveSupervisionService::status_endpoint();
     endpoint.group = group;
+    let full_subject = endpoint.full_subject();
 
     let app_handle = tokio::spawn(
         NatsApp::new(client.clone())
@@ -1672,14 +1676,14 @@ async fn live_generated_napi_client_headers_subjects_and_return_types_round_trip
 #[tokio::test]
 async fn live_generated_napi_client_surfaces_framework_errors() -> Result<()> {
     let server = nats_server::run_basic_server();
+    let server_url = server.client_url();
     let client = async_nats::connect(server.client_url()).await?;
 
-    let server = std::env::var("NATS_URL").unwrap_or_else(|_| "nats://127.0.0.1:4222".to_string());
     let spawned = spawn_live_generated_client_service_app(client).await?;
 
     let napi_result = async {
         let service_client =
-            build_live_generated_napi_client_without_recipient(server, spawned.prefix.clone())
+            build_live_generated_napi_client_without_recipient(server_url, spawned.prefix.clone())
                 .await
                 .map_err(|err| {
                     anyhow::anyhow!(
@@ -1863,14 +1867,14 @@ async fn live_endpoint_handlers_observe_shutdown_signal_and_timeout() -> Result<
     let probe = ShutdownProbe::default();
     let unique = unique_name("shutdown-endpoint");
     let group = format!("live.{unique}");
-    let status_subject = format!("v1.{group}.status");
-    let cleanup_subject = format!("v1.{group}.cleanup");
 
     let mut status_endpoint = LiveShutdownEndpointService::status_endpoint();
     status_endpoint.group = group.clone();
+    let status_subject = status_endpoint.full_subject();
 
     let mut cleanup_endpoint = LiveShutdownEndpointService::cleanup_endpoint();
     cleanup_endpoint.group = group.clone();
+    let cleanup_subject = cleanup_endpoint.full_subject();
 
     let (shutdown_tx, app_handle) = spawn_app_until_shutdown(
         NatsApp::new(client.clone())
@@ -1947,10 +1951,10 @@ async fn live_consumer_handlers_observe_shutdown_signal_and_timeout() -> Result<
     let probe = ShutdownProbe::default();
     let unique = unique_name("shutdown-consumer");
     let group = format!("live.{unique}");
-    let status_subject = format!("v1.{group}.status");
 
     let mut status_endpoint = LiveShutdownConsumerService::status_endpoint();
     status_endpoint.group = group;
+    let status_subject = status_endpoint.full_subject();
 
     let mut consumer = LiveShutdownConsumerService::jobs_consumer();
     consumer.stream = stream_name.clone();

@@ -25,6 +25,30 @@ fn service_metadata_includes_prefix_when_present() {
     assert!(compact.contains("#[doc(hidden)]pubfn__nats_micro_service_meta"));
 }
 
+#[test]
+fn service_metadata_defaults_prefix_to_service_name_when_absent() {
+    let item_struct = parse_quote! {
+        struct DemoService;
+    };
+    let tokens = expand_service(
+        ServiceArgs {
+            name: "demo".to_string(),
+            version: "1.0.0".to_string(),
+            description: Some("test".to_string()),
+            prefix: None,
+            #[cfg(feature = "macros_napi_feature")]
+            napi: false,
+        },
+        &item_struct,
+    );
+
+    let expanded = tokens.to_string();
+    let compact: String = expanded.split_whitespace().collect();
+    assert!(expanded.contains("ServiceMetadata :: new"));
+    assert!(expanded.contains("Some (\"demo\" . to_string ())"));
+    assert!(compact.contains("#[doc(hidden)]pubfn__nats_micro_service_meta"));
+}
+
 #[cfg(feature = "macros_napi_feature")]
 #[test]
 fn service_expansion_emits_napi_gate_module() {

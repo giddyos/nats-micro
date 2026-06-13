@@ -702,7 +702,10 @@ fn empty_body_expr() -> TokenStream {
     quote! { #nats_micro::Bytes::new() }
 }
 
-fn render_client_doc_attrs(endpoint: &ClientEndpointSpec, accepts_call_options: bool) -> Vec<Attribute> {
+fn render_client_doc_attrs(
+    endpoint: &ClientEndpointSpec,
+    accepts_call_options: bool,
+) -> Vec<Attribute> {
     let mut attrs: Vec<_> = client_contract_doc_lines(endpoint, accepts_call_options)
         .into_iter()
         .map(|line| syn::parse_quote!(#[doc = #line]))
