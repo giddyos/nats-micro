@@ -1,0 +1,15 @@
+[package]
+name = "runtime-roundtrip"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+nats-micro = { path = "../../.." }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }
+
+[dev-dependencies]
+nats-server = { path = "../../../../nats-server" }
+anyhow = "1"
