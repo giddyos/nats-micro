@@ -61,13 +61,13 @@ fn decode_header_blob<H: HeaderLookup>(headers: &H) -> Result<Option<Vec<u8>>, E
 
 pub fn decrypt_headers<H: HeaderLookup>(
     headers: &H,
-    shared_key: &[u8; 32],
+    encryption_key: &[u8; 32],
 ) -> Result<HashMap<String, String>, EncryptionError> {
     let Some(decoded) = decode_header_blob(headers)? else {
         return Ok(HashMap::new());
     };
 
-    let plaintext = ServiceKeyPair::decrypt_with_shared_key(shared_key, &decoded)
+    let plaintext = ServiceKeyPair::decrypt_with_encryption_key(encryption_key, &decoded)
         .map_err(|_| EncryptionError::decrypt_failed("decrypting encrypted headers payload"))?;
     let map: HashMap<String, String> = serde_json::from_slice(&plaintext)
         .map_err(|_| EncryptionError::decrypt_failed("deserializing decrypted headers JSON"))?;

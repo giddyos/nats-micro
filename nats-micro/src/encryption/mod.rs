@@ -192,6 +192,14 @@ fn build_response_envelope(nonce: &[u8; NONCE_LEN], ciphertext: &[u8]) -> Vec<u8
     out
 }
 
+fn generate_nonce() -> [u8; NONCE_LEN] {
+    rand::random::<[u8; NONCE_LEN]>()
+}
+
+fn generate_static_secret() -> StaticSecret {
+    StaticSecret::random()
+}
+
 #[deprecated(
     note = "use compute_signature_for_transcript with SignatureTranscript and a signature key"
 )]
@@ -248,7 +256,7 @@ fn encrypt_aead(
     plaintext: &[u8],
 ) -> Result<(Vec<u8>, [u8; NONCE_LEN]), EncryptionError> {
     let cipher = XChaCha20Poly1305::new(key.into());
-    let nonce_bytes = rand::random::<[u8; NONCE_LEN]>();
+    let nonce_bytes = generate_nonce();
     let nonce = XNonce::try_from(nonce_bytes.as_slice()).expect("generated nonce has fixed length");
     let ciphertext = cipher.encrypt(&nonce, plaintext).map_err(|_| {
         EncryptionError::encrypt_failed("encrypting payload with XChaCha20Poly1305")
@@ -276,7 +284,7 @@ pub struct ServiceKeyPair {
 
 impl ServiceKeyPair {
     pub fn generate() -> Self {
-        let secret = StaticSecret::random();
+        let secret = generate_static_secret();
         let public = PublicKey::from(&secret);
         Self { secret, public }
     }
@@ -363,34 +371,54 @@ impl ServiceKeyPair {
         Ok(build_response_envelope(&nonce, &ciphertext))
     }
 
-    pub fn decrypt_with_shared_key(
+    pub fn decrypt_with_encryption_key(
         key: &[u8; 32],
         data: &[u8],
     ) -> Result<Vec<u8>, EncryptionError> {
         if data.len() < MIN_REQUEST_ENVELOPE {
             return Err(EncryptionError::too_short(
-                "reading shared-key request envelope",
+                "reading encryption-key request envelope",
                 MIN_REQUEST_ENVELOPE,
                 data.len(),
             ));
         }
         let nonce: [u8; NONCE_LEN] = data[EPH_PUB_LEN..EPH_PUB_LEN + NONCE_LEN]
             .try_into()
-            .map_err(|_| EncryptionError::decrypt_failed("reading shared-key request nonce"))?;
+            .map_err(|_| EncryptionError::decrypt_failed("reading encryption-key request nonce"))?;
         decrypt_aead(
-            "decrypting shared-key request payload body",
+            "decrypting encryption-key request payload body",
             key,
             &nonce,
             &data[EPH_PUB_LEN + NONCE_LEN..],
         )
     }
 
-    pub fn encrypt_response_with_shared_key(
+    #[deprecated(
+        note = "use decrypt_with_encryption_key; the parameter is a derived encryption key, not a raw shared secret"
+    )]
+    pub fn decrypt_with_shared_key(
+        key: &[u8; 32],
+        data: &[u8],
+    ) -> Result<Vec<u8>, EncryptionError> {
+        Self::decrypt_with_encryption_key(key, data)
+    }
+
+    pub fn encrypt_response_with_encryption_key(
         key: &[u8; 32],
         plaintext: &[u8],
     ) -> Result<Vec<u8>, EncryptionError> {
         let (ciphertext, nonce) = encrypt_aead(key, plaintext)?;
         Ok(build_response_envelope(&nonce, &ciphertext))
+    }
+
+    #[deprecated(
+        note = "use encrypt_response_with_encryption_key; the parameter is a derived encryption key, not a raw shared secret"
+    )]
+    pub fn encrypt_response_with_shared_key(
+        key: &[u8; 32],
+        plaintext: &[u8],
+    ) -> Result<Vec<u8>, EncryptionError> {
+        Self::encrypt_response_with_encryption_key(key, plaintext)
     }
 }
 
@@ -428,7 +456,7 @@ impl ServiceRecipient {
     }
 
     pub fn begin(&self) -> EphemeralContext {
-        let eph_secret = StaticSecret::random();
+        let eph_secret = generate_static_secret();
         let eph_public = PublicKey::from(&eph_secret);
         let dh = eph_secret.diffie_hellman(&self.public_key);
         let shared_secret = *dh.as_bytes();

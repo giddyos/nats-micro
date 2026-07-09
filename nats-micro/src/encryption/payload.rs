@@ -88,10 +88,13 @@ impl<T: FromPayload> FromPayload for Encrypted<T> {
             .with_request_id(ctx.request.request_id.clone()));
         }
 
-        let shared_key = keypair.derive_encryption_key(&eph_pub);
+        let encryption_key = keypair.derive_encryption_key(&eph_pub);
 
-        let plaintext = ServiceKeyPair::decrypt_with_shared_key(&shared_key, &ctx.request.payload)
-            .map_err(|error| {
+        let plaintext = ServiceKeyPair::decrypt_with_encryption_key(
+            &encryption_key,
+            &ctx.request.payload,
+        )
+        .map_err(|error| {
                 NatsErrorResponse::framework(
                     FrameworkError::DecryptFailed,
                     format!("failed to decrypt the encrypted request payload: {error}"),

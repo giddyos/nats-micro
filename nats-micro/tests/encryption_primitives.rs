@@ -62,8 +62,8 @@ fn headers_and_payload_share_ephemeral_key() {
     let decrypted_payload = keypair.decrypt(&built.payload).unwrap();
     assert_eq!(decrypted_payload, b"payload data");
 
-    let shared_key = keypair.derive_encryption_key(&eph_from_payload);
-    let decrypted_headers = encrypted_headers_decrypt(&built.headers, &shared_key).unwrap();
+    let encryption_key = keypair.derive_encryption_key(&eph_from_payload);
+    let decrypted_headers = encrypted_headers_decrypt(&built.headers, &encryption_key).unwrap();
     assert_eq!(
         decrypted_headers.get("authorization").unwrap(),
         "Bearer secret-token"
@@ -71,7 +71,7 @@ fn headers_and_payload_share_ephemeral_key() {
 }
 
 #[test]
-fn response_uses_same_shared_secret_as_request() {
+fn response_uses_same_encryption_key_as_request() {
     let keypair = ServiceKeyPair::generate();
     let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
 
@@ -131,12 +131,12 @@ fn invalid_encrypted_headers_json_reports_context() {
     let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
     let eph_ctx = recipient.begin();
     let encrypted_blob = eph_ctx.encrypt(b"not-json").unwrap();
-    let shared_key = keypair.derive_encryption_key(&eph_ctx.ephemeral_pub_bytes());
+    let encryption_key = keypair.derive_encryption_key(&eph_ctx.ephemeral_pub_bytes());
 
     let mut headers = HeaderMap::new();
     headers.insert("x-encrypted-headers", STANDARD.encode(&encrypted_blob));
 
-    let error = encrypted_headers_decrypt(&headers, &shared_key)
+    let error = encrypted_headers_decrypt(&headers, &encryption_key)
         .expect_err("non-json encrypted headers should fail");
     assert!(
         error
@@ -312,8 +312,8 @@ fn request_builder_mixed() {
     assert!(built.headers.get("x-signature").is_some());
     assert!(built.headers.get("authorization").is_none());
 
-    let shared_key = keypair.derive_encryption_key(&built.context.ephemeral_pub_bytes());
-    let decrypted = encrypted_headers_decrypt(&built.headers, &shared_key).unwrap();
+    let encryption_key = keypair.derive_encryption_key(&built.context.ephemeral_pub_bytes());
+    let decrypted = encrypted_headers_decrypt(&built.headers, &encryption_key).unwrap();
     assert_eq!(decrypted.get("x-user-id").unwrap(), "user-42");
     assert_eq!(decrypted.get("authorization").unwrap(), "Bearer my-token");
 }
@@ -373,16 +373,16 @@ fn full_encrypted_request_response_cycle() {
         .unwrap();
 
     let eph_pub: [u8; 32] = built.payload[..32].try_into().unwrap();
-    let shared_key = keypair.derive_encryption_key(&eph_pub);
+    let encryption_key = keypair.derive_encryption_key(&eph_pub);
 
-    let decrypted_request = nats_micro::encryption::ServiceKeyPair::decrypt_with_shared_key(
-        &shared_key,
+    let decrypted_request = nats_micro::encryption::ServiceKeyPair::decrypt_with_encryption_key(
+        &encryption_key,
         &built.payload,
     )
     .unwrap();
     assert_eq!(decrypted_request, b"full cycle request data");
 
-    let decrypted_headers = encrypted_headers_decrypt(&built.headers, &shared_key).unwrap();
+    let decrypted_headers = encrypted_headers_decrypt(&built.headers, &encryption_key).unwrap();
     assert_eq!(decrypted_headers.get("x-secret").unwrap(), "classified");
 
     let response_payload = b"full cycle response";
