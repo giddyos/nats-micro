@@ -1005,18 +1005,17 @@ async fn live_generated_client_headers_subjects_and_return_types_round_trip() ->
         spawned.recipient,
     )
     .await?;
-    #[cfg(feature = "encryption")]
-    let service_client = service_client.default_bearer_token("generated-secret");
-
     let client_result = async {
+        let inspect_options = ClientCallOptions::new()
+            .header("x-request-id", "req-rust-inspect")
+            .header("x-trace-id", "trace-rust")
+            .header("x-client-name", "rust-client")
+            .header("x-client-mode", "direct");
+        #[cfg(feature = "encryption")]
+        let inspect_options = inspect_options.bearer_token("generated-secret");
+
         let request_snapshot = service_client
-            .inspect_request_with(
-                ClientCallOptions::new()
-                    .header("x-request-id", "req-rust-inspect")
-                    .header("x-trace-id", "trace-rust")
-                    .header("x-client-name", "rust-client")
-                    .header("x-client-mode", "direct"),
-            )
+            .inspect_request_with(inspect_options)
             .await
             .context("generated client inspect_request_with call failed")?;
         assert_eq!(
@@ -1609,6 +1608,9 @@ async fn live_generated_napi_client_headers_subjects_and_return_types_round_trip
                 client_name: Some("connect-default".to_string()),
                 client_mode: Some("connect-default".to_string()),
                 client_version: Some("1.0.0".to_string()),
+                authorization: None,
+                #[cfg(feature = "encryption")]
+                authorization_was_encrypted: None,
             }
         );
         assert!(!initial_snapshot.request_id.is_empty());
@@ -1639,6 +1641,9 @@ async fn live_generated_napi_client_headers_subjects_and_return_types_round_trip
                 client_name: Some("runtime-default".to_string()),
                 client_mode: Some("per-call".to_string()),
                 client_version: Some("1.0.0".to_string()),
+                authorization: None,
+                #[cfg(feature = "encryption")]
+                authorization_was_encrypted: None,
             }
         );
 

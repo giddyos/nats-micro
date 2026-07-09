@@ -85,10 +85,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
             Ok(tokens) => tokens,
             Err(error) => return error.to_compile_error(),
         };
-        let source_arm = match source_arm_tokens(&enum_ident, variant, &field_meta, &error_attr) {
-            Ok(tokens) => tokens,
-            Err(error) => return error.to_compile_error(),
-        };
+        let source_arm = source_arm_tokens(&enum_ident, variant, &field_meta, &error_attr);
         from_impls.extend(from_impl_tokens(
             &enum_ident,
             &impl_generics,
@@ -779,22 +776,18 @@ impl FieldMeta {
             let source = from || explicit_source || implicit_source;
             let backtrace = field_has_attr(field, "backtrace");
 
-            if from {
-                if from_index.replace(index).is_some() {
-                    return Err(syn::Error::new_spanned(
-                        field,
-                        "#[from] is only valid on one field per service_error variant",
-                    ));
-                }
+            if from && from_index.replace(index).is_some() {
+                return Err(syn::Error::new_spanned(
+                    field,
+                    "#[from] is only valid on one field per service_error variant",
+                ));
             }
 
-            if source {
-                if source_index.replace(index).is_some() {
-                    return Err(syn::Error::new_spanned(
-                        field,
-                        "#[source] is only valid on one field per service_error variant",
-                    ));
-                }
+            if source && source_index.replace(index).is_some() {
+                return Err(syn::Error::new_spanned(
+                    field,
+                    "#[source] is only valid on one field per service_error variant",
+                ));
             }
 
             roles.push(FieldRole {
@@ -804,14 +797,14 @@ impl FieldMeta {
             });
         }
 
-        if let Some(index) = from_index {
-            if roles.len() != 1 {
-                let field = variant.fields.iter().nth(index).expect("from field index");
-                return Err(syn::Error::new_spanned(
-                    field,
-                    "#[from] is only valid on a single-field service_error variant",
-                ));
-            }
+        if let Some(index) = from_index
+            && roles.len() != 1
+        {
+            let field = variant.fields.iter().nth(index).expect("from field index");
+            return Err(syn::Error::new_spanned(
+                field,
+                "#[from] is only valid on a single-field service_error variant",
+            ));
         }
 
         if matches!(variant_error_attr(variant)?, ErrorAttr::Transparent) {
@@ -859,17 +852,17 @@ fn source_arm_tokens(
     variant: &syn::Variant,
     field_meta: &FieldMeta,
     error_attr: &ErrorAttr,
-) -> Result<TokenStream, syn::Error> {
+) -> TokenStream {
     let Some(source_index) = field_meta
         .source_index
         .or_else(|| matches!(error_attr, ErrorAttr::Transparent).then_some(0))
     else {
-        return Ok(quote! {});
+        return quote! {};
     };
 
     let v_ident = &variant.ident;
     match &variant.fields {
-        Fields::Unit => Ok(quote! {}),
+        Fields::Unit => quote! {},
         Fields::Unnamed(fields) => {
             let bindings: Vec<_> = (0..fields.unnamed.len())
                 .map(|index| {
@@ -880,12 +873,12 @@ fn source_arm_tokens(
                     }
                 })
                 .collect();
-            Ok(quote! {
+            quote! {
                 #enum_ident::#v_ident(#(#bindings),*) => {
                     let __source: &(dyn ::std::error::Error + ::std::marker::Send + ::std::marker::Sync + 'static) = __source;
                     Some(__source)
                 }
-            })
+            }
         }
         Fields::Named(fields) => {
             let field_idents: Vec<_> = fields
@@ -904,12 +897,12 @@ fn source_arm_tokens(
                     }
                 })
                 .collect();
-            Ok(quote! {
+            quote! {
                 #enum_ident::#v_ident { #(#field_idents: #bindings),* } => {
                     let __source: &(dyn ::std::error::Error + ::std::marker::Send + ::std::marker::Sync + 'static) = __source;
                     Some(__source)
                 }
-            })
+            }
         }
     }
 }
