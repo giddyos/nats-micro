@@ -248,10 +248,9 @@ fn encrypt_aead(
     plaintext: &[u8],
 ) -> Result<(Vec<u8>, [u8; NONCE_LEN]), EncryptionError> {
     let cipher = XChaCha20Poly1305::new(key.into());
-    let mut nonce_bytes = [0u8; NONCE_LEN];
-    rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut nonce_bytes);
-    let nonce = XNonce::from_slice(&nonce_bytes);
-    let ciphertext = cipher.encrypt(nonce, plaintext).map_err(|_| {
+    let nonce_bytes = rand::random::<[u8; NONCE_LEN]>();
+    let nonce = XNonce::try_from(nonce_bytes.as_slice()).expect("generated nonce has fixed length");
+    let ciphertext = cipher.encrypt(&nonce, plaintext).map_err(|_| {
         EncryptionError::encrypt_failed("encrypting payload with XChaCha20Poly1305")
     })?;
     Ok((ciphertext, nonce_bytes))
@@ -264,9 +263,9 @@ fn decrypt_aead(
     ciphertext: &[u8],
 ) -> Result<Vec<u8>, EncryptionError> {
     let cipher = XChaCha20Poly1305::new(key.into());
-    let nonce = XNonce::from_slice(nonce);
+    let nonce = XNonce::try_from(nonce.as_slice()).expect("nonce has fixed length");
     cipher
-        .decrypt(nonce, ciphertext)
+        .decrypt(&nonce, ciphertext)
         .map_err(|_| EncryptionError::decrypt_failed(context))
 }
 
@@ -277,7 +276,7 @@ pub struct ServiceKeyPair {
 
 impl ServiceKeyPair {
     pub fn generate() -> Self {
-        let secret = StaticSecret::random_from_rng(rand::rngs::OsRng);
+        let secret = StaticSecret::random();
         let public = PublicKey::from(&secret);
         Self { secret, public }
     }
@@ -429,7 +428,7 @@ impl ServiceRecipient {
     }
 
     pub fn begin(&self) -> EphemeralContext {
-        let eph_secret = StaticSecret::random_from_rng(rand::rngs::OsRng);
+        let eph_secret = StaticSecret::random();
         let eph_public = PublicKey::from(&eph_secret);
         let dh = eph_secret.diffie_hellman(&self.public_key);
         let shared_secret = *dh.as_bytes();

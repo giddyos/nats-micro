@@ -170,11 +170,7 @@ fn tampered_response_reports_response_decrypt_context() {
 
 #[test]
 fn from_private_bytes_round_trip() {
-    let private_bytes: [u8; 32] = {
-        let mut buf = [0u8; 32];
-        rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut buf);
-        buf
-    };
+    let private_bytes = rand::random::<[u8; 32]>();
 
     let keypair1 = ServiceKeyPair::from_private_bytes(private_bytes);
     let pub_bytes = keypair1.public_key_bytes();
