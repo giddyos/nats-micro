@@ -58,7 +58,7 @@ fn consumer_methods_emit_config_auth_and_shutdown_metadata() {
             stream = "DEMO",
             durable = "cleanup",
             concurrency_limit = 4,
-            config = nats_micro::__macros::ConsumerConfig::default()
+            config = nats_micro::NatsConsumerConfig::default()
         )]
         async fn cleanup(
             auth: nats_micro::Auth,
@@ -82,7 +82,7 @@ fn consumer_methods_emit_config_auth_and_shutdown_metadata() {
     assert!(def_tokens.contains("AuthPolicy :: Required"));
     assert!(def_tokens.contains("concurrency_limit : Some (4"));
     assert!(def_tokens.contains("let __config"));
-    assert!(def_tokens.contains("ConsumerConfig"));
+    assert!(def_tokens.contains("NatsConsumerConfig"));
     assert!(def_tokens.contains("new_with_shutdown_signal_support (true"));
     assert!(info_tokens.contains("auth_policy"));
     assert!(info_tokens.contains("AuthPolicy :: Required"));

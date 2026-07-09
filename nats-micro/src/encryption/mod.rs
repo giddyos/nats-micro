@@ -425,7 +425,7 @@ impl ServiceKeyPair {
 #[derive(Clone, Debug)]
 pub struct ServiceRecipient {
     public_key: PublicKey,
-    client: Option<async_nats::Client>,
+    client: Option<crate::NatsClient>,
 }
 
 impl From<[u8; 32]> for ServiceRecipient {
@@ -446,12 +446,12 @@ impl ServiceRecipient {
         *self.public_key.as_bytes()
     }
 
-    pub fn with_client(mut self, client: async_nats::Client) -> Self {
+    pub fn with_client(mut self, client: crate::NatsClient) -> Self {
         self.client = Some(client);
         self
     }
 
-    pub fn client(&self) -> Option<&async_nats::Client> {
+    pub fn client(&self) -> Option<&crate::NatsClient> {
         self.client.as_ref()
     }
 
@@ -490,8 +490,8 @@ impl ServiceRecipient {
 
 pub struct RequestBuilder {
     ctx: EphemeralContext,
-    client: Option<async_nats::Client>,
-    plaintext_headers: Vec<(async_nats::HeaderName, async_nats::HeaderValue)>,
+    client: Option<crate::NatsClient>,
+    plaintext_headers: Vec<(crate::NatsHeaderName, crate::NatsHeaderValue)>,
     encrypted_headers: Vec<(String, String)>,
     payload: Option<Vec<u8>>,
     encrypt_payload: bool,
@@ -507,12 +507,12 @@ impl RequestBuilder {
     ) -> Result<Self, EncryptionError> {
         let key = key.into();
         let value = value.into();
-        let name = async_nats::HeaderName::from_str(&key).map_err(|error| {
+        let name = crate::NatsHeaderName::from_str(&key).map_err(|error| {
             EncryptionError::InvalidHeader(format!(
                 "invalid plaintext header name `{key}`: {error}"
             ))
         })?;
-        let value = value.parse::<async_nats::HeaderValue>().map_err(|error| {
+        let value = value.parse::<crate::NatsHeaderValue>().map_err(|error| {
             EncryptionError::InvalidHeader(format!(
                 "invalid plaintext header value for `{key}`: {error}"
             ))
@@ -534,12 +534,12 @@ impl RequestBuilder {
     ) -> Result<Self, EncryptionError> {
         let key = key.into();
         let value = value.into();
-        let _ = async_nats::HeaderName::from_str(&key).map_err(|error| {
+        let _ = crate::NatsHeaderName::from_str(&key).map_err(|error| {
             EncryptionError::InvalidHeader(format!(
                 "invalid encrypted header name `{key}`: {error}"
             ))
         })?;
-        let _ = value.parse::<async_nats::HeaderValue>().map_err(|error| {
+        let _ = value.parse::<crate::NatsHeaderValue>().map_err(|error| {
             EncryptionError::InvalidHeader(format!(
                 "invalid encrypted header value for `{key}`: {error}"
             ))
@@ -590,7 +590,7 @@ impl RequestBuilder {
     }
 
     pub fn build_for_subject(self, subject: &str) -> Result<BuiltRequest, EncryptionError> {
-        let mut headers = async_nats::HeaderMap::new();
+        let mut headers = crate::NatsHeaderMap::new();
         headers.insert(
             RESPONSE_PUB_KEY_NAME,
             STANDARD.encode(self.ctx.ephemeral_pub_bytes()),
@@ -629,10 +629,10 @@ impl RequestBuilder {
 
         let request_id = headers
             .get("x-request-id")
-            .map(async_nats::HeaderValue::as_str);
+            .map(crate::NatsHeaderValue::as_str);
         let client_version = headers
             .get("x-client-version")
-            .map(async_nats::HeaderValue::as_str);
+            .map(crate::NatsHeaderValue::as_str);
         let ephemeral_pub = self.ctx.ephemeral_pub_bytes();
         let transcript = SignatureTranscript::new(subject, &ephemeral_pub, &final_payload)
             .request_id(request_id)
@@ -661,7 +661,7 @@ impl RequestBuilder {
     pub async fn nats_request(
         mut self,
         subject: impl Into<String>,
-    ) -> Result<(async_nats::Message, EphemeralContext), EncryptionError> {
+    ) -> Result<(crate::NatsMessage, EphemeralContext), EncryptionError> {
         let client = self.client.take().ok_or(EncryptionError::NoClient)?;
         let subject = subject.into();
         let built = self.build_for_subject(&subject)?;
@@ -674,7 +674,7 @@ impl RequestBuilder {
 }
 
 pub struct BuiltRequest {
-    pub headers: async_nats::HeaderMap,
+    pub headers: crate::NatsHeaderMap,
     pub payload: bytes::Bytes,
     pub context: EphemeralContext,
 }

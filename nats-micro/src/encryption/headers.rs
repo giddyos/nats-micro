@@ -26,9 +26,9 @@ impl HeaderLookup for Headers {
     }
 }
 
-impl HeaderLookup for async_nats::HeaderMap {
+impl HeaderLookup for crate::NatsHeaderMap {
     fn get_str(&self, key: &str) -> Option<&str> {
-        self.get(key).map(async_nats::HeaderValue::as_str)
+        self.get(key).map(crate::NatsHeaderValue::as_str)
     }
 }
 

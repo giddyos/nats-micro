@@ -108,8 +108,8 @@ impl<'a> IntoIterator for &'a Headers {
     }
 }
 
-impl From<async_nats::HeaderMap> for Headers {
-    fn from(headers: async_nats::HeaderMap) -> Self {
+impl From<crate::NatsHeaderMap> for Headers {
+    fn from(headers: crate::NatsHeaderMap) -> Self {
         let mut out = Self::new();
 
         for (name, values) in headers.iter() {

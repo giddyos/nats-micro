@@ -1,5 +1,3 @@
-use async_nats::jetstream::consumer::push;
-
 use crate::handler::HandlerFn;
 use crate::service::AuthPolicy;
 
@@ -9,7 +7,7 @@ pub struct ConsumerDefinition {
     pub durable: String,
     pub auth_policy: AuthPolicy,
     pub concurrency_limit: Option<u64>,
-    pub config: push::Config,
+    pub config: crate::NatsConsumerConfig,
     pub handler: HandlerFn,
 }
 

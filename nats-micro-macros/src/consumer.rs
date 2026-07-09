@@ -110,11 +110,11 @@ fn consumer_config_tokens(
 ) -> TokenStream {
     if let Some(ConsumerConfigExpr(expr)) = config {
         quote! {{
-            let __config: #nats_micro::__macros::ConsumerConfig = (#expr);
+            let __config: #nats_micro::NatsConsumerConfig = (#expr);
             __config
         }}
     } else {
-        quote! { #nats_micro::__macros::ConsumerConfig::default() }
+        quote! { #nats_micro::NatsConsumerConfig::default() }
     }
 }
 

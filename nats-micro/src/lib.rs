@@ -145,6 +145,7 @@ pub mod __test_support {
 
 #[doc(hidden)]
 pub mod __macros {
+    pub use crate::NatsConsumerConfig as ConsumerConfig;
     pub use crate::error::FromNatsErrorResponse;
     pub use crate::error::IntoNatsError;
     pub use crate::error::ServiceErrorMatch;
@@ -157,7 +158,6 @@ pub mod __macros {
         AuthPolicy, ConsumerInfo, EndpointInfo, NatsService, ParamInfo, PayloadEncoding,
         PayloadMeta, ResponseEncoding, ResponseMeta, ServiceDefinition, build_subject,
     };
-    pub use async_nats::jetstream::consumer::push::Config as ConsumerConfig;
     pub use inventory;
 
     // Error helpers

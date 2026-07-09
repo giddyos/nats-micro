@@ -1,6 +1,5 @@
 use std::{fmt::Display, path::PathBuf, str::FromStr, time::Duration};
 
-use async_nats::HeaderMap;
 use bytes::Bytes;
 use nats_micro_shared::{FrameworkError, TransportError as SharedTransportError};
 
@@ -54,7 +53,7 @@ pub struct ConnectOptions {
 
 #[derive(Debug, Clone)]
 pub struct ConnectedClient {
-    pub client: async_nats::Client,
+    pub client: crate::NatsClient,
     pub subject_prefix: Option<String>,
     #[cfg(feature = "encryption")]
     pub recipient: Option<crate::ServiceRecipient>,
@@ -336,7 +335,7 @@ pub async fn connect(
 
 #[derive(Default)]
 pub struct ClientCallOptions {
-    pub plaintext_headers: HeaderMap,
+    pub plaintext_headers: crate::NatsHeaderMap,
     #[cfg(feature = "encryption")]
     pub encrypted_headers: Vec<(String, String)>,
     #[cfg(feature = "encryption")]
@@ -344,11 +343,11 @@ pub struct ClientCallOptions {
 }
 
 async fn send_plain_request(
-    client: &async_nats::Client,
+    client: &crate::NatsClient,
     subject: String,
-    headers: HeaderMap,
+    headers: crate::NatsHeaderMap,
     payload: Bytes,
-) -> Result<async_nats::Message, NatsErrorResponse> {
+) -> Result<crate::NatsMessage, NatsErrorResponse> {
     let request_subject = subject.clone();
     if headers.is_empty() {
         client
@@ -366,7 +365,7 @@ async fn send_plain_request(
 #[cfg(feature = "encryption")]
 fn apply_headers_to_builder(
     mut builder: crate::encryption::RequestBuilder,
-    plaintext_headers: &HeaderMap,
+    plaintext_headers: &crate::NatsHeaderMap,
     encrypted_headers: Vec<(String, String)>,
 ) -> Result<crate::encryption::RequestBuilder, NatsErrorResponse> {
     for (name, values) in plaintext_headers.iter() {
@@ -436,13 +435,13 @@ impl ClientCallOptions {
     ) -> Result<Self, NatsErrorResponse> {
         let key = key.into();
         let value = value.into();
-        let name = async_nats::HeaderName::from_str(&key).map_err(|error| {
+        let name = crate::NatsHeaderName::from_str(&key).map_err(|error| {
             framework_error(
                 FrameworkError::InvalidHeader,
                 format!("invalid client header name `{key}`: {error}"),
             )
         })?;
-        let val = value.parse::<async_nats::HeaderValue>().map_err(|error| {
+        let val = value.parse::<crate::NatsHeaderValue>().map_err(|error| {
             framework_error(
                 FrameworkError::InvalidHeader,
                 format!("invalid client header value for `{key}`: {error}"),
@@ -463,7 +462,7 @@ impl ClientCallOptions {
         let header_name = "authorization";
         let header_value = format!("Bearer {token}");
         let header_value = header_value
-            .parse::<async_nats::HeaderValue>()
+            .parse::<crate::NatsHeaderValue>()
             .map_err(|error| {
                 framework_error(
                     FrameworkError::InvalidHeader,
@@ -497,13 +496,13 @@ impl ClientCallOptions {
     ) -> Result<Self, NatsErrorResponse> {
         let key = key.into();
         let value = value.into();
-        let _ = async_nats::HeaderName::from_str(&key).map_err(|error| {
+        let _ = crate::NatsHeaderName::from_str(&key).map_err(|error| {
             framework_error(
                 FrameworkError::InvalidHeader,
                 format!("invalid encrypted client header name `{key}`: {error}"),
             )
         })?;
-        let _ = value.parse::<async_nats::HeaderValue>().map_err(|error| {
+        let _ = value.parse::<crate::NatsHeaderValue>().map_err(|error| {
             framework_error(
                 FrameworkError::InvalidHeader,
                 format!("invalid encrypted client header value for `{key}`: {error}"),
@@ -544,7 +543,7 @@ impl ClientCallOptions {
     pub fn with_required_header(mut self, key: &'static str, value: impl Into<String>) -> Self {
         let header_value = value
             .into()
-            .parse::<async_nats::HeaderValue>()
+            .parse::<crate::NatsHeaderValue>()
             .expect("generated client headers must be valid HTTP header values");
         self.plaintext_headers.insert(key, header_value);
         self
@@ -552,10 +551,10 @@ impl ClientCallOptions {
 
     pub async fn into_request(
         self,
-        client: &async_nats::Client,
+        client: &crate::NatsClient,
         subject: String,
         payload: Bytes,
-    ) -> Result<async_nats::Message, NatsErrorResponse> {
+    ) -> Result<crate::NatsMessage, NatsErrorResponse> {
         #[cfg(feature = "encryption")]
         if self.recipient.is_some() || !self.encrypted_headers.is_empty() {
             let recipient = self.recipient.ok_or_else(|| {
@@ -587,12 +586,12 @@ impl ClientCallOptions {
     #[doc(hidden)]
     pub async fn into_request_with_context(
         self,
-        client: &async_nats::Client,
+        client: &crate::NatsClient,
         subject: String,
         payload: Bytes,
     ) -> Result<
         (
-            async_nats::Message,
+            crate::NatsMessage,
             Option<crate::encryption::EphemeralContext>,
         ),
         NatsErrorResponse,
@@ -629,10 +628,10 @@ impl ClientCallOptions {
     #[doc(hidden)]
     pub async fn into_encrypted_request(
         self,
-        client: &async_nats::Client,
+        client: &crate::NatsClient,
         subject: String,
         payload: Vec<u8>,
-    ) -> Result<(async_nats::Message, crate::encryption::EphemeralContext), NatsErrorResponse> {
+    ) -> Result<(crate::NatsMessage, crate::encryption::EphemeralContext), NatsErrorResponse> {
         let recipient = self.recipient.ok_or_else(|| {
             NatsErrorResponse::framework(
                 FrameworkError::MissingRecipientPubkey,

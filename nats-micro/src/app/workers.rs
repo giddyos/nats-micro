@@ -38,8 +38,8 @@ fn handler_panic_result(
     }
 }
 
-pub fn success_headers(success: bool) -> async_nats::HeaderMap {
-    let mut headers = async_nats::HeaderMap::new();
+pub fn success_headers(success: bool) -> crate::NatsHeaderMap {
+    let mut headers = crate::NatsHeaderMap::new();
     headers.insert(
         crate::response::X_SUCCESS_HEADER,
         if success { "true" } else { "false" },

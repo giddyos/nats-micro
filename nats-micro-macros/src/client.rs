@@ -48,18 +48,18 @@ impl ClientModuleSpec {
 
                 #[derive(Clone, Debug)]
                 pub struct #client_struct_name {
-                    client: #nats_micro::async_nats::Client,
+                    client: #nats_micro::NatsClient,
                     prefix: Option<String>,
                     service_version: String,
-                    default_headers: #nats_micro::async_nats::HeaderMap,
+                    default_headers: #nats_micro::NatsHeaderMap,
                     #encrypted_default_headers_field
                     #recipient_field
                 }
 
                 pub struct ClientBuilder {
-                    client: #nats_micro::async_nats::Client,
+                    client: #nats_micro::NatsClient,
                     prefix: Option<String>,
-                    default_headers: #nats_micro::async_nats::HeaderMap,
+                    default_headers: #nats_micro::NatsHeaderMap,
                     #encrypted_default_headers_field
                     #recipient_field
                 }
@@ -76,14 +76,14 @@ impl ClientModuleSpec {
                         value: impl AsRef<str>,
                     ) -> Result<Self, #nats_micro::NatsErrorResponse> {
                         let key = key.as_ref();
-                        let name = key.parse::<#nats_micro::async_nats::HeaderName>()
+                        let name = key.parse::<#nats_micro::NatsHeaderName>()
                             .map_err(|error| {
                                 #nats_micro::NatsErrorResponse::framework(
                                     #nats_micro::FrameworkError::InvalidHeader,
                                     format!("invalid default client header name `{key}`: {error}"),
                                 )
                             })?;
-                        let value = value.as_ref().parse::<#nats_micro::async_nats::HeaderValue>()
+                        let value = value.as_ref().parse::<#nats_micro::NatsHeaderValue>()
                             .map_err(|error| {
                                 #nats_micro::NatsErrorResponse::framework(
                                     #nats_micro::FrameworkError::InvalidHeader,
@@ -118,11 +118,11 @@ impl ClientModuleSpec {
                         #service_ident::__nats_micro_service_meta()
                     }
 
-                    pub fn builder(client: #nats_micro::async_nats::Client) -> ClientBuilder {
+                    pub fn builder(client: #nats_micro::NatsClient) -> ClientBuilder {
                         ClientBuilder {
                             client,
                             prefix: None,
-                            default_headers: #nats_micro::async_nats::HeaderMap::new(),
+                            default_headers: #nats_micro::NatsHeaderMap::new(),
                             #encrypted_default_headers_none
                             #recipient_none
                         }
@@ -273,7 +273,7 @@ impl ClientModuleSpec {
             let recipient_init = recipient_init_tokens(nats_micro);
             quote! {
                 pub fn new(
-                    client: #nats_micro::async_nats::Client,
+                    client: #nats_micro::NatsClient,
                     recipient_public_key: Option<[u8; 32]>,
                 ) -> Self {
                     #service_meta
@@ -281,7 +281,7 @@ impl ClientModuleSpec {
                         client,
                         prefix: service_meta.subject_prefix,
                         service_version: service_meta.version,
-                        default_headers: #nats_micro::async_nats::HeaderMap::new(),
+                        default_headers: #nats_micro::NatsHeaderMap::new(),
                         #encrypted_default_headers_none
                         #recipient_init
                     }
@@ -289,13 +289,13 @@ impl ClientModuleSpec {
             }
         } else {
             quote! {
-                pub fn new(client: #nats_micro::async_nats::Client) -> Self {
+                pub fn new(client: #nats_micro::NatsClient) -> Self {
                     #service_meta
                     Self {
                         client,
                         prefix: service_meta.subject_prefix,
                         service_version: service_meta.version,
-                        default_headers: #nats_micro::async_nats::HeaderMap::new(),
+                        default_headers: #nats_micro::NatsHeaderMap::new(),
                         #encrypted_default_headers_none
                     }
                 }
@@ -321,7 +321,7 @@ impl ClientModuleSpec {
                         client,
                         prefix: subject_prefix.or(service_meta.subject_prefix),
                         service_version: service_meta.version,
-                        default_headers: #nats_micro::async_nats::HeaderMap::new(),
+                        default_headers: #nats_micro::NatsHeaderMap::new(),
                         #encrypted_default_headers_none
                         recipient,
                     }
@@ -340,7 +340,7 @@ impl ClientModuleSpec {
                         client,
                         prefix: subject_prefix.or(service_meta.subject_prefix),
                         service_version: service_meta.version,
-                        default_headers: #nats_micro::async_nats::HeaderMap::new(),
+                        default_headers: #nats_micro::NatsHeaderMap::new(),
                         #encrypted_default_headers_none
                     }
                 }
@@ -356,7 +356,7 @@ impl ClientModuleSpec {
             let recipient_init = recipient_init_tokens(nats_micro);
             quote! {
                 pub fn with_prefix(
-                    client: #nats_micro::async_nats::Client,
+                    client: #nats_micro::NatsClient,
                     prefix: impl Into<String>,
                     recipient_public_key: Option<[u8; 32]>,
                 ) -> Self {
@@ -365,7 +365,7 @@ impl ClientModuleSpec {
                         client,
                         prefix: Some(prefix.into()),
                         service_version: service_meta.version,
-                        default_headers: #nats_micro::async_nats::HeaderMap::new(),
+                        default_headers: #nats_micro::NatsHeaderMap::new(),
                         #encrypted_default_headers_none
                         #recipient_init
                     }
@@ -374,7 +374,7 @@ impl ClientModuleSpec {
         } else {
             quote! {
                 pub fn with_prefix(
-                    client: #nats_micro::async_nats::Client,
+                    client: #nats_micro::NatsClient,
                     prefix: impl Into<String>,
                 ) -> Self {
                     #service_meta
@@ -382,7 +382,7 @@ impl ClientModuleSpec {
                         client,
                         prefix: Some(prefix.into()),
                         service_version: service_meta.version,
-                        default_headers: #nats_micro::async_nats::HeaderMap::new(),
+                        default_headers: #nats_micro::NatsHeaderMap::new(),
                         #encrypted_default_headers_none
                     }
                 }

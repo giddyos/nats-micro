@@ -73,9 +73,7 @@ fn generated_client_omits_recipient_constructor_args_without_encryption() {
 
     let expanded = module_spec.render_rust_tokens().to_string();
 
-    assert!(
-        expanded.contains("pub fn new (client : :: nats_micro :: async_nats :: Client) -> Self")
-    );
+    assert!(expanded.contains("pub fn new (client : :: nats_micro :: NatsClient) -> Self"));
     assert!(expanded.contains("pub fn with_prefix"));
     assert!(expanded.contains("prefix : impl Into < String >"));
     assert!(!expanded.contains("recipient_public_key"));

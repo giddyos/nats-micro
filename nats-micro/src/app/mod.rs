@@ -41,7 +41,7 @@ pub use self::workers::success_headers;
 
 #[derive(Clone)]
 pub struct NatsApp {
-    client: async_nats::Client,
+    client: crate::NatsClient,
     config: NatsAppConfig,
     state: StateMap,
     service_defs: Vec<ServiceDefinition>,
@@ -49,7 +49,7 @@ pub struct NatsApp {
 }
 
 impl NatsApp {
-    pub fn new(client: async_nats::Client) -> Self {
+    pub fn new(client: crate::NatsClient) -> Self {
         Self {
             client,
             config: NatsAppConfig::default(),

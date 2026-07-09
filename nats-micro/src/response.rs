@@ -11,7 +11,7 @@ pub const X_OPTIONAL_RESPONSE_HEADER: &str = "x-nats-micro-optional-response";
 fn parse_bool_header<
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
-    headers: Option<&crate::async_nats::HeaderMap>,
+    headers: Option<&crate::NatsHeaderMap>,
     header_name: &'static str,
 ) -> Result<Option<bool>, crate::ClientError<E>> {
     let Some(value) = headers.and_then(|headers| headers.get(header_name)) else {
@@ -38,7 +38,7 @@ fn parse_bool_header<
 #[derive(Debug, Clone)]
 pub struct NatsResponse {
     pub payload: Bytes,
-    pub headers: crate::async_nats::HeaderMap,
+    pub headers: crate::NatsHeaderMap,
 }
 
 impl NatsResponse {
@@ -46,7 +46,7 @@ impl NatsResponse {
     pub fn new(payload: impl Into<Bytes>) -> Self {
         Self {
             payload: payload.into(),
-            headers: crate::async_nats::HeaderMap::new(),
+            headers: crate::NatsHeaderMap::new(),
         }
     }
 
@@ -162,7 +162,7 @@ where
 pub fn response_success_from_headers<
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
-    headers: Option<&crate::async_nats::HeaderMap>,
+    headers: Option<&crate::NatsHeaderMap>,
 ) -> Result<Option<bool>, crate::ClientError<E>> {
     parse_bool_header(headers, X_SUCCESS_HEADER)
 }
@@ -176,7 +176,7 @@ pub fn response_success_from_headers<
 pub fn optional_response_from_headers<
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
-    headers: Option<&crate::async_nats::HeaderMap>,
+    headers: Option<&crate::NatsHeaderMap>,
 ) -> Result<Option<bool>, crate::ClientError<E>> {
     parse_bool_header(headers, X_OPTIONAL_RESPONSE_HEADER)
 }
@@ -184,7 +184,7 @@ pub fn optional_response_from_headers<
 fn optional_response_is_none<
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
-    headers: Option<&crate::async_nats::HeaderMap>,
+    headers: Option<&crate::NatsHeaderMap>,
     payload: &[u8],
 ) -> Result<bool, crate::ClientError<E>> {
     match optional_response_from_headers::<E>(headers)? {
@@ -204,7 +204,7 @@ pub fn deserialize_response<
     T: crate::serde::de::DeserializeOwned,
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
-    headers: Option<&crate::async_nats::HeaderMap>,
+    headers: Option<&crate::NatsHeaderMap>,
     payload: &[u8],
 ) -> Result<T, crate::ClientError<E>> {
     match response_success_from_headers::<E>(headers)? {
@@ -250,7 +250,7 @@ pub fn deserialize_optional_response<
     T: crate::serde::de::DeserializeOwned,
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
-    headers: Option<&crate::async_nats::HeaderMap>,
+    headers: Option<&crate::NatsHeaderMap>,
     payload: &[u8],
 ) -> Result<Option<T>, crate::ClientError<E>> {
     if let Some(false) = response_success_from_headers::<E>(headers)? {
@@ -275,7 +275,7 @@ pub fn deserialize_proto_response<
     T: crate::prost::Message + Default,
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
-    headers: Option<&crate::async_nats::HeaderMap>,
+    headers: Option<&crate::NatsHeaderMap>,
     payload: &[u8],
 ) -> Result<T, crate::ClientError<E>> {
     match response_success_from_headers::<E>(headers)? {
@@ -321,7 +321,7 @@ pub fn deserialize_optional_proto_response<
     T: crate::prost::Message + Default,
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
-    headers: Option<&crate::async_nats::HeaderMap>,
+    headers: Option<&crate::NatsHeaderMap>,
     payload: &[u8],
 ) -> Result<Option<T>, crate::ClientError<E>> {
     if let Some(false) = response_success_from_headers::<E>(headers)? {
@@ -345,7 +345,7 @@ pub fn deserialize_optional_proto_response<
 pub fn deserialize_unit_response<
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
-    headers: Option<&crate::async_nats::HeaderMap>,
+    headers: Option<&crate::NatsHeaderMap>,
     payload: &[u8],
 ) -> Result<(), crate::ClientError<E>> {
     match response_success_from_headers::<E>(headers)? {
@@ -397,7 +397,7 @@ pub fn deserialize_unit_response<
 pub fn deserialize_optional_unit_response<
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
-    headers: Option<&crate::async_nats::HeaderMap>,
+    headers: Option<&crate::NatsHeaderMap>,
     payload: &[u8],
 ) -> Result<Option<()>, crate::ClientError<E>> {
     if let Some(false) = response_success_from_headers::<E>(headers)? {
@@ -421,7 +421,7 @@ pub fn deserialize_optional_unit_response<
 pub fn raw_response_to_string<
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
-    headers: Option<&crate::async_nats::HeaderMap>,
+    headers: Option<&crate::NatsHeaderMap>,
     payload: &[u8],
 ) -> Result<String, crate::ClientError<E>> {
     match response_success_from_headers::<E>(headers)? {
@@ -454,7 +454,7 @@ pub fn raw_response_to_string<
 pub fn raw_response_to_optional_string<
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
-    headers: Option<&crate::async_nats::HeaderMap>,
+    headers: Option<&crate::NatsHeaderMap>,
     payload: &[u8],
 ) -> Result<Option<String>, crate::ClientError<E>> {
     if let Some(false) = response_success_from_headers::<E>(headers)? {
@@ -477,7 +477,7 @@ pub fn raw_response_to_optional_string<
 pub fn raw_response_to_bytes<
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
-    headers: Option<&crate::async_nats::HeaderMap>,
+    headers: Option<&crate::NatsHeaderMap>,
     payload: &[u8],
 ) -> Result<Vec<u8>, crate::ClientError<E>> {
     match response_success_from_headers::<E>(headers)? {
@@ -503,7 +503,7 @@ pub fn raw_response_to_bytes<
 pub fn raw_response_to_optional_bytes<
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
-    headers: Option<&crate::async_nats::HeaderMap>,
+    headers: Option<&crate::NatsHeaderMap>,
     payload: &[u8],
 ) -> Result<Option<Vec<u8>>, crate::ClientError<E>> {
     if let Some(false) = response_success_from_headers::<E>(headers)? {
@@ -528,7 +528,7 @@ pub fn raw_response_to_optional_bytes<
 pub fn decrypt_client_response<
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
 >(
-    headers: Option<&crate::async_nats::HeaderMap>,
+    headers: Option<&crate::NatsHeaderMap>,
     eph_ctx: &crate::EphemeralContext,
     payload: &[u8],
 ) -> Result<Vec<u8>, crate::ClientError<E>> {
