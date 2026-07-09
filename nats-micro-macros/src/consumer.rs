@@ -86,15 +86,14 @@ pub(crate) fn process_consumer_method(
 }
 
 fn consumer_stream_tokens(struct_ident: &syn::Ident, stream: Option<&str>) -> TokenStream {
-    match stream {
-        Some(stream) => quote! { #stream.to_string() },
-        None => {
-            let service_config_module = service_config_module_ident(struct_ident);
-            quote! {
-                #service_config_module::DEFAULT_STREAM
-                    .expect("consumer stream is required; set `#[consumer(stream = \"...\")]` or `#[service(default_stream = \"...\")]`")
-                    .to_string()
-            }
+    if let Some(stream) = stream {
+        quote! { #stream.to_string() }
+    } else {
+        let service_config_module = service_config_module_ident(struct_ident);
+        quote! {
+            #service_config_module::DEFAULT_STREAM
+                .expect("consumer stream is required; set `#[consumer(stream = \"...\")]` or `#[service(default_stream = \"...\")]`")
+                .to_string()
         }
     }
 }

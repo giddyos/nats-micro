@@ -234,9 +234,10 @@ pub(crate) fn service_config_module_ident(service_ident: &syn::Ident) -> syn::Id
 }
 
 fn default_stream_tokens(default_stream: Option<&str>) -> TokenStream {
-    match default_stream {
-        Some(default_stream) => quote! { Some(#default_stream) },
-        None => quote! { None },
+    if let Some(default_stream) = default_stream {
+        quote! { Some(#default_stream) }
+    } else {
+        quote! { None }
     }
 }
 

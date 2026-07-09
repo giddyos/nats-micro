@@ -293,6 +293,7 @@ impl NatsApp {
         prepare_request_for_dispatch_with_state(state, req)
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn spawn_service(
         &self,
         svc_def: ServiceDefinition,

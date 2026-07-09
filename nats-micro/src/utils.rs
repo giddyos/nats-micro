@@ -64,7 +64,7 @@ mod tests {
     #[test]
     fn ensure_request_id_replaces_empty_long_or_unsafe_values() {
         for value in [
-            "".to_string(),
+            String::new(),
             "a".repeat(129),
             "bad\nid".to_string(),
             "snowman-☃".to_string(),

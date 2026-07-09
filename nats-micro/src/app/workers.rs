@@ -28,7 +28,7 @@ use super::{HandlerPanicPolicy, NatsApp, limits::semaphore_permits, shutdown::sh
 fn handler_panic_result(
     policy: HandlerPanicPolicy,
     worker_kind: &'static str,
-    err: tokio::task::JoinError,
+    err: &tokio::task::JoinError,
 ) -> Option<anyhow::Error> {
     match policy {
         HandlerPanicPolicy::FailWorker => Some(anyhow::anyhow!(
@@ -213,7 +213,7 @@ pub(super) async fn run_endpoint_worker(
                         "endpoint task panicked"
                     );
                     if let Some(error) =
-                        handler_panic_result(handler_panic_policy, "endpoint", err)
+                        handler_panic_result(handler_panic_policy, "endpoint", &err)
                     {
                         break Err(error);
                     }
@@ -290,10 +290,10 @@ pub(super) async fn run_endpoint_worker(
                 error = %err,
                 "endpoint task panicked"
             );
-            if outcome.is_ok() {
-                if let Some(error) = handler_panic_result(handler_panic_policy, "endpoint", err) {
-                    outcome = Err(error);
-                }
+            if outcome.is_ok()
+                && let Some(error) = handler_panic_result(handler_panic_policy, "endpoint", &err)
+            {
+                outcome = Err(error);
             }
         }
     }
@@ -455,6 +455,7 @@ async fn handle_consumer_message(
 }
 
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn run_consumer_worker(
     app: NatsApp,
     consumer_def: ConsumerDefinition,
@@ -497,7 +498,7 @@ pub(super) async fn run_consumer_worker(
                         "consumer task panicked"
                     );
                     if let Some(error) =
-                        handler_panic_result(handler_panic_policy, "consumer", err)
+                        handler_panic_result(handler_panic_policy, "consumer", &err)
                     {
                         break Err(error);
                     }
@@ -574,10 +575,10 @@ pub(super) async fn run_consumer_worker(
                 error = %err,
                 "consumer task panicked"
             );
-            if outcome.is_ok() {
-                if let Some(error) = handler_panic_result(handler_panic_policy, "consumer", err) {
-                    outcome = Err(error);
-                }
+            if outcome.is_ok()
+                && let Some(error) = handler_panic_result(handler_panic_policy, "consumer", &err)
+            {
+                outcome = Err(error);
             }
         }
     }

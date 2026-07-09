@@ -411,14 +411,12 @@ impl IntoNatsError for anyhow::Error {
 }
 
 fn expose_internal_error_details() -> bool {
-    std::env::var("NATS_MICRO_EXPOSE_INTERNAL_ERROR_DETAILS")
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
+    std::env::var("NATS_MICRO_EXPOSE_INTERNAL_ERROR_DETAILS").is_ok_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
 }
 
 // Helper utilities for deserializing error responses coming from services.

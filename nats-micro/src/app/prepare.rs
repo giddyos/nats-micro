@@ -1,4 +1,11 @@
+#[cfg(feature = "encryption")]
+use crate::encryption::{
+    ENCRYPTED_HEADERS_NAME, RESPONSE_PUB_KEY_NAME, SIGNATURE_HEADER_NAME, ServiceKeyPair,
+    SignatureTranscript, decode_response_pub_key, decrypt_headers, verify_signature_for_transcript,
+};
 use crate::{error::NatsErrorResponse, request::NatsRequest, state::StateMap};
+#[cfg(feature = "encryption")]
+use base64::{Engine, engine::general_purpose::STANDARD};
 #[cfg(feature = "encryption")]
 use nats_micro_shared::FrameworkError;
 
@@ -8,6 +15,7 @@ pub(crate) struct PreparedRequest {
     pub(crate) ephemeral_pub: Option<[u8; 32]>,
 }
 
+#[allow(clippy::too_many_lines)]
 pub(super) fn prepare_request_for_dispatch_with_state(
     state: &StateMap,
     req: NatsRequest,
@@ -21,12 +29,6 @@ pub(super) fn prepare_request_for_dispatch_with_state(
     #[cfg(feature = "encryption")]
     {
         let mut req = req;
-        use crate::encryption::{
-            ENCRYPTED_HEADERS_NAME, RESPONSE_PUB_KEY_NAME, SIGNATURE_HEADER_NAME, ServiceKeyPair,
-            SignatureTranscript, decode_response_pub_key, decrypt_headers,
-            verify_signature_for_transcript,
-        };
-        use base64::{Engine, engine::general_purpose::STANDARD};
 
         let response_pub_key = decode_response_pub_key(&req.headers).map_err(|error| {
             NatsErrorResponse::framework(

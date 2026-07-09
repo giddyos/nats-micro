@@ -403,7 +403,7 @@ impl ClientCallOptions {
             options = options.header("x-request-id", ctx.request.request_id.clone());
         }
 
-        for header in ctx.request.headers.iter() {
+        for header in &ctx.request.headers {
             if !matches!(
                 header.key.to_ascii_lowercase().as_str(),
                 "traceparent" | "tracestate" | "baggage" | "x-client-name"

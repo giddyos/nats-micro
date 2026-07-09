@@ -20,6 +20,7 @@ pub(crate) struct ClientModuleSpec {
 }
 
 impl ClientModuleSpec {
+    #[allow(clippy::too_many_lines)]
     fn render_rust_tokens(&self) -> TokenStream {
         let nats_micro = nats_micro_path();
         let module_name = &self.module_name;
