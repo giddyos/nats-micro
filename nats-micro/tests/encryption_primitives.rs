@@ -1,4 +1,5 @@
 #![cfg(feature = "encryption")]
+#![allow(deprecated)]
 #![allow(clippy::redundant_closure_for_method_calls)]
 
 use async_nats::HeaderMap;
@@ -61,7 +62,7 @@ fn headers_and_payload_share_ephemeral_key() {
     let decrypted_payload = keypair.decrypt(&built.payload).unwrap();
     assert_eq!(decrypted_payload, b"payload data");
 
-    let shared_key = keypair.derive_shared_key(&eph_from_payload);
+    let shared_key = keypair.derive_encryption_key(&eph_from_payload);
     let decrypted_headers = encrypted_headers_decrypt(&built.headers, &shared_key).unwrap();
     assert_eq!(
         decrypted_headers.get("authorization").unwrap(),
@@ -130,7 +131,7 @@ fn invalid_encrypted_headers_json_reports_context() {
     let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
     let eph_ctx = recipient.begin();
     let encrypted_blob = eph_ctx.encrypt(b"not-json").unwrap();
-    let shared_key = keypair.derive_shared_key(&eph_ctx.ephemeral_pub_bytes());
+    let shared_key = keypair.derive_encryption_key(&eph_ctx.ephemeral_pub_bytes());
 
     let mut headers = HeaderMap::new();
     headers.insert("x-encrypted-headers", STANDARD.encode(&encrypted_blob));
@@ -229,7 +230,7 @@ fn request_builder_mixed() {
     assert!(built.headers.get("x-signature").is_some());
     assert!(built.headers.get("authorization").is_none());
 
-    let shared_key = keypair.derive_shared_key(&built.context.ephemeral_pub_bytes());
+    let shared_key = keypair.derive_encryption_key(&built.context.ephemeral_pub_bytes());
     let decrypted = encrypted_headers_decrypt(&built.headers, &shared_key).unwrap();
     assert_eq!(decrypted.get("x-user-id").unwrap(), "user-42");
     assert_eq!(decrypted.get("authorization").unwrap(), "Bearer my-token");
@@ -290,7 +291,7 @@ fn full_encrypted_request_response_cycle() {
         .unwrap();
 
     let eph_pub: [u8; 32] = built.payload[..32].try_into().unwrap();
-    let shared_key = keypair.derive_shared_key(&eph_pub);
+    let shared_key = keypair.derive_encryption_key(&eph_pub);
 
     let decrypted_request = nats_micro::encryption::ServiceKeyPair::decrypt_with_shared_key(
         &shared_key,
@@ -399,9 +400,9 @@ fn signature_round_trip() {
     let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
     let ctx = recipient.begin();
 
-    let sig = compute_signature(ctx.shared_secret(), b"test payload", Some("headers-blob"));
+    let sig = compute_signature(ctx.encryption_key(), b"test payload", Some("headers-blob"));
     verify_signature(
-        ctx.shared_secret(),
+        ctx.encryption_key(),
         b"test payload",
         Some("headers-blob"),
         &sig,
@@ -418,8 +419,8 @@ fn signature_fails_with_wrong_key() {
     let c1 = r1.begin();
     let c2 = r2.begin();
 
-    let sig = compute_signature(c1.shared_secret(), b"data", None);
-    assert!(verify_signature(c2.shared_secret(), b"data", None, &sig).is_err());
+    let sig = compute_signature(c1.encryption_key(), b"data", None);
+    assert!(verify_signature(c2.encryption_key(), b"data", None, &sig).is_err());
 }
 
 #[test]
@@ -428,8 +429,8 @@ fn signature_fails_with_tampered_payload() {
     let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
     let ctx = recipient.begin();
 
-    let sig = compute_signature(ctx.shared_secret(), b"original", None);
-    assert!(verify_signature(ctx.shared_secret(), b"tampered", None, &sig).is_err());
+    let sig = compute_signature(ctx.encryption_key(), b"original", None);
+    assert!(verify_signature(ctx.encryption_key(), b"tampered", None, &sig).is_err());
 }
 
 #[test]
@@ -438,8 +439,8 @@ fn signature_fails_with_tampered_headers() {
     let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
     let ctx = recipient.begin();
 
-    let sig = compute_signature(ctx.shared_secret(), b"data", Some("original"));
-    assert!(verify_signature(ctx.shared_secret(), b"data", Some("tampered"), &sig).is_err());
+    let sig = compute_signature(ctx.encryption_key(), b"data", Some("original"));
+    assert!(verify_signature(ctx.encryption_key(), b"data", Some("tampered"), &sig).is_err());
 }
 
 #[test]
@@ -448,8 +449,8 @@ fn signature_with_none_headers_differs_from_some() {
     let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
     let ctx = recipient.begin();
 
-    let sig_none = compute_signature(ctx.shared_secret(), b"data", None);
-    let sig_some = compute_signature(ctx.shared_secret(), b"data", Some("headers"));
+    let sig_none = compute_signature(ctx.encryption_key(), b"data", None);
+    let sig_some = compute_signature(ctx.encryption_key(), b"data", Some("headers"));
     assert_ne!(sig_none, sig_some);
 }
 

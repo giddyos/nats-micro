@@ -138,7 +138,7 @@ fn prelude_reexports_encryption_types() {
         .build()
         .expect("encrypted request should build");
 
-    let shared_key = keypair.derive_shared_key(&context.ephemeral_pub_bytes());
+    let shared_key = keypair.derive_encryption_key(&context.ephemeral_pub_bytes());
     let decrypted_headers = nats_micro::encrypted_headers_decrypt(&headers, &shared_key)
         .expect("encrypted headers should decrypt");
 

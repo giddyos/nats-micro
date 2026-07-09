@@ -183,6 +183,9 @@ fn build_response_envelope(nonce: &[u8; NONCE_LEN], ciphertext: &[u8]) -> Vec<u8
     out
 }
 
+#[deprecated(
+    note = "use compute_signature_for_transcript with SignatureTranscript and a signature key"
+)]
 pub fn compute_signature(
     shared_key: &[u8; 32],
     payload: &[u8],
@@ -204,6 +207,9 @@ pub fn compute_signature_for_transcript(
     mac.finalize().into_bytes().to_vec()
 }
 
+#[deprecated(
+    note = "use verify_signature_for_transcript with SignatureTranscript and a signature key"
+)]
 pub fn verify_signature(
     shared_key: &[u8; 32],
     payload: &[u8],
@@ -295,6 +301,9 @@ impl ServiceKeyPair {
         Self { secret, public }
     }
 
+    #[deprecated(
+        note = "use derive_encryption_key; this returns a derived encryption key, not the raw X25519 shared secret"
+    )]
     pub fn derive_shared_key(&self, ephemeral_pub_bytes: &[u8; 32]) -> Zeroizing<[u8; 32]> {
         self.derive_encryption_key(ephemeral_pub_bytes)
     }
@@ -621,8 +630,15 @@ impl EphemeralContext {
         )
     }
 
-    pub fn shared_secret(&self) -> &[u8; 32] {
+    pub fn encryption_key(&self) -> &[u8; 32] {
         self.keys.encryption_key()
+    }
+
+    #[deprecated(
+        note = "use encryption_key; this returns a derived encryption key, not the raw X25519 shared secret"
+    )]
+    pub fn shared_secret(&self) -> &[u8; 32] {
+        self.encryption_key()
     }
 
     pub fn signature_key(&self) -> &[u8; 32] {
