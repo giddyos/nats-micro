@@ -403,11 +403,13 @@ impl ClientCallOptions {
         Self::default()
     }
 
-    pub fn from_request_context(ctx: &crate::RequestContext) -> Self {
+    pub fn try_from_request_context(
+        ctx: &crate::RequestContext,
+    ) -> Result<Self, NatsErrorResponse> {
         let mut options = Self::new();
 
         if !ctx.request.request_id.is_empty() {
-            options = options.header("x-request-id", ctx.request.request_id.clone());
+            options = options.try_header("x-request-id", ctx.request.request_id.clone())?;
         }
 
         for header in &ctx.request.headers {
@@ -421,15 +423,20 @@ impl ClientCallOptions {
             #[cfg(feature = "encryption")]
             {
                 if header.was_encrypted {
-                    options = options.encrypted_header(header.key.clone(), header.value.clone());
+                    options =
+                        options.try_encrypted_header(header.key.clone(), header.value.clone())?;
                     continue;
                 }
             }
 
-            options = options.header(header.key.clone(), header.value.clone());
+            options = options.try_header(header.key.clone(), header.value.clone())?;
         }
 
-        options
+        Ok(options)
+    }
+
+    pub fn from_request_context(ctx: &crate::RequestContext) -> Self {
+        Self::try_from_request_context(ctx).expect("invalid propagated request context header")
     }
 
     pub fn try_header(
@@ -652,6 +659,8 @@ impl ClientCallOptions {
 #[cfg(test)]
 mod tests {
     use super::{AuthOptions, ClientCallOptions, ConnectOptions, connect};
+    use crate::{NatsRequest, RequestContext, StateMap, request::Headers};
+    use bytes::Bytes;
     use nats_micro_shared::FrameworkError;
 
     #[test]
@@ -668,6 +677,30 @@ mod tests {
     #[should_panic(expected = "invalid client header name or value")]
     fn header_panics_for_invalid_header_values() {
         let _ = ClientCallOptions::new().header("x-trace", "bad\r\nvalue");
+    }
+
+    #[test]
+    fn try_from_request_context_rejects_invalid_propagated_header_values() {
+        let mut headers = Headers::new();
+        headers.insert("traceparent", "bad\r\nvalue");
+        let ctx = RequestContext::new(
+            NatsRequest {
+                subject: "demo.subject".to_string(),
+                payload: Bytes::new(),
+                headers,
+                reply: None,
+                request_id: "req-1".to_string(),
+            },
+            StateMap::new(),
+            None,
+        );
+
+        let Err(err) = ClientCallOptions::try_from_request_context(&ctx) else {
+            panic!("invalid propagated header should be rejected");
+        };
+
+        assert_eq!(err.kind, FrameworkError::InvalidHeader.as_code());
+        assert!(err.message.contains("invalid client header value"));
     }
 
     #[cfg(feature = "encryption")]

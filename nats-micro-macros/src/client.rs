@@ -1012,9 +1012,11 @@ fn render_client_method(endpoint: &ClientEndpointSpec) -> TokenStream {
             ctx: &#nats_micro::RequestContext,
             #(#all_with_args,)*
         ) -> Result<#return_type, #nats_micro::ClientError<#error_type>> {
+            let options = #nats_micro::ClientCallOptions::try_from_request_context(ctx)
+                .map_err(#nats_micro::ClientError::<#error_type>::request)?;
             self.#fn_with_ident(
                 #(#forward_args,)*
-                #nats_micro::ClientCallOptions::from_request_context(ctx),
+                options,
             )
             .await
         }
