@@ -18,6 +18,7 @@ pub use crate::service::{
     ServiceDefinition, ServiceMetadata,
 };
 pub use crate::state::StateMap;
+pub use crate::{Error, ThisError};
 pub use crate::{HandlerPanicPolicy, NatsApp, NatsAppConfig, WorkerFailurePolicy};
 
 #[cfg(feature = "client")]
@@ -39,5 +40,3 @@ pub use nats_micro_macros::object;
 
 pub use crate::async_nats;
 pub use nats_micro_macros::{service, service_error, service_handlers};
-
-pub use thiserror::Error as ServiceError;

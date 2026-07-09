@@ -22,10 +22,18 @@ mod utils;
 pub use anyhow;
 pub use nats_micro_shared::{FrameworkError, TransportError};
 pub use thiserror;
+pub use thiserror::Error;
+pub use thiserror::Error as ThisError;
 
 pub use app::{HandlerPanicPolicy, NatsApp, NatsAppConfig, WorkerFailurePolicy};
 pub use async_nats;
 pub use async_nats::jetstream::consumer::push::Config as ConsumerConfig;
+pub type NatsClient = async_nats::Client;
+pub type NatsMessage = async_nats::Message;
+pub type NatsHeaderMap = async_nats::HeaderMap;
+pub type NatsHeaderName = async_nats::HeaderName;
+pub type NatsHeaderValue = async_nats::HeaderValue;
+pub type NatsConsumerConfig = async_nats::jetstream::consumer::push::Config;
 pub use auth::{Auth, AuthError, FromAuthRequest};
 pub use consumer::{ConsumerDefinition, ConsumerHandlerFn};
 pub use error::{
