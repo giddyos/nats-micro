@@ -55,7 +55,13 @@ let id = users.create(&CreateUser {
 # }
 ```
 
+With the default `encryption` feature enabled, generated clients accept an
+optional recipient public key. With `default-features = false` and
+`features = ["client"]`, generated clients only take `NatsClient`.
+
 ## Service Errors
+
+Self-contained mode does not require a direct `thiserror` dependency:
 
 ```rust
 #[nats_micro::service_error]
@@ -68,6 +74,29 @@ pub enum CreateUserError {
     Storage(#[from] std::io::Error),
 }
 ```
+
+Existing `thiserror` enums can keep their derive:
+
+```rust
+use thiserror::Error;
+
+#[nats_micro::service_error]
+#[derive(Debug, Error)]
+pub enum ExistingError {
+    #[code(404)]
+    #[error("user {id} was not found")]
+    NotFound { id: String },
+
+    #[error("database failed")]
+    Database(#[from] std::io::Error),
+}
+```
+
+Without an `Error` derive, `#[service_error]` owns `Display`,
+`std::error::Error`, and `From` for `#[from]` fields. With an `Error` derive,
+`thiserror` owns those local error impls and `#[service_error]` only adds NATS
+wire conversion. A direct `thiserror` dependency is only needed when you choose
+the existing-derive mode.
 
 Public coded variants are serialized with their display message and details.
 Internal `#[from]` and transparent variants default to HTTP 500 with
@@ -82,8 +111,9 @@ Normal downstream crates do not need direct dependencies on `async-nats`,
 `nats_micro::Bytes`.
 
 Raw `#[derive(nats_micro::Error)]` is the caveat: it follows `thiserror`
-derive internals and may require a direct `thiserror` dependency. Prefer
-`#[nats_micro::service_error]` for service errors.
+derive internals and may require a direct `thiserror` dependency or crate alias
+for non-service local error types. Normal `#[nats_micro::service_error]` users
+still do not need direct `thiserror`.
 
 ## Features
 

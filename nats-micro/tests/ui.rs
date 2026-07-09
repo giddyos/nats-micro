@@ -33,10 +33,10 @@ fn macro_ui_validation() {
     tests.pass("tests/ui/service_error_transparent.rs");
     tests.pass("tests/ui/service_error_no_direct_thiserror.rs");
     tests.pass("tests/ui/service_error_renamed_nats_micro.rs");
+    tests.pass("tests/ui/service_error_error_derive_conflict.rs");
     tests.compile_fail("tests/ui/service_error_duplicate_source.rs");
     tests.compile_fail("tests/ui/service_error_from_multiple_fields.rs");
     tests.compile_fail("tests/ui/service_error_transparent_multiple_fields.rs");
-    tests.compile_fail("tests/ui/service_error_error_derive_conflict.rs");
     tests.compile_fail("tests/ui/service_error_source_not_error.rs");
     tests.compile_fail("tests/ui/service_error_private_with_client_feature.rs");
 

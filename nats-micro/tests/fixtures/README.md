@@ -14,3 +14,6 @@ do not belong to the root workspace.
 | no-default-features-service | Server/service authoring with no default features | no | no | no |
 | napi-surface | NAPI/object macro public surface | no | no | no |
 | raw-thiserror-direct-dep | Raw thiserror caveat | no | yes | no |
+| existing-thiserror-service-error | service_error on existing thiserror enums | no | yes | no |
+
+Public DTOs in fixtures should use `#[serde(crate = "nats_micro::serde")]` so downstream crates do not need a direct `serde` dependency for derives. For protobuf DTOs, `prost` derives still emit `::prost` paths, so fixtures that avoid a direct `prost` dependency implement `nats_micro::prost::Message` manually through the facade.

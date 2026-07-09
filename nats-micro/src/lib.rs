@@ -7,8 +7,8 @@
 //! You do not need to add `async-nats` to construct generated clients or run a
 //! [`NatsApp`]. Use [`NatsClient`] or [`async_nats`] for raw NATS APIs.
 //!
-//! You do not need to add `thiserror` to define service errors. Use
-//! [`service_error`].
+//! You do not need to add `thiserror` to define service errors when
+//! [`service_error`] owns the local error implementation.
 //!
 //! # Service errors
 //!
@@ -27,6 +27,31 @@
 //!
 //! # fn main() {}
 //! ```
+//!
+//! Existing `thiserror` enums can keep their derive. In that mode, `thiserror`
+//! owns `Display`, `Error`, and `From`, while [`service_error`] only adds NATS
+//! wire conversion:
+//!
+//! ```rust
+//! use nats_micro::service_error;
+//! use thiserror::Error;
+//!
+//! #[service_error]
+//! #[derive(Debug, Error)]
+//! pub enum ExistingError {
+//!     #[code(404)]
+//!     #[error("user {id} was not found")]
+//!     NotFound { id: String },
+//!
+//!     #[error("database failed")]
+//!     Database(#[from] std::io::Error),
+//! }
+//!
+//! # fn main() {}
+//! ```
+//!
+//! Direct `thiserror` is only needed when you choose the existing-derive mode.
+//! Normal [`service_error`] users still do not need direct `thiserror`.
 //!
 //! Raw `thiserror` is available as [`thiserror`] / [`Error`] for advanced local
 //! error types:

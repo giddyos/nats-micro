@@ -40,6 +40,7 @@ run cargo check -p nats-micro --no-default-features --features encryption
 run cargo check -p nats-micro --no-default-features --features client,encryption
 run cargo check -p nats-micro --all-features
 run cargo check --workspace --release --all-features
+run cargo test -p nats-micro --doc --all-features
 
 run bash scripts/check-fixture-manifests.sh
 
@@ -51,6 +52,7 @@ fixture_check renamed-dependency-full
 fixture_check no-default-features-service
 fixture_check napi-surface
 fixture_check raw-thiserror-direct-dep
+fixture_check existing-thiserror-service-error
 
 if command -v nats-server >/dev/null 2>&1; then
   run cargo test -p nats-micro --all-features --test live_runtime

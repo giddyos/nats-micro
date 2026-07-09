@@ -36,9 +36,10 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
         );
     }
 
-    if let Err(error) = normalize_service_error_derives(&mut input) {
-        return error.to_compile_error();
-    }
+    let mode = match normalize_service_error_derives(&mut input) {
+        Ok(mode) => mode,
+        Err(error) => return error.to_compile_error(),
+    };
 
     let mut display_arms = Vec::new();
     let mut source_arms = Vec::new();
@@ -55,18 +56,25 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
         let v_name = v_ident.to_string();
         let v_code = format!("{}", AsShoutySnakeCase(&v_name));
         let js_variant_ident = format_ident!("{}", v_code);
-        let error_attr = match variant_error_attr(variant) {
-            Ok(attr) => attr,
-            Err(error) => return error.to_compile_error(),
+        let error_attr = if mode == ErrorImplMode::SelfContained {
+            match variant_error_attr_strict(variant) {
+                Ok(attr) => Some(attr),
+                Err(error) => return error.to_compile_error(),
+            }
+        } else {
+            None
         };
-        let field_meta = match FieldMeta::for_variant(variant) {
+        let is_transparent = match mode {
+            ErrorImplMode::SelfContained => matches!(error_attr, Some(ErrorAttr::Transparent)),
+            ErrorImplMode::ExternalDerive => variant_is_transparent_light(variant),
+        };
+        let field_meta = match FieldMeta::for_variant(variant, mode, is_transparent) {
             Ok(meta) => meta,
             Err(error) => return error.to_compile_error(),
         };
 
         let is_internal = variant_is_internal(variant)
-            || ((field_meta.has_from || matches!(error_attr, ErrorAttr::Transparent))
-                && !variant_has_code(variant));
+            || ((field_meta.has_from || is_transparent) && !variant_has_code(variant));
         let code = variant_code(variant, is_internal);
 
         let message = if is_internal {
@@ -81,22 +89,24 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
             Fields::Named(_) => quote! { #enum_ident::#v_ident { .. } },
         };
 
-        let display_arm = match display_arm_tokens(&enum_ident, variant, &error_attr) {
-            Ok(tokens) => tokens,
-            Err(error) => return error.to_compile_error(),
-        };
-        let source_arm = source_arm_tokens(&enum_ident, variant, &field_meta, &error_attr);
-        from_impls.extend(from_impl_tokens(
-            &enum_ident,
-            &impl_generics,
-            &ty_generics,
-            where_clause,
-            variant,
-            &field_meta,
-        ));
+        if let Some(error_attr) = &error_attr {
+            let display_arm = match display_arm_tokens(&enum_ident, variant, error_attr) {
+                Ok(tokens) => tokens,
+                Err(error) => return error.to_compile_error(),
+            };
+            let source_arm = source_arm_tokens(&enum_ident, variant, &field_meta, error_attr);
+            from_impls.extend(from_impl_tokens(
+                &enum_ident,
+                &impl_generics,
+                &ty_generics,
+                where_clause,
+                variant,
+                &field_meta,
+            ));
 
-        display_arms.push(display_arm);
-        source_arms.push(source_arm);
+            display_arms.push(display_arm);
+            source_arms.push(source_arm);
+        }
         napi_js_variants.push(quote! { #js_variant_ident });
         napi_as_ref_arms.push(quote! {
             Self::#js_variant_ident => #v_code,
@@ -191,40 +201,28 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
         from_response_arms.push(from_response);
     }
 
-    if let Data::Enum(ref mut data_enum) = input.data {
-        for variant in &mut data_enum.variants {
-            variant.attrs.retain(|attr| {
-                !attr.path().is_ident("internal")
-                    && !attr.path().is_ident("code")
-                    && !attr.path().is_ident("error")
-            });
-            for field in &mut variant.fields {
-                field.attrs.retain(|attr| {
-                    !attr.path().is_ident("from")
-                        && !attr.path().is_ident("source")
-                        && !attr.path().is_ident("backtrace")
-                });
-            }
-        }
-    }
+    strip_service_error_only_attrs(&mut input, mode);
 
-    let display_impl = quote! {
-        impl #impl_generics ::std::fmt::Display for #enum_ident #ty_generics #where_clause {
-            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-                match self {
-                    #(#display_arms)*
+    let display_impl = match mode {
+        ErrorImplMode::SelfContained => quote! {
+            impl #impl_generics ::std::fmt::Display for #enum_ident #ty_generics #where_clause {
+                fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                    match self {
+                        #(#display_arms)*
+                    }
                 }
             }
-        }
 
-        impl #impl_generics ::std::error::Error for #enum_ident #ty_generics #where_clause {
-            fn source(&self) -> ::std::option::Option<&(dyn ::std::error::Error + 'static)> {
-                match self {
-                    #(#source_arms)*
-                    _ => None,
+            impl #impl_generics ::std::error::Error for #enum_ident #ty_generics #where_clause {
+                fn source(&self) -> ::std::option::Option<&(dyn ::std::error::Error + 'static)> {
+                    match self {
+                        #(#source_arms)*
+                        _ => None,
+                    }
                 }
             }
-        }
+        },
+        ErrorImplMode::ExternalDerive => quote! {},
     };
 
     let enum_impl = quote! {
@@ -301,8 +299,16 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
     out
 }
 
-fn normalize_service_error_derives(input: &mut DeriveInput) -> Result<(), syn::Error> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ErrorImplMode {
+    SelfContained,
+    ExternalDerive,
+}
+
+#[allow(clippy::unnecessary_wraps)]
+fn normalize_service_error_derives(input: &mut DeriveInput) -> Result<ErrorImplMode, syn::Error> {
     let mut has_debug = false;
+    let mut has_error = false;
     let mut attrs = Vec::with_capacity(input.attrs.len() + 2);
 
     for attr in &input.attrs {
@@ -331,10 +337,7 @@ fn normalize_service_error_derives(input: &mut DeriveInput) -> Result<(), syn::E
             }
 
             if segment.ident == "Error" {
-                return Err(syn::Error::new_spanned(
-                    path,
-                    "#[service_error] already implements Display and Error; remove the Error derive",
-                ));
+                has_error = true;
             }
 
             rewritten.push(path);
@@ -350,10 +353,14 @@ fn normalize_service_error_derives(input: &mut DeriveInput) -> Result<(), syn::E
     }
 
     input.attrs = attrs;
-    Ok(())
+    Ok(if has_error {
+        ErrorImplMode::ExternalDerive
+    } else {
+        ErrorImplMode::SelfContained
+    })
 }
 
-fn variant_error_attr(variant: &syn::Variant) -> Result<ErrorAttr, syn::Error> {
+fn variant_error_attr_strict(variant: &syn::Variant) -> Result<ErrorAttr, syn::Error> {
     let Some(attr) = variant
         .attrs
         .iter()
@@ -367,6 +374,24 @@ fn variant_error_attr(variant: &syn::Variant) -> Result<ErrorAttr, syn::Error> {
 
     attr.parse_args::<ErrorAttr>()
         .map_err(|error| syn::Error::new_spanned(attr, error))
+}
+
+fn variant_is_transparent_light(variant: &syn::Variant) -> bool {
+    variant
+        .attrs
+        .iter()
+        .find(|attr| attr.path().is_ident("error"))
+        .is_some_and(|attr| {
+            attr.parse_args_with(|input: ParseStream<'_>| {
+                let ident: syn::Ident = input.parse()?;
+                if ident == "transparent" && input.is_empty() {
+                    Ok(())
+                } else {
+                    Err(input.error("not transparent"))
+                }
+            })
+            .is_ok()
+        })
 }
 
 fn display_arm_tokens(
@@ -764,7 +789,11 @@ struct FieldRole {
 }
 
 impl FieldMeta {
-    fn for_variant(variant: &syn::Variant) -> Result<Self, syn::Error> {
+    fn for_variant(
+        variant: &syn::Variant,
+        mode: ErrorImplMode,
+        is_transparent: bool,
+    ) -> Result<Self, syn::Error> {
         let mut roles = Vec::new();
         let mut source_index = None;
         let mut from_index = None;
@@ -776,14 +805,17 @@ impl FieldMeta {
             let source = from || explicit_source || implicit_source;
             let backtrace = field_has_attr(field, "backtrace");
 
-            if from && from_index.replace(index).is_some() {
+            if from && from_index.replace(index).is_some() && mode == ErrorImplMode::SelfContained {
                 return Err(syn::Error::new_spanned(
                     field,
                     "#[from] is only valid on one field per service_error variant",
                 ));
             }
 
-            if source && source_index.replace(index).is_some() {
+            if source
+                && source_index.replace(index).is_some()
+                && mode == ErrorImplMode::SelfContained
+            {
                 return Err(syn::Error::new_spanned(
                     field,
                     "#[source] is only valid on one field per service_error variant",
@@ -797,7 +829,8 @@ impl FieldMeta {
             });
         }
 
-        if let Some(index) = from_index
+        if mode == ErrorImplMode::SelfContained
+            && let Some(index) = from_index
             && roles.len() != 1
         {
             let field = variant.fields.iter().nth(index).expect("from field index");
@@ -807,13 +840,16 @@ impl FieldMeta {
             ));
         }
 
-        if matches!(variant_error_attr(variant)?, ErrorAttr::Transparent) {
+        if is_transparent && mode == ErrorImplMode::SelfContained {
             if roles.len() != 1 {
                 return Err(syn::Error::new_spanned(
                     variant,
                     "#[error(transparent)] requires exactly one field",
                 ));
             }
+            roles[0].source = true;
+            source_index = Some(0);
+        } else if is_transparent && roles.len() == 1 {
             roles[0].source = true;
             source_index = Some(0);
         }
@@ -845,6 +881,31 @@ impl FieldMeta {
 
 fn field_has_attr(field: &syn::Field, name: &str) -> bool {
     field.attrs.iter().any(|attr| attr.path().is_ident(name))
+}
+
+fn strip_service_error_only_attrs(input: &mut DeriveInput, mode: ErrorImplMode) {
+    if let Data::Enum(ref mut data_enum) = input.data {
+        for variant in &mut data_enum.variants {
+            variant.attrs.retain(|attr| {
+                !attr.path().is_ident("internal")
+                    && !attr.path().is_ident("code")
+                    && match mode {
+                        ErrorImplMode::SelfContained => !attr.path().is_ident("error"),
+                        ErrorImplMode::ExternalDerive => true,
+                    }
+            });
+            for field in &mut variant.fields {
+                field.attrs.retain(|attr| match mode {
+                    ErrorImplMode::SelfContained => {
+                        !attr.path().is_ident("from")
+                            && !attr.path().is_ident("source")
+                            && !attr.path().is_ident("backtrace")
+                    }
+                    ErrorImplMode::ExternalDerive => true,
+                });
+            }
+        }
+    }
 }
 
 fn source_arm_tokens(

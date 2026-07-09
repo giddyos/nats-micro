@@ -20,19 +20,51 @@ fn service_error_adds_debug_and_error_impls() {
 }
 
 #[test]
-fn service_error_rejects_existing_error_derive() {
+fn service_error_external_derive_skips_error_impls_and_from_impls() {
     let input = parse_quote! {
         #[derive(Debug, thiserror::Error)]
         pub enum DemoError {
             #[error("boom")]
             Boom,
+
+            #[error("io failed")]
+            Io(#[from] std::io::Error),
         }
     };
 
     let expanded = expand_service_error(input).to_string();
 
-    assert!(expanded.contains("compile_error"));
-    assert!(expanded.contains("already implements Display and Error"));
+    assert!(expanded.contains("derive (Debug , thiserror :: Error)"));
+    assert!(!expanded.contains("impl :: std :: fmt :: Display for DemoError"));
+    assert!(!expanded.contains("impl :: std :: error :: Error for DemoError"));
+    assert!(!expanded.contains("impl :: std :: convert :: From < std :: io :: Error >"));
+    assert!(expanded.contains("impl :: nats_micro :: IntoNatsError for DemoError"));
+}
+
+#[test]
+fn service_error_external_derive_preserves_thiserror_attrs() {
+    let input = parse_quote! {
+        #[derive(Debug, thiserror::Error)]
+        pub enum DemoError {
+            #[code(409)]
+            #[internal]
+            #[error("wrapped")]
+            Wrapped {
+                #[from]
+                source: std::io::Error,
+                #[backtrace]
+                backtrace: std::backtrace::Backtrace,
+            },
+        }
+    };
+
+    let expanded = expand_service_error(input).to_string();
+
+    assert!(expanded.contains("# [error (\"wrapped\")]"));
+    assert!(expanded.contains("# [from]"));
+    assert!(expanded.contains("# [backtrace]"));
+    assert!(!expanded.contains("# [code"));
+    assert!(!expanded.contains("# [internal]"));
 }
 
 #[test]
