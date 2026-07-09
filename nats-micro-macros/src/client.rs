@@ -29,6 +29,11 @@ impl ClientModuleSpec {
         let recipient_field = self.recipient_field_tokens(&nats_micro);
         let recipient_none = self.recipient_none_tokens();
         let recipient_from_builder = self.recipient_from_builder_tokens();
+        let encrypted_default_headers_field = self.encrypted_default_headers_field_tokens();
+        let encrypted_default_headers_none = self.encrypted_default_headers_none_tokens();
+        let encrypted_default_headers_from_builder =
+            self.encrypted_default_headers_from_builder_tokens();
+        let encrypted_default_header_fn = self.encrypted_default_header_fn_tokens();
         let connect_fn = Self::connect_fn_tokens(&nats_micro);
         let new_fn = self.new_fn_tokens(&nats_micro);
         let from_connected_client_fn = self.connected_client_ctor_fn_tokens(&nats_micro);
@@ -46,6 +51,7 @@ impl ClientModuleSpec {
                     prefix: Option<String>,
                     service_version: String,
                     default_headers: #nats_micro::async_nats::HeaderMap,
+                    #encrypted_default_headers_field
                     #recipient_field
                 }
 
@@ -53,6 +59,7 @@ impl ClientModuleSpec {
                     client: #nats_micro::async_nats::Client,
                     prefix: Option<String>,
                     default_headers: #nats_micro::async_nats::HeaderMap,
+                    #encrypted_default_headers_field
                     #recipient_field
                 }
 
@@ -67,16 +74,26 @@ impl ClientModuleSpec {
                         key: impl AsRef<str>,
                         value: impl AsRef<str>,
                     ) -> Result<Self, #nats_micro::NatsErrorResponse> {
+                        let key = key.as_ref();
+                        let name = key.parse::<#nats_micro::async_nats::HeaderName>()
+                            .map_err(|error| {
+                                #nats_micro::NatsErrorResponse::framework(
+                                    #nats_micro::FrameworkError::InvalidHeader,
+                                    format!("invalid default client header name `{key}`: {error}"),
+                                )
+                            })?;
                         let value = value.as_ref().parse::<#nats_micro::async_nats::HeaderValue>()
                             .map_err(|error| {
                                 #nats_micro::NatsErrorResponse::framework(
-                                    #nats_micro::FrameworkError::Error,
+                                    #nats_micro::FrameworkError::InvalidHeader,
                                     format!("invalid default client header value: {error}"),
                                 )
                             })?;
-                        self.default_headers.insert(key.as_ref(), value);
+                        self.default_headers.insert(name, value);
                         Ok(self)
                     }
+
+                    #encrypted_default_header_fn
 
                     #with_recipient_fn
 
@@ -87,6 +104,7 @@ impl ClientModuleSpec {
                             prefix: self.prefix.or(service_meta.subject_prefix),
                             service_version: service_meta.version,
                             default_headers: self.default_headers,
+                            #encrypted_default_headers_from_builder
                             #recipient_from_builder
                         }
                     }
@@ -104,6 +122,7 @@ impl ClientModuleSpec {
                             client,
                             prefix: None,
                             default_headers: #nats_micro::async_nats::HeaderMap::new(),
+                            #encrypted_default_headers_none
                             #recipient_none
                         }
                     }
@@ -172,9 +191,60 @@ impl ClientModuleSpec {
         }
     }
 
+    fn encrypted_default_headers_field_tokens(&self) -> TokenStream {
+        if self.encryption_enabled {
+            quote! {
+                default_encrypted_headers: Vec<(String, String)>,
+            }
+        } else {
+            quote! {}
+        }
+    }
+
+    fn encrypted_default_headers_none_tokens(&self) -> TokenStream {
+        if self.encryption_enabled {
+            quote! { default_encrypted_headers: Vec::new(), }
+        } else {
+            quote! {}
+        }
+    }
+
+    fn encrypted_default_headers_from_builder_tokens(&self) -> TokenStream {
+        if self.encryption_enabled {
+            quote! { default_encrypted_headers: self.default_encrypted_headers, }
+        } else {
+            quote! {}
+        }
+    }
+
+    fn encrypted_default_header_fn_tokens(&self) -> TokenStream {
+        if self.encryption_enabled {
+            quote! {
+                pub fn default_encrypted_header(
+                    mut self,
+                    key: impl Into<String>,
+                    value: impl Into<String>,
+                ) -> Self {
+                    self.default_encrypted_headers.push((key.into(), value.into()));
+                    self
+                }
+
+                pub fn default_bearer_token(self, token: impl Into<String>) -> Self {
+                    self.default_encrypted_header(
+                        "authorization",
+                        format!("Bearer {}", token.into()),
+                    )
+                }
+            }
+        } else {
+            quote! {}
+        }
+    }
+
     fn new_fn_tokens(&self, nats_micro: &syn::Path) -> TokenStream {
         let service_ident = &self.service_ident;
         let service_meta = service_meta_tokens(service_ident);
+        let encrypted_default_headers_none = self.encrypted_default_headers_none_tokens();
         if self.encryption_enabled {
             let recipient_init = recipient_init_tokens(nats_micro);
             quote! {
@@ -188,6 +258,7 @@ impl ClientModuleSpec {
                         prefix: service_meta.subject_prefix,
                         service_version: service_meta.version,
                         default_headers: #nats_micro::async_nats::HeaderMap::new(),
+                        #encrypted_default_headers_none
                         #recipient_init
                     }
                 }
@@ -201,6 +272,7 @@ impl ClientModuleSpec {
                         prefix: service_meta.subject_prefix,
                         service_version: service_meta.version,
                         default_headers: #nats_micro::async_nats::HeaderMap::new(),
+                        #encrypted_default_headers_none
                     }
                 }
             }
@@ -210,6 +282,7 @@ impl ClientModuleSpec {
     fn connected_client_ctor_fn_tokens(&self, nats_micro: &syn::Path) -> TokenStream {
         let service_ident = &self.service_ident;
         let service_meta = service_meta_tokens(service_ident);
+        let encrypted_default_headers_none = self.encrypted_default_headers_none_tokens();
         if self.encryption_enabled {
             quote! {
                 fn from_connected_client(connected: #nats_micro::ConnectedClient) -> Self {
@@ -225,6 +298,7 @@ impl ClientModuleSpec {
                         prefix: subject_prefix.or(service_meta.subject_prefix),
                         service_version: service_meta.version,
                         default_headers: #nats_micro::async_nats::HeaderMap::new(),
+                        #encrypted_default_headers_none
                         recipient,
                     }
                 }
@@ -243,6 +317,7 @@ impl ClientModuleSpec {
                         prefix: subject_prefix.or(service_meta.subject_prefix),
                         service_version: service_meta.version,
                         default_headers: #nats_micro::async_nats::HeaderMap::new(),
+                        #encrypted_default_headers_none
                     }
                 }
             }
@@ -252,6 +327,7 @@ impl ClientModuleSpec {
     fn with_prefix_fn_tokens(&self, nats_micro: &syn::Path) -> TokenStream {
         let service_ident = &self.service_ident;
         let service_meta = service_meta_tokens(service_ident);
+        let encrypted_default_headers_none = self.encrypted_default_headers_none_tokens();
         if self.encryption_enabled {
             let recipient_init = recipient_init_tokens(nats_micro);
             quote! {
@@ -266,6 +342,7 @@ impl ClientModuleSpec {
                         prefix: Some(prefix.into()),
                         service_version: service_meta.version,
                         default_headers: #nats_micro::async_nats::HeaderMap::new(),
+                        #encrypted_default_headers_none
                         #recipient_init
                     }
                 }
@@ -282,6 +359,7 @@ impl ClientModuleSpec {
                         prefix: Some(prefix.into()),
                         service_version: service_meta.version,
                         default_headers: #nats_micro::async_nats::HeaderMap::new(),
+                        #encrypted_default_headers_none
                     }
                 }
             }
@@ -317,6 +395,9 @@ impl ClientModuleSpec {
                         for value in values {
                             options = options.header(name_str, value.as_str());
                         }
+                    }
+                    for (key, value) in &self.default_encrypted_headers {
+                        options = options.encrypted_header(key.clone(), value.clone());
                     }
                     let options = match &self.recipient {
                         Some(recipient) => options.with_default_recipient(recipient.clone()),

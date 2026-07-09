@@ -84,6 +84,28 @@ fn generated_client_omits_recipient_constructor_args_without_encryption() {
 }
 
 #[test]
+fn generated_client_supports_encrypted_default_headers_with_encryption() {
+    let struct_ident = parse_quote!(DemoService);
+    let mut module_spec = build_client_module_spec(&struct_ident, "DemoService", &[]);
+    module_spec.encryption_enabled = true;
+
+    let expanded = module_spec.render_rust_tokens().to_string();
+
+    assert!(expanded.contains("default_encrypted_headers : Vec < (String , String) >"));
+    assert!(expanded.contains("pub fn default_encrypted_header"));
+    assert!(expanded.contains("pub fn default_bearer_token"));
+    assert!(
+        expanded.contains(
+            "self . default_encrypted_headers . push ((key . into () , value . into ()))"
+        )
+    );
+    assert!(
+        expanded
+            .contains("options = options . encrypted_header (key . clone () , value . clone ())")
+    );
+}
+
+#[test]
 fn generated_client_docs_preserve_handler_docs_and_emit_contract_banner() {
     let struct_ident = parse_quote!(DemoService);
     let method: ImplItemFn = parse_quote! {
