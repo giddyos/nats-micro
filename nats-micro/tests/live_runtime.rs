@@ -115,6 +115,9 @@ pub struct LiveClientRequestSnapshot {
     pub client_name: Option<String>,
     pub client_mode: Option<String>,
     pub client_version: Option<String>,
+    pub authorization: Option<String>,
+    #[cfg(feature = "encryption")]
+    pub authorization_was_encrypted: Option<bool>,
 }
 
 #[cfg(feature = "client")]
@@ -176,6 +179,7 @@ impl LiveGeneratedClientService {
         request_id: RequestId,
         subject: Subject,
     ) -> Result<Json<LiveClientRequestSnapshot>, NatsErrorResponse> {
+        let authorization = headers.get("authorization");
         Ok(Json(LiveClientRequestSnapshot {
             subject: subject.into_inner(),
             request_id: request_id.into_inner(),
@@ -191,6 +195,9 @@ impl LiveGeneratedClientService {
             client_version: headers
                 .get(X_CLIENT_VERSION_HEADER)
                 .map(|header| header.as_str().to_string()),
+            authorization: authorization.map(|header| header.as_str().to_string()),
+            #[cfg(feature = "encryption")]
+            authorization_was_encrypted: authorization.map(|header| header.was_encrypted),
         }))
     }
 
@@ -998,6 +1005,8 @@ async fn live_generated_client_headers_subjects_and_return_types_round_trip() ->
         spawned.recipient,
     )
     .await?;
+    #[cfg(feature = "encryption")]
+    let service_client = service_client.default_bearer_token("generated-secret");
 
     let client_result = async {
         let request_snapshot = service_client
@@ -1019,6 +1028,12 @@ async fn live_generated_client_headers_subjects_and_return_types_round_trip() ->
                 client_name: Some("rust-client".to_string()),
                 client_mode: Some("direct".to_string()),
                 client_version: Some("1.0.0".to_string()),
+                #[cfg(feature = "encryption")]
+                authorization: Some("Bearer generated-secret".to_string()),
+                #[cfg(not(feature = "encryption"))]
+                authorization: None,
+                #[cfg(feature = "encryption")]
+                authorization_was_encrypted: Some(true),
             }
         );
 

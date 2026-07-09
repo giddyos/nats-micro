@@ -221,20 +221,43 @@ impl ClientModuleSpec {
     fn encrypted_default_header_fn_tokens(&self) -> TokenStream {
         if self.encryption_enabled {
             quote! {
-                pub fn default_encrypted_header(
+                pub fn try_default_encrypted_header(
                     mut self,
                     key: impl Into<String>,
                     value: impl Into<String>,
+                ) -> ::std::result::Result<Self, ::nats_micro::NatsErrorResponse> {
+                    let key = key.into();
+                    let value = value.into();
+                    ::nats_micro::ClientCallOptions::new()
+                        .try_encrypted_header(key.clone(), value.clone())?;
+                    self.default_encrypted_headers.push((key, value));
+                    Ok(self)
+                }
+
+                pub fn default_encrypted_header(
+                    self,
+                    key: impl Into<String>,
+                    value: impl Into<String>,
                 ) -> Self {
-                    self.default_encrypted_headers.push((key.into(), value.into()));
-                    self
+                    self.try_default_encrypted_header(key, value)
+                        .expect("invalid default encrypted client header name or value")
+                }
+
+                pub fn try_default_bearer_token(
+                    self,
+                    token: impl Into<String>,
+                ) -> ::std::result::Result<Self, ::nats_micro::NatsErrorResponse> {
+                    let token = token.into();
+                    ::nats_micro::ClientCallOptions::new().try_bearer_token(token.clone())?;
+                    self.try_default_encrypted_header(
+                        "authorization",
+                        format!("Bearer {}", token),
+                    )
                 }
 
                 pub fn default_bearer_token(self, token: impl Into<String>) -> Self {
-                    self.default_encrypted_header(
-                        "authorization",
-                        format!("Bearer {}", token.into()),
-                    )
+                    self.try_default_bearer_token(token)
+                        .expect("invalid default bearer token header value")
                 }
             }
         } else {
@@ -398,7 +421,9 @@ impl ClientModuleSpec {
                         }
                     }
                     for (key, value) in &self.default_encrypted_headers {
-                        options = options.encrypted_header(key.clone(), value.clone());
+                        options = options
+                            .try_encrypted_header(key.clone(), value.clone())
+                            .expect("validated generated encrypted default header became invalid");
                     }
                     let options = match &self.recipient {
                         Some(recipient) => options.with_default_recipient(recipient.clone()),

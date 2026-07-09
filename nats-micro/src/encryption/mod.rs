@@ -529,8 +529,13 @@ impl RequestBuilder {
             .expect("invalid encrypted request encrypted header name or value")
     }
 
+    pub fn try_bearer_token(self, token: impl Into<String>) -> Result<Self, EncryptionError> {
+        self.try_encrypted_header("authorization", format!("Bearer {}", token.into()))
+    }
+
     pub fn bearer_token(self, token: impl Into<String>) -> Self {
-        self.encrypted_header("authorization", format!("Bearer {}", token.into()))
+        self.try_bearer_token(token)
+            .expect("invalid encrypted request bearer token header value")
     }
 
     pub fn payload(mut self, data: impl Into<Vec<u8>>) -> Self {
@@ -550,7 +555,7 @@ impl RequestBuilder {
     }
 
     #[deprecated(
-        note = "use build_for_subject so request signatures are bound to the NATS subject"
+        note = "use build_for_subject; build signs an empty subject and is intended only for legacy tests"
     )]
     pub fn build(self) -> Result<BuiltRequest, EncryptionError> {
         self.build_for_subject("")

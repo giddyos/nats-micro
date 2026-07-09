@@ -92,16 +92,18 @@ fn generated_client_supports_encrypted_default_headers_with_encryption() {
     let expanded = module_spec.render_rust_tokens().to_string();
 
     assert!(expanded.contains("default_encrypted_headers : Vec < (String , String) >"));
+    assert!(expanded.contains("pub fn try_default_encrypted_header"));
     assert!(expanded.contains("pub fn default_encrypted_header"));
+    assert!(expanded.contains("pub fn try_default_bearer_token"));
     assert!(expanded.contains("pub fn default_bearer_token"));
     assert!(
         expanded.contains(
-            "self . default_encrypted_headers . push ((key . into () , value . into ()))"
+            "try_encrypted_header (key . clone () , value . clone ()) ?"
         )
     );
     assert!(
         expanded
-            .contains("options = options . encrypted_header (key . clone () , value . clone ())")
+            .contains("options = options . try_encrypted_header (key . clone () , value . clone ())")
     );
 }
 

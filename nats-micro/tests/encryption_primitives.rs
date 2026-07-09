@@ -264,6 +264,36 @@ fn request_builder_rejects_reserved_encrypted_header_names() {
 }
 
 #[test]
+fn request_builder_try_bearer_token_rejects_invalid_header_values() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+
+    let Err(error) = recipient
+        .request_builder()
+        .try_bearer_token("bad\r\nvalue")
+    else {
+        panic!("invalid bearer token should be rejected");
+    };
+
+    assert!(
+        error
+            .to_string()
+            .contains("invalid encrypted header value")
+    );
+}
+
+#[test]
+#[should_panic(expected = "invalid encrypted request bearer token header value")]
+fn request_builder_bearer_token_panics_for_invalid_header_values() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+
+    let _ = recipient
+        .request_builder()
+        .bearer_token("bad\r\nvalue");
+}
+
+#[test]
 fn request_builder_mixed() {
     let keypair = ServiceKeyPair::generate();
     let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());

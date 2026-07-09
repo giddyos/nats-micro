@@ -457,18 +457,23 @@ impl ClientCallOptions {
             .expect("invalid client header name or value")
     }
 
-    pub fn bearer_token(mut self, token: impl Into<String>) -> Self {
+    pub fn try_bearer_token(mut self, token: impl Into<String>) -> Result<Self, NatsErrorResponse> {
         let token = token.into();
 
         let header_name = "authorization";
-        let header_value = format!("Bearer {token}")
+        let header_value = format!("Bearer {token}");
+        let header_value = header_value
             .parse::<async_nats::HeaderValue>()
-            .expect("generated client headers must be valid HTTP header values");
+            .map_err(|error| {
+                framework_error(
+                    FrameworkError::InvalidHeader,
+                    format!("invalid client bearer token header value: {error}"),
+                )
+            })?;
 
         #[cfg(feature = "encryption")]
         {
-            self.encrypted_headers
-                .push((header_name.to_string(), header_value.to_string()));
+            self = self.try_encrypted_header(header_name, header_value.as_str())?;
         }
 
         #[cfg(not(feature = "encryption"))]
@@ -476,7 +481,12 @@ impl ClientCallOptions {
             self.plaintext_headers.insert(header_name, header_value);
         }
 
-        self
+        Ok(self)
+    }
+
+    pub fn bearer_token(self, token: impl Into<String>) -> Self {
+        self.try_bearer_token(token)
+            .expect("invalid client bearer token header value")
     }
 
     #[cfg(feature = "encryption")]
@@ -667,6 +677,22 @@ mod tests {
     #[should_panic(expected = "invalid client header name or value")]
     fn header_panics_for_invalid_header_values() {
         let _ = ClientCallOptions::new().header("x-trace", "bad\r\nvalue");
+    }
+
+    #[test]
+    fn try_bearer_token_rejects_invalid_header_values() {
+        let Err(err) = ClientCallOptions::new().try_bearer_token("bad\r\nvalue") else {
+            panic!("invalid bearer token should be rejected");
+        };
+
+        assert_eq!(err.kind, FrameworkError::InvalidHeader.as_code());
+        assert!(err.message.contains("invalid client bearer token"));
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid client bearer token header value")]
+    fn bearer_token_panics_for_invalid_header_values() {
+        let _ = ClientCallOptions::new().bearer_token("bad\r\nvalue");
     }
 
     #[test]
