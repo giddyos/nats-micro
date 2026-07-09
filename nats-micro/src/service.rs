@@ -171,6 +171,7 @@ pub struct ParamInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PayloadEncoding {
     Json,
     Proto,
@@ -186,6 +187,7 @@ pub struct PayloadMeta {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ResponseEncoding {
     Json,
     Proto,
