@@ -1,15 +1,15 @@
 use darling::FromMeta;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Expr, ImplItemFn};
+use syn::{Expr, ImplItemFn, spanned::Spanned};
 
 use crate::{
     endpoint::{
         AuthIntent, auth_policy_tokens, build_handler_body, extract_param_info, has_optional_auth,
         requires_auth,
     },
-    service::{GeneratedHandlerItem, service_config_module_ident},
-    utils::{conditional_attrs, nats_micro_path, parse_attr},
+    service::GeneratedHandlerItem,
+    utils::{conditional_attrs, error_stream, nats_micro_path, parse_attr},
 };
 
 #[derive(Debug, Clone)]
@@ -37,7 +37,14 @@ pub(crate) fn process_consumer_method(
     let nats_micro = nats_micro_path();
     let args = parse_attr::<ConsumerArgs>(attr)?;
     let fn_name = &method.sig.ident;
-    let stream = consumer_stream_tokens(struct_ident, args.stream.as_deref());
+    let Some(stream_value) = args.stream.as_deref() else {
+        return Err(error_stream(
+            attr.span(),
+            "consumer stream is required; set `#[consumer(stream = \"...\")]`",
+            quote! {},
+        ));
+    };
+    let stream = consumer_stream_tokens(stream_value);
     let durable = args.durable.unwrap_or_else(|| fn_name.to_string());
     let auth_policy = if requires_auth(&method.sig) {
         AuthIntent::Required
@@ -85,17 +92,8 @@ pub(crate) fn process_consumer_method(
     })
 }
 
-fn consumer_stream_tokens(struct_ident: &syn::Ident, stream: Option<&str>) -> TokenStream {
-    if let Some(stream) = stream {
-        quote! { #stream.to_string() }
-    } else {
-        let service_config_module = service_config_module_ident(struct_ident);
-        quote! {
-            #service_config_module::DEFAULT_STREAM
-                .expect("consumer stream is required; set `#[consumer(stream = \"...\")]` or `#[service(default_stream = \"...\")]`")
-                .to_string()
-        }
-    }
+fn consumer_stream_tokens(stream: &str) -> TokenStream {
+    quote! { #stream.to_string() }
 }
 
 fn optional_u64_tokens(value: Option<u64>) -> TokenStream {

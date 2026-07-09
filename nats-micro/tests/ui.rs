@@ -6,6 +6,7 @@ fn macro_ui_validation() {
     tests.compile_fail("tests/ui/endpoint_extra_param.rs");
     tests.compile_fail("tests/ui/consumer_invalid_config.rs");
     tests.compile_fail("tests/ui/consumer_invalid_concurrency_limit.rs");
+    tests.compile_fail("tests/ui/consumer_missing_stream.rs");
     tests.compile_fail("tests/ui/endpoint_duplicate_payload.rs");
     tests.compile_fail("tests/ui/endpoint_nested_optional_payload.rs");
     tests.compile_fail("tests/ui/endpoint_nested_optional_response.rs");

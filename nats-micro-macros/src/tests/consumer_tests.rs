@@ -10,10 +10,29 @@ fn consumer_attr(method: &ImplItemFn) -> &syn::Attribute {
 }
 
 #[test]
-fn consumer_methods_use_service_default_stream_and_durable_names() {
+fn consumer_methods_require_stream() {
     let struct_ident = parse_quote!(DemoService);
     let method: ImplItemFn = parse_quote! {
         #[consumer()]
+        async fn jobs() -> Result<(), nats_micro::NatsErrorResponse> {
+            Ok(())
+        }
+    };
+
+    let error = match process_consumer_method(&struct_ident, &method, consumer_attr(&method)) {
+        Ok(_) => panic!("missing consumer stream should fail macro validation"),
+        Err(error) => error,
+    };
+    let error = error.to_string();
+
+    assert!(error.contains("consumer stream is required"));
+}
+
+#[test]
+fn consumer_methods_emit_stream_and_default_durable_names() {
+    let struct_ident = parse_quote!(DemoService);
+    let method: ImplItemFn = parse_quote! {
+        #[consumer(stream = "DEMO")]
         async fn jobs() -> Result<(), nats_micro::NatsErrorResponse> {
             Ok(())
         }
@@ -24,11 +43,10 @@ fn consumer_methods_use_service_default_stream_and_durable_names() {
     let def_tokens = generated.accessor_fn.to_string();
     let info_tokens = generated.info_expr.to_string();
 
-    assert!(def_tokens.contains("DEFAULT_STREAM"));
-    assert!(def_tokens.contains("consumer stream is required"));
+    assert!(def_tokens.contains("stream : \"DEMO\" . to_string ()"));
     assert!(def_tokens.contains("durable : \"jobs\" . to_string ()"));
     assert!(def_tokens.contains("new_with_shutdown_signal_support (false"));
-    assert!(info_tokens.contains("DEFAULT_STREAM"));
+    assert!(info_tokens.contains("stream : \"DEMO\" . to_string ()"));
     assert!(info_tokens.contains("durable : \"jobs\" . to_string ()"));
 }
 

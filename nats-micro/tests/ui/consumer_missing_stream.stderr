@@ -1,0 +1,5 @@
+error: consumer stream is required; set `#[consumer(stream = "...")]`
+ --> tests/ui/consumer_missing_stream.rs:8:5
+  |
+8 |     #[consumer(durable = "jobs")]
+  |     ^
