@@ -392,14 +392,33 @@ impl IntoNatsError for String {
 
 impl IntoNatsError for anyhow::Error {
     fn into_nats_error(self, request_id: String) -> NatsErrorResponse {
-        // Preserve a safe, truncated error message in `details` to aid debugging
-        // while avoiding leaking large or sensitive payloads.
-        let msg = self.to_string();
-        let trunc: String = msg.chars().take(200).collect();
-        NatsErrorResponse::framework(FrameworkError::InternalError, "an internal error occurred")
-            .with_details(Value::String(trunc))
-            .with_request_id(request_id)
+        let mut response = NatsErrorResponse::framework(
+            FrameworkError::InternalError,
+            "an internal error occurred",
+        )
+        .with_request_id(request_id);
+
+        if expose_internal_error_details() {
+            // Preserve a safe, truncated error message in `details` to aid debugging
+            // while avoiding leaking large or sensitive payloads.
+            let msg = self.to_string();
+            let trunc: String = msg.chars().take(200).collect();
+            response = response.with_details(Value::String(trunc));
+        }
+
+        response
     }
+}
+
+fn expose_internal_error_details() -> bool {
+    std::env::var("NATS_MICRO_EXPOSE_INTERNAL_ERROR_DETAILS")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
 }
 
 // Helper utilities for deserializing error responses coming from services.

@@ -5,7 +5,9 @@ use async_nats::HeaderMap;
 use base64::{Engine, engine::general_purpose::STANDARD};
 use nats_micro::{
     EncryptionError, ServiceKeyPair, ServiceRecipient, encrypted_headers_decrypt,
-    encryption::{compute_signature, verify_signature},
+    encryption::{
+        SignatureTranscript, compute_signature, verify_signature, verify_signature_for_transcript,
+    },
 };
 
 #[test]
@@ -476,14 +478,17 @@ fn request_builder_signature_verifies() {
         .build()
         .unwrap();
 
-    let shared_key = keypair.derive_shared_key(&built.context.ephemeral_pub_bytes());
+    let signature_key = keypair.derive_signature_key(&built.context.ephemeral_pub_bytes());
     let sig_value = built.headers.get("x-signature").unwrap();
     let signature = STANDARD.decode(sig_value.as_str().as_bytes()).unwrap();
     let enc_hdr_val = built
         .headers
         .get("x-encrypted-headers")
         .map(|value| value.as_str());
-    verify_signature(&shared_key, &built.payload, enc_hdr_val, &signature)
+    let ephemeral_pub = built.context.ephemeral_pub_bytes();
+    let transcript = SignatureTranscript::new("", &ephemeral_pub, &built.payload)
+        .encrypted_headers_value(enc_hdr_val);
+    verify_signature_for_transcript(&signature_key, &transcript, &signature)
         .expect("signature should verify");
 }
 

@@ -20,7 +20,8 @@ pub(super) fn prepare_request_for_dispatch_with_state(
     {
         use crate::encryption::{
             ENCRYPTED_HEADERS_NAME, RESPONSE_PUB_KEY_NAME, SIGNATURE_HEADER_NAME, ServiceKeyPair,
-            decode_response_pub_key, decrypt_headers, verify_signature,
+            SignatureTranscript, decode_response_pub_key, decrypt_headers,
+            verify_signature_for_transcript,
         };
         use base64::{Engine, engine::general_purpose::STANDARD};
 
@@ -41,7 +42,8 @@ pub(super) fn prepare_request_for_dispatch_with_state(
                 .with_request_id(req.request_id.clone())
             })?;
 
-            let shared_key = keypair.derive_shared_key(&eph_pub);
+            let encryption_key = keypair.derive_encryption_key(&eph_pub);
+            let signature_key = keypair.derive_signature_key(&eph_pub);
 
             let sig_header = req.headers.get(SIGNATURE_HEADER_NAME).ok_or_else(|| {
                 NatsErrorResponse::framework(
@@ -67,7 +69,15 @@ pub(super) fn prepare_request_for_dispatch_with_state(
                 .headers
                 .get(ENCRYPTED_HEADERS_NAME)
                 .map(crate::request::Header::as_str);
-            verify_signature(&shared_key, &req.payload, encrypted_headers, &signature).map_err(|_| {
+            let client_version = req
+                .headers
+                .get("x-client-version")
+                .map(crate::request::Header::as_str);
+            let transcript = SignatureTranscript::new(&req.subject, &eph_pub, &req.payload)
+                .request_id(Some(&req.request_id))
+                .client_version(client_version)
+                .encrypted_headers_value(encrypted_headers);
+            verify_signature_for_transcript(&signature_key, &transcript, &signature).map_err(|_| {
                 NatsErrorResponse::framework(
                     FrameworkError::SignatureInvalid,
                     "request signature verification failed; verify that the client used the correct service public key.",
@@ -76,7 +86,7 @@ pub(super) fn prepare_request_for_dispatch_with_state(
             })?;
 
             let decrypted_headers = if encrypted_headers.is_some() {
-                decrypt_headers(&req.headers, &shared_key).map_err(|error| {
+                decrypt_headers(&req.headers, &encryption_key).map_err(|error| {
                     NatsErrorResponse::framework(
                         FrameworkError::DecryptFailed,
                         format!("failed to decrypt the encrypted request headers: {error}"),

@@ -2,6 +2,7 @@
 #![allow(clippy::redundant_closure_for_method_calls)]
 
 use async_nats::HeaderMap;
+use base64::{Engine, engine::general_purpose::STANDARD};
 use nats_micro::{
     __test_support, Auth, AuthError, BuiltRequest, Encrypted, FromAuthRequest, FromPayload,
     FromRequest, Headers, IntoNatsResponse, NatsRequest, RequestContext, ServiceKeyPair,
@@ -11,6 +12,8 @@ use nats_micro::{
 struct DemoUser {
     id: String,
 }
+
+const SUBJECT: &str = "secure.demo";
 
 impl FromAuthRequest for DemoUser {
     async fn from_auth_request(ctx: &RequestContext) -> Result<Self, AuthError> {
@@ -34,13 +37,31 @@ fn state_with_keypair(keypair: ServiceKeyPair) -> StateMap {
 }
 
 fn request_with_headers(headers: HeaderMap, payload: &[u8]) -> NatsRequest {
+    request_with_subject_and_id(headers, payload, SUBJECT, "req-header-only")
+}
+
+fn request_with_subject_and_id(
+    headers: HeaderMap,
+    payload: &[u8],
+    subject: &str,
+    request_id: &str,
+) -> NatsRequest {
     NatsRequest {
-        subject: "secure.demo".to_string(),
+        subject: subject.to_string(),
         payload: payload.to_vec().into(),
         headers: headers.into(),
         reply: Some("reply.subject".to_string()),
-        request_id: "req-header-only".to_string(),
+        request_id: request_id.to_string(),
     }
+}
+
+fn assert_signature_invalid(
+    result: Result<(NatsRequest, Option<[u8; 32]>), nats_micro::NatsErrorResponse>,
+) {
+    let err = result.expect_err("tampered transcript should fail signature verification");
+
+    assert_eq!(err.code, 401);
+    assert_eq!(err.kind, "SIGNATURE_INVALID");
 }
 
 #[test]
@@ -53,7 +74,7 @@ fn prepare_request_for_dispatch_decrypts_header_only_requests() {
         .encrypted_header("authorization", "Bearer demo-token")
         .encrypted_header("x-user-id", "user-42")
         .payload(b"plain payload".to_vec())
-        .build()
+        .build_for_subject(SUBJECT)
         .expect("build request");
 
     let eph_pub_bytes = built.context.ephemeral_pub_bytes();
@@ -93,7 +114,7 @@ async fn prepare_request_for_dispatch_runs_before_auth_resolution() {
         .header("x-request-id", "req-header-only")
         .encrypted_header("authorization", "Bearer demo-token")
         .payload(b"plain payload".to_vec())
-        .build()
+        .build_for_subject(SUBJECT)
         .expect("build request");
 
     let (prepared, _) = __test_support::prepare_request_for_dispatch_with_state(
@@ -123,7 +144,7 @@ fn header_only_encryption_can_drive_encrypted_response() {
         .header("x-request-id", "req-header-only")
         .encrypted_header("authorization", "Bearer demo-token")
         .payload(b"plain payload".to_vec())
-        .build()
+        .build_for_subject(SUBJECT)
         .expect("build request");
 
     let state = state_with_keypair(keypair);
@@ -162,7 +183,7 @@ fn prepare_request_for_dispatch_rejects_headers_for_wrong_service() {
         .header("x-request-id", "req-header-only")
         .encrypted_header("authorization", "Bearer demo-token")
         .payload(b"plain payload".to_vec())
-        .build()
+        .build_for_subject(SUBJECT)
         .expect("build request");
 
     let err = __test_support::prepare_request_for_dispatch_with_state(
@@ -191,7 +212,7 @@ fn tampered_payload_fails_signature_verification() {
         .header("x-request-id", "req-header-only")
         .encrypted_header("authorization", "Bearer demo-token")
         .encrypted_payload(b"secret payload".to_vec())
-        .build()
+        .build_for_subject(SUBJECT)
         .expect("build request");
 
     let mut tampered_payload = built.payload.to_vec();
@@ -210,6 +231,88 @@ fn tampered_payload_fails_signature_verification() {
 }
 
 #[test]
+fn tampered_subject_fails_signature_verification() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+    let built = recipient
+        .request_builder()
+        .header("x-request-id", "req-header-only")
+        .payload(b"plain payload".to_vec())
+        .build_for_subject(SUBJECT)
+        .expect("build request");
+
+    assert_signature_invalid(__test_support::prepare_request_for_dispatch_with_state(
+        &state_with_keypair(keypair),
+        request_with_subject_and_id(
+            built.headers,
+            &built.payload,
+            "secure.tampered",
+            "req-header-only",
+        ),
+    ));
+}
+
+#[test]
+fn tampered_plaintext_client_version_fails_signature_verification() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+    let built = recipient
+        .request_builder()
+        .header("x-request-id", "req-header-only")
+        .header("x-client-version", "1.0.0")
+        .payload(b"plain payload".to_vec())
+        .build_for_subject(SUBJECT)
+        .expect("build request");
+
+    let mut headers = built.headers;
+    headers.insert("x-client-version", "2.0.0");
+
+    assert_signature_invalid(__test_support::prepare_request_for_dispatch_with_state(
+        &state_with_keypair(keypair),
+        request_with_headers(headers, &built.payload),
+    ));
+}
+
+#[test]
+fn tampered_request_id_fails_signature_verification() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+    let built = recipient
+        .request_builder()
+        .header("x-request-id", "req-original")
+        .payload(b"plain payload".to_vec())
+        .build_for_subject(SUBJECT)
+        .expect("build request");
+
+    assert_signature_invalid(__test_support::prepare_request_for_dispatch_with_state(
+        &state_with_keypair(keypair),
+        request_with_subject_and_id(built.headers, &built.payload, SUBJECT, "req-tampered"),
+    ));
+}
+
+#[test]
+fn tampered_ephemeral_public_key_fails_signature_verification() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+    let built = recipient
+        .request_builder()
+        .header("x-request-id", "req-header-only")
+        .payload(b"plain payload".to_vec())
+        .build_for_subject(SUBJECT)
+        .expect("build request");
+
+    let mut headers = built.headers;
+    let mut tampered_key = built.context.ephemeral_pub_bytes();
+    tampered_key[0] ^= 0xFF;
+    headers.insert("x-ephemeral-pub-key", STANDARD.encode(tampered_key));
+
+    assert_signature_invalid(__test_support::prepare_request_for_dispatch_with_state(
+        &state_with_keypair(keypair),
+        request_with_headers(headers, &built.payload),
+    ));
+}
+
+#[test]
 fn missing_signature_fails_when_eph_pub_key_present() {
     let keypair = ServiceKeyPair::generate();
     let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
@@ -217,7 +320,7 @@ fn missing_signature_fails_when_eph_pub_key_present() {
         .request_builder()
         .header("x-request-id", "req-header-only")
         .payload(b"plain payload".to_vec())
-        .build()
+        .build_for_subject(SUBJECT)
         .expect("build request");
 
     let mut headers = async_nats::HeaderMap::new();
@@ -270,7 +373,7 @@ fn invalid_signature_encoding_is_rejected() {
         .request_builder()
         .header("x-request-id", "req-invalid-signature")
         .payload(b"plain payload".to_vec())
-        .build()
+        .build_for_subject(SUBJECT)
         .expect("build request");
 
     let mut headers = built.headers;
@@ -331,7 +434,7 @@ async fn headers_extractor_tracks_encrypted_precedence() {
         .encrypted_header("authorization", "Bearer encrypted")
         .encrypted_header("x-secure", "secure-value")
         .payload(b"plain payload".to_vec())
-        .build()
+        .build_for_subject(SUBJECT)
         .expect("build request");
 
     let state = state_with_keypair(keypair);
@@ -385,7 +488,7 @@ fn encrypted_payload_rejects_mismatched_header_ephemeral_key() {
         .request_builder()
         .header("x-request-id", "req-header-only")
         .encrypted_header("authorization", "Bearer demo-token")
-        .build()
+        .build_for_subject(SUBJECT)
         .expect("build request");
 
     let payload_recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
