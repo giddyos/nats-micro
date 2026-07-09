@@ -1,0 +1,12 @@
+[package]
+name = "raw-thiserror-reexport"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+nats-micro = { path = "../../.." }
+# Raw `#[derive(nats_micro::Error)]` expands through thiserror and still needs
+# a crate named `thiserror` for thiserror's own generated private paths.
+thiserror = "2.0.18"

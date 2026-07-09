@@ -1,3 +1,47 @@
+//! NATS microservice framework utilities.
+//!
+//! # Dependency ownership
+//!
+//! `nats-micro` owns `async-nats` and `thiserror` for normal usage.
+//!
+//! You do not need to add `async-nats` to construct generated clients or run a
+//! [`NatsApp`]. Use [`NatsClient`] or [`async_nats`] for raw NATS APIs.
+//!
+//! You do not need to add `thiserror` to define service errors. Use
+//! [`service_error`].
+//!
+//! # Service errors
+//!
+//! ```rust
+//! use nats_micro::service_error;
+//!
+//! #[service_error]
+//! pub enum CreateUserError {
+//!     #[code(409)]
+//!     #[error("email {0} already exists")]
+//!     EmailExists(String),
+//!
+//!     #[error("database query failed")]
+//!     Database(#[from] std::io::Error),
+//! }
+//! ```
+//!
+//! Raw `thiserror` is available as [`thiserror`] / [`Error`] for advanced local
+//! error types:
+//!
+//! ```rust,ignore
+//! #[derive(Debug, nats_micro::Error)]
+//! pub enum LocalError {
+//!     #[error("bad config: {0}")]
+//!     BadConfig(String),
+//! }
+//! ```
+//!
+//! Because `thiserror`'s generated code refers to a crate named `thiserror`
+//! internally, raw use through a re-export can still require a direct
+//! `thiserror` dependency or a crate alias depending on Rust/`thiserror`
+//! behavior. Prefer [`service_error`] for service errors.
+
 mod app;
 mod auth;
 #[cfg(feature = "client")]
@@ -113,6 +157,11 @@ pub mod __private {
 
     impl<T: NapiObject> NapiObject for Option<T> {}
     impl<T: NapiObject> NapiObject for Vec<T> {}
+}
+
+#[doc(hidden)]
+pub mod __thiserror {
+    pub use crate::thiserror::*;
 }
 
 #[cfg(feature = "napi")]
