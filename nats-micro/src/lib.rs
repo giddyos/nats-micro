@@ -23,7 +23,7 @@ pub use anyhow;
 pub use nats_micro_shared::{FrameworkError, TransportError};
 pub use thiserror;
 
-pub use app::{NatsApp, NatsAppConfig, WorkerFailurePolicy};
+pub use app::{HandlerPanicPolicy, NatsApp, NatsAppConfig, WorkerFailurePolicy};
 pub use async_nats;
 pub use async_nats::jetstream::consumer::push::Config as ConsumerConfig;
 pub use auth::{Auth, AuthError, FromAuthRequest};

@@ -353,6 +353,44 @@ pub struct ClientCallOptions {
     recipient: Option<crate::encryption::ServiceRecipient>,
 }
 
+async fn send_plain_request(
+    client: &async_nats::Client,
+    subject: String,
+    headers: HeaderMap,
+    payload: Bytes,
+) -> Result<async_nats::Message, NatsErrorResponse> {
+    let request_subject = subject.clone();
+    if headers.is_empty() {
+        client
+            .request(subject, payload)
+            .await
+            .map_err(|e| request_failed(&request_subject, e))
+    } else {
+        client
+            .request_with_headers(subject, headers, payload)
+            .await
+            .map_err(|e| request_failed(&request_subject, e))
+    }
+}
+
+#[cfg(feature = "encryption")]
+fn apply_headers_to_builder(
+    mut builder: crate::encryption::RequestBuilder,
+    plaintext_headers: &HeaderMap,
+    encrypted_headers: Vec<(String, String)>,
+) -> crate::encryption::RequestBuilder {
+    for (name, values) in plaintext_headers.iter() {
+        let name_str: &str = name.as_ref();
+        for val in values {
+            builder = builder.header(name_str, val.as_str());
+        }
+    }
+    for (key, value) in encrypted_headers {
+        builder = builder.encrypted_header(key, value);
+    }
+    builder
+}
+
 impl ClientCallOptions {
     pub fn new() -> Self {
         Self::default()
@@ -432,17 +470,12 @@ impl ClientCallOptions {
                 )
             })?;
             let recipient = recipient.with_client(client.clone());
-            let mut builder = recipient.request_builder();
-            for (name, values) in self.plaintext_headers.iter() {
-                let name_str: &str = name.as_ref();
-                for val in values {
-                    builder = builder.header(name_str, val.as_str());
-                }
-            }
-            for (k, v) in self.encrypted_headers {
-                builder = builder.encrypted_header(k, v);
-            }
-            builder = builder.payload(payload.to_vec());
+            let builder = apply_headers_to_builder(
+                recipient.request_builder(),
+                &self.plaintext_headers,
+                self.encrypted_headers,
+            )
+            .payload(payload.to_vec());
 
             let request_subject = subject.clone();
             let (msg, _) = builder
@@ -452,19 +485,7 @@ impl ClientCallOptions {
             return Ok(msg);
         }
 
-        if self.plaintext_headers.is_empty() {
-            let request_subject = subject.clone();
-            client
-                .request(subject, payload)
-                .await
-                .map_err(|e| request_failed(&request_subject, e))
-        } else {
-            let request_subject = subject.clone();
-            client
-                .request_with_headers(subject, self.plaintext_headers, payload)
-                .await
-                .map_err(|e| request_failed(&request_subject, e))
-        }
+        send_plain_request(client, subject, self.plaintext_headers, payload).await
     }
 
     #[cfg(feature = "encryption")]
@@ -489,17 +510,12 @@ impl ClientCallOptions {
                 )
             })?;
             let recipient = recipient.with_client(client.clone());
-            let mut builder = recipient.request_builder();
-            for (name, values) in self.plaintext_headers.iter() {
-                let name_str: &str = name.as_ref();
-                for val in values {
-                    builder = builder.header(name_str, val.as_str());
-                }
-            }
-            for (k, v) in self.encrypted_headers {
-                builder = builder.encrypted_header(k, v);
-            }
-            builder = builder.payload(payload.to_vec());
+            let builder = apply_headers_to_builder(
+                recipient.request_builder(),
+                &self.plaintext_headers,
+                self.encrypted_headers,
+            )
+            .payload(payload.to_vec());
 
             let request_subject = subject.clone();
             let (msg, eph_ctx) = builder
@@ -509,19 +525,7 @@ impl ClientCallOptions {
             return Ok((msg, Some(eph_ctx)));
         }
 
-        let msg = if self.plaintext_headers.is_empty() {
-            let request_subject = subject.clone();
-            client
-                .request(subject, payload)
-                .await
-                .map_err(|e| request_failed(&request_subject, e))?
-        } else {
-            let request_subject = subject.clone();
-            client
-                .request_with_headers(subject, self.plaintext_headers, payload)
-                .await
-                .map_err(|e| request_failed(&request_subject, e))?
-        };
+        let msg = send_plain_request(client, subject, self.plaintext_headers, payload).await?;
 
         Ok((msg, None))
     }
@@ -541,17 +545,12 @@ impl ClientCallOptions {
             )
         })?;
         let recipient = recipient.with_client(client.clone());
-        let mut builder = recipient.request_builder();
-        for (name, values) in self.plaintext_headers.iter() {
-            let name_str: &str = name.as_ref();
-            for val in values {
-                builder = builder.header(name_str, val.as_str());
-            }
-        }
-        for (k, v) in self.encrypted_headers {
-            builder = builder.encrypted_header(k, v);
-        }
-        builder = builder.encrypted_payload(payload);
+        let builder = apply_headers_to_builder(
+            recipient.request_builder(),
+            &self.plaintext_headers,
+            self.encrypted_headers,
+        )
+        .encrypted_payload(payload);
 
         let request_subject = subject.clone();
         let (msg, eph_ctx) = builder

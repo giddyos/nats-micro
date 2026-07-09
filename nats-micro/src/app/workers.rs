@@ -23,7 +23,20 @@ use crate::{
     utils::ensure_request_id,
 };
 
-use super::{NatsApp, limits::semaphore_permits, shutdown::shutdown_requested};
+use super::{HandlerPanicPolicy, NatsApp, limits::semaphore_permits, shutdown::shutdown_requested};
+
+fn handler_panic_result(
+    policy: HandlerPanicPolicy,
+    worker_kind: &'static str,
+    err: tokio::task::JoinError,
+) -> Option<anyhow::Error> {
+    match policy {
+        HandlerPanicPolicy::FailWorker => Some(anyhow::anyhow!(
+            "{worker_kind} handler task panicked: {err}"
+        )),
+        HandlerPanicPolicy::LogAndContinue => None,
+    }
+}
 
 pub fn success_headers(success: bool) -> async_nats::HeaderMap {
     let mut headers = async_nats::HeaderMap::new();
@@ -160,6 +173,7 @@ pub(super) async fn run_endpoint_worker(
     service_name: String,
     mut endpoint_stream: endpoint::Endpoint,
     concurrency_limit: u64,
+    handler_panic_policy: HandlerPanicPolicy,
     mut shutdown_rx: watch::Receiver<ShutdownState>,
 ) -> anyhow::Result<()> {
     let full_subject = endpoint_def.full_subject();
@@ -198,6 +212,11 @@ pub(super) async fn run_endpoint_worker(
                         error = %err,
                         "endpoint task panicked"
                     );
+                    if let Some(error) =
+                        handler_panic_result(handler_panic_policy, "endpoint", err)
+                    {
+                        break Err(error);
+                    }
                 }
                 continue;
             }
@@ -260,6 +279,7 @@ pub(super) async fn run_endpoint_worker(
         }
     }
 
+    let mut outcome = outcome;
     while let Some(join_result) = tasks.join_next().await {
         if let Err(err) = join_result {
             error!(
@@ -270,6 +290,11 @@ pub(super) async fn run_endpoint_worker(
                 error = %err,
                 "endpoint task panicked"
             );
+            if outcome.is_ok() {
+                if let Some(error) = handler_panic_result(handler_panic_policy, "endpoint", err) {
+                    outcome = Err(error);
+                }
+            }
         }
     }
 
@@ -437,6 +462,7 @@ pub(super) async fn run_consumer_worker(
     durable: String,
     mut messages: async_nats::jetstream::consumer::push::Messages,
     concurrency_limit: u64,
+    handler_panic_policy: HandlerPanicPolicy,
     mut shutdown_rx: watch::Receiver<ShutdownState>,
 ) -> anyhow::Result<()> {
     let requires_shutdown_signal = consumer_def.handler.requires_shutdown_signal();
@@ -470,6 +496,11 @@ pub(super) async fn run_consumer_worker(
                         error = %err,
                         "consumer task panicked"
                     );
+                    if let Some(error) =
+                        handler_panic_result(handler_panic_policy, "consumer", err)
+                    {
+                        break Err(error);
+                    }
                 }
                 continue;
             }
@@ -533,6 +564,7 @@ pub(super) async fn run_consumer_worker(
         });
     };
 
+    let mut outcome = outcome;
     while let Some(join_result) = tasks.join_next().await {
         if let Err(err) = join_result {
             error!(
@@ -542,6 +574,11 @@ pub(super) async fn run_consumer_worker(
                 error = %err,
                 "consumer task panicked"
             );
+            if outcome.is_ok() {
+                if let Some(error) = handler_panic_result(handler_panic_policy, "consumer", err) {
+                    outcome = Err(error);
+                }
+            }
         }
     }
 

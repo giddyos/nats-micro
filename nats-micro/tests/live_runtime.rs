@@ -2035,6 +2035,7 @@ async fn live_consumer_promotes_concurrency_limit_to_max_ack_pending() -> Result
     let (shutdown_tx, app_handle) = spawn_app_until_shutdown(
         NatsApp::new(client.clone())
             .with_default_concurrency_limit(1)
+            .with_unbounded_server_ack_pending_promotion(true)
             .state(probe.clone())
             .service_def(consumer_service(unique_name("consumer-service"), consumer)),
     );

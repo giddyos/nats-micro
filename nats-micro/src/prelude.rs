@@ -17,7 +17,7 @@ pub use crate::service::{
     ServiceMetadata,
 };
 pub use crate::state::StateMap;
-pub use crate::{NatsApp, NatsAppConfig, WorkerFailurePolicy};
+pub use crate::{HandlerPanicPolicy, NatsApp, NatsAppConfig, WorkerFailurePolicy};
 
 #[cfg(feature = "client")]
 pub use crate::{

@@ -36,7 +36,7 @@ use self::{
     workers::{run_consumer_worker, run_endpoint_worker},
 };
 
-pub use self::config::{NatsAppConfig, WorkerFailurePolicy};
+pub use self::config::{HandlerPanicPolicy, NatsAppConfig, WorkerFailurePolicy};
 pub use self::workers::success_headers;
 
 #[derive(Clone)]
@@ -69,6 +69,18 @@ impl NatsApp {
         self
     }
 
+    pub fn with_max_concurrency_limit(mut self, limit: u64) -> Self {
+        self.config = self.config.with_max_concurrency_limit(limit);
+        self
+    }
+
+    pub fn with_unbounded_server_ack_pending_promotion(mut self, enabled: bool) -> Self {
+        self.config = self
+            .config
+            .with_unbounded_server_ack_pending_promotion(enabled);
+        self
+    }
+
     pub fn with_shutdown_drain_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.config = self.config.with_shutdown_drain_timeout(timeout);
         self
@@ -81,6 +93,11 @@ impl NatsApp {
 
     pub fn with_worker_failure_policy(mut self, policy: WorkerFailurePolicy) -> Self {
         self.config = self.config.with_worker_failure_policy(policy);
+        self
+    }
+
+    pub fn with_handler_panic_policy(mut self, policy: HandlerPanicPolicy) -> Self {
+        self.config = self.config.with_handler_panic_policy(policy);
         self
     }
 
@@ -325,6 +342,7 @@ impl NatsApp {
             let concurrency_limit = resolve_endpoint_concurrency_limit(
                 endpoint_def.concurrency_limit,
                 self.config.default_concurrency_limit(),
+                self.config.max_concurrency_limit(),
             );
 
             debug!(
@@ -374,6 +392,7 @@ impl NatsApp {
                     endpoint_service_name,
                     ep,
                     concurrency_limit,
+                    self.config.handler_panic_policy(),
                     shutdown_rx.clone(),
                 ),
             );
@@ -399,6 +418,8 @@ impl NatsApp {
         }
 
         let default_concurrency_limit = self.config.default_concurrency_limit();
+        let max_concurrency_limit = self.config.max_concurrency_limit();
+        let promote_server_max_ack_pending = self.config.unbounded_server_ack_pending_promotion();
         let jetstream = jetstream::new(self.client.clone());
         let mut workers = Vec::with_capacity(consumers.len());
 
@@ -468,6 +489,8 @@ impl NatsApp {
                 consumer_def.concurrency_limit,
                 cached_max_ack_pending,
                 default_concurrency_limit,
+                max_concurrency_limit,
+                promote_server_max_ack_pending,
             );
             if resolved_limit.promoted_from_default {
                 info!(
@@ -511,6 +534,7 @@ impl NatsApp {
                     durable,
                     messages,
                     resolved_limit.value,
+                    self.config.handler_panic_policy(),
                     shutdown_rx.clone(),
                 ),
             );

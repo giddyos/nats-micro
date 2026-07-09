@@ -16,11 +16,11 @@ use std::io::{BufRead, BufReader};
 use std::net::{TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::process::{Child, Command};
+use std::sync::LazyLock;
 use std::{env, fs};
 use std::{thread, time::Duration};
 use workspace_root::get_workspace_root;
 
-use lazy_static::lazy_static;
 use rand::Rng;
 use regex::Regex;
 use serde_json::{self, Value};
@@ -38,10 +38,10 @@ struct Inner {
     pidfile: PathBuf,
 }
 
-lazy_static! {
-    static ref SD_RE: Regex = Regex::new(r#".+\sStore Directory:\s+"([^"]+)""#).unwrap();
-    static ref CLIENT_RE: Regex = Regex::new(r".+\sclient connections on\s+(\S+)").unwrap();
-}
+static SD_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#".+\sStore Directory:\s+"([^"]+)""#).unwrap());
+static CLIENT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r".+\sclient connections on\s+(\S+)").unwrap());
 
 impl Drop for Server {
     fn drop(&mut self) {
@@ -68,7 +68,8 @@ impl Server {
             .expect("can't restart server with dynamic port");
         self.inner.child.kill().unwrap();
         self.inner.child.wait().unwrap();
-        let inner = do_run(&self.inner.cfg, Some(&port), Some(self.inner.id.clone()));
+        let inner = do_run(&self.inner.cfg, Some(&port), Some(self.inner.id.clone()))
+            .expect("failed to restart nats-server");
         self.inner = inner;
     }
 
@@ -153,6 +154,10 @@ pub fn set_lame_duck_mode(s: &Server) {
 
 pub fn run_server(cfg: &str) -> Server {
     run_server_with_port(cfg, None)
+}
+
+pub fn try_run_server(cfg: &str) -> std::io::Result<Server> {
+    try_run_server_with_port(cfg, None)
 }
 
 pub fn run_server_with_jetstream() -> Server {
@@ -251,12 +256,26 @@ impl Cluster {
 
 /// Starts a local NATS server with the given config that gets stopped and cleaned up on drop.
 pub fn run_server_with_port(cfg: &str, port: Option<&str>) -> Server {
-    Server {
-        inner: do_run(cfg, port, None),
-    }
+    try_run_server_with_port(cfg, port).unwrap_or_else(|error| {
+        panic!(
+            "'nats-server' command cannot be executed due to: '{error}'. \
+            Please check that NATS server is installed. For more information please see: \
+            https://docs.nats.io/running-a-nats-service/introduction/installation#installing-via-a-package-manager"
+        )
+    })
 }
 
-fn do_run(cfg: &str, port: Option<&str>, id: Option<String>) -> Inner {
+/// Starts a local NATS server with the given config.
+///
+/// This helper shells out to `nats-server`, so the binary must be installed
+/// and available on `PATH`.
+pub fn try_run_server_with_port(cfg: &str, port: Option<&str>) -> std::io::Result<Server> {
+    Ok(Server {
+        inner: do_run(cfg, port, None)?,
+    })
+}
+
+fn do_run(cfg: &str, port: Option<&str>, id: Option<String>) -> std::io::Result<Inner> {
     let id = id.unwrap_or_else(|| nuid::next().to_string());
     let logfile = env::temp_dir().join(format!("nats-server-{id}.log"));
     let pidfile = env::temp_dir().join(format!("nats-server-{id}.pid"));
@@ -281,20 +300,15 @@ fn do_run(cfg: &str, port: Option<&str>, id: Option<String>) -> Inner {
         cmd.arg("-c").arg(cfg);
     }
 
-    let child = cmd.spawn().unwrap_or_else(|e| panic!(
-        "'nats-server' command cannot be executed due to: '{}'. \
-        Please check that NATS server is installed. For more information please see: \
-        https://docs.nats.io/running-a-nats-service/introduction/installation#installing-via-a-package-manager",
-        e
-    ));
-    Inner {
+    let child = cmd.spawn()?;
+    Ok(Inner {
         port: port.map(ToString::to_string),
         cfg: cfg.to_string(),
         id,
         child,
         logfile,
         pidfile,
-    }
+    })
 }
 
 fn run_cluster_node_with_port(

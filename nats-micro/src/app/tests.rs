@@ -7,9 +7,9 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use super::{
-    config::{NatsAppConfig, WorkerFailurePolicy},
+    config::{HandlerPanicPolicy, NatsAppConfig, WorkerFailurePolicy},
     limits::{
-        DEFAULT_CONCURRENCY_LIMIT, ResolvedConsumerConcurrencyLimit,
+        DEFAULT_CONCURRENCY_LIMIT, DEFAULT_MAX_CONCURRENCY_LIMIT, ResolvedConsumerConcurrencyLimit,
         resolve_consumer_concurrency_limit, resolve_endpoint_concurrency_limit,
         validate_consumer_concurrency_limit,
     },
@@ -22,12 +22,28 @@ use super::{
 #[test]
 fn endpoint_concurrency_limit_defaults_to_constant() {
     assert_eq!(
-        resolve_endpoint_concurrency_limit(None, DEFAULT_CONCURRENCY_LIMIT),
+        resolve_endpoint_concurrency_limit(
+            None,
+            DEFAULT_CONCURRENCY_LIMIT,
+            DEFAULT_MAX_CONCURRENCY_LIMIT
+        ),
         DEFAULT_CONCURRENCY_LIMIT
     );
     assert_eq!(
-        resolve_endpoint_concurrency_limit(Some(42), DEFAULT_CONCURRENCY_LIMIT),
+        resolve_endpoint_concurrency_limit(
+            Some(42),
+            DEFAULT_CONCURRENCY_LIMIT,
+            DEFAULT_MAX_CONCURRENCY_LIMIT
+        ),
         42
+    );
+}
+
+#[test]
+fn endpoint_concurrency_limit_is_capped() {
+    assert_eq!(
+        resolve_endpoint_concurrency_limit(Some(10_000), DEFAULT_CONCURRENCY_LIMIT, 4_096),
+        4_096
     );
 }
 
@@ -39,16 +55,15 @@ fn consumer_concurrency_limit_rejects_positive_max_ack_pending_violations() {
 }
 
 #[test]
-fn consumer_default_concurrency_limit_promotes_to_server_max_ack_pending() {
+fn consumer_default_concurrency_limit_does_not_promote_without_opt_in() {
     assert_eq!(
-        resolve_consumer_concurrency_limit(None, 25_000, DEFAULT_CONCURRENCY_LIMIT),
-        ResolvedConsumerConcurrencyLimit {
-            value: 25_000,
-            promoted_from_default: true,
-        }
-    );
-    assert_eq!(
-        resolve_consumer_concurrency_limit(None, 5_000, DEFAULT_CONCURRENCY_LIMIT),
+        resolve_consumer_concurrency_limit(
+            None,
+            25_000,
+            DEFAULT_CONCURRENCY_LIMIT,
+            DEFAULT_MAX_CONCURRENCY_LIMIT,
+            false
+        ),
         ResolvedConsumerConcurrencyLimit {
             value: DEFAULT_CONCURRENCY_LIMIT,
             promoted_from_default: false,
@@ -57,11 +72,51 @@ fn consumer_default_concurrency_limit_promotes_to_server_max_ack_pending() {
 }
 
 #[test]
+fn consumer_default_concurrency_limit_promotes_to_server_max_ack_pending_when_enabled() {
+    assert_eq!(
+        resolve_consumer_concurrency_limit(
+            None,
+            25_000,
+            DEFAULT_CONCURRENCY_LIMIT,
+            DEFAULT_MAX_CONCURRENCY_LIMIT,
+            true
+        ),
+        ResolvedConsumerConcurrencyLimit {
+            value: DEFAULT_MAX_CONCURRENCY_LIMIT,
+            promoted_from_default: true,
+        }
+    );
+}
+
+#[test]
 fn explicit_consumer_concurrency_limit_is_preserved() {
     assert_eq!(
-        resolve_consumer_concurrency_limit(Some(64), 100_000, DEFAULT_CONCURRENCY_LIMIT),
+        resolve_consumer_concurrency_limit(
+            Some(64),
+            100_000,
+            DEFAULT_CONCURRENCY_LIMIT,
+            DEFAULT_MAX_CONCURRENCY_LIMIT,
+            false
+        ),
         ResolvedConsumerConcurrencyLimit {
             value: 64,
+            promoted_from_default: false,
+        }
+    );
+}
+
+#[test]
+fn explicit_consumer_concurrency_limit_is_capped() {
+    assert_eq!(
+        resolve_consumer_concurrency_limit(
+            Some(8_192),
+            100_000,
+            DEFAULT_CONCURRENCY_LIMIT,
+            4_096,
+            true
+        ),
+        ResolvedConsumerConcurrencyLimit {
+            value: 4_096,
             promoted_from_default: false,
         }
     );
@@ -75,10 +130,19 @@ fn app_config_defaults_are_explicit() {
         config.default_concurrency_limit(),
         DEFAULT_CONCURRENCY_LIMIT
     );
+    assert_eq!(
+        config.max_concurrency_limit(),
+        DEFAULT_MAX_CONCURRENCY_LIMIT
+    );
+    assert!(!config.unbounded_server_ack_pending_promotion());
     assert_eq!(config.shutdown_drain_timeout(), None);
     assert_eq!(
         config.worker_failure_policy(),
         WorkerFailurePolicy::ShutdownApp
+    );
+    assert_eq!(
+        config.handler_panic_policy(),
+        HandlerPanicPolicy::FailWorker
     );
 }
 
@@ -86,21 +150,40 @@ fn app_config_defaults_are_explicit() {
 fn app_config_builders_override_runtime_knobs() {
     let config = NatsAppConfig::new()
         .with_default_concurrency_limit(64)
+        .with_max_concurrency_limit(128)
+        .with_unbounded_server_ack_pending_promotion(true)
         .with_shutdown_drain_timeout(Duration::from_secs(3))
-        .with_worker_failure_policy(WorkerFailurePolicy::Ignore);
+        .with_worker_failure_policy(WorkerFailurePolicy::Ignore)
+        .with_handler_panic_policy(HandlerPanicPolicy::LogAndContinue);
 
     assert_eq!(config.default_concurrency_limit(), 64);
+    assert_eq!(config.max_concurrency_limit(), 128);
+    assert!(config.unbounded_server_ack_pending_promotion());
     assert_eq!(
         config.shutdown_drain_timeout(),
         Some(Duration::from_secs(3))
     );
     assert_eq!(config.worker_failure_policy(), WorkerFailurePolicy::Ignore);
+    assert_eq!(
+        config.handler_panic_policy(),
+        HandlerPanicPolicy::LogAndContinue
+    );
 }
 
 #[test]
 fn app_config_rejects_zero_default_concurrency_limit() {
     let err = NatsAppConfig::new()
         .with_default_concurrency_limit(0)
+        .validate()
+        .unwrap_err();
+
+    assert!(err.to_string().contains("greater than 0"));
+}
+
+#[test]
+fn app_config_rejects_zero_max_concurrency_limit() {
+    let err = NatsAppConfig::new()
+        .with_max_concurrency_limit(0)
         .validate()
         .unwrap_err();
 

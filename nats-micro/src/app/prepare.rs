@@ -1,4 +1,5 @@
 use crate::{error::NatsErrorResponse, request::NatsRequest, state::StateMap};
+#[cfg(feature = "encryption")]
 use nats_micro_shared::FrameworkError;
 
 pub(crate) struct PreparedRequest {
@@ -9,15 +10,17 @@ pub(crate) struct PreparedRequest {
 
 pub(super) fn prepare_request_for_dispatch_with_state(
     state: &StateMap,
-    mut req: NatsRequest,
+    req: NatsRequest,
 ) -> Result<PreparedRequest, NatsErrorResponse> {
     #[cfg(not(feature = "encryption"))]
     {
+        let _ = state;
         return Ok(PreparedRequest { request: req });
     }
 
     #[cfg(feature = "encryption")]
     {
+        let mut req = req;
         use crate::encryption::{
             ENCRYPTED_HEADERS_NAME, RESPONSE_PUB_KEY_NAME, SIGNATURE_HEADER_NAME, ServiceKeyPair,
             SignatureTranscript, decode_response_pub_key, decrypt_headers,

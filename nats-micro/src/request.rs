@@ -59,6 +59,9 @@ impl Headers {
         value: impl Into<String>,
         was_encrypted: bool,
     ) {
+        #[cfg(not(feature = "encryption"))]
+        let _ = was_encrypted;
+
         let key = key.into();
         self.0
             .retain(|header| !header.key.eq_ignore_ascii_case(&key));
@@ -76,6 +79,9 @@ impl Headers {
         value: impl Into<String>,
         was_encrypted: bool,
     ) {
+        #[cfg(not(feature = "encryption"))]
+        let _ = was_encrypted;
+
         self.0.push(Header {
             key: key.into(),
             value: value.into(),

@@ -140,7 +140,7 @@ where
     T: crate::prost::Message,
 {
     fn into_response(self, ctx: &RequestContext) -> Result<NatsResponse, NatsErrorResponse> {
-        let mut buf = Vec::new();
+        let mut buf = Vec::with_capacity(self.0.encoded_len());
         self.0.encode(&mut buf).map_err(|e| {
             NatsErrorResponse::framework(
                 FrameworkError::SerializationError,
@@ -592,7 +592,7 @@ pub fn serialize_serde_payload<T: crate::serde::Serialize>(
 pub fn serialize_proto_payload<T: crate::prost::Message>(
     payload: &T,
 ) -> Result<::bytes::Bytes, crate::NatsErrorResponse> {
-    let mut buf = Vec::new();
+    let mut buf = Vec::with_capacity(payload.encoded_len());
     payload.encode(&mut buf).map_err(|e| {
         crate::NatsErrorResponse::framework(
             FrameworkError::SerializationError,
