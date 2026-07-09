@@ -395,9 +395,9 @@ impl IntoNatsError for anyhow::Error {
         // Preserve a safe, truncated error message in `details` to aid debugging
         // while avoiding leaking large or sensitive payloads.
         let msg = self.to_string();
-        let trunc = if msg.len() > 200 { &msg[..200] } else { &msg };
+        let trunc: String = msg.chars().take(200).collect();
         NatsErrorResponse::framework(FrameworkError::InternalError, "an internal error occurred")
-            .with_details(Value::String(trunc.to_string()))
+            .with_details(Value::String(trunc))
             .with_request_id(request_id)
     }
 }

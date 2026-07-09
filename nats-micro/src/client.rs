@@ -48,7 +48,6 @@ pub struct ConnectOptions {
     pub ignore_discovered_servers: Option<bool>,
     pub retain_servers_order: Option<bool>,
     pub read_buffer_capacity: Option<u16>,
-    #[cfg(debug_assertions)]
     pub subject_prefix: Option<String>,
     #[cfg(feature = "encryption")]
     pub recipient_public_key: Option<Vec<u8>>,
@@ -376,10 +375,14 @@ impl ClientCallOptions {
             .parse::<async_nats::HeaderValue>()
             .expect("generated client headers must be valid HTTP header values");
 
-        if cfg!(feature = "encryption") {
+        #[cfg(feature = "encryption")]
+        {
             self.encrypted_headers
                 .push((header_name.to_string(), header_value.to_string()));
-        } else {
+        }
+
+        #[cfg(not(feature = "encryption"))]
+        {
             self.plaintext_headers.insert(header_name, header_value);
         }
 

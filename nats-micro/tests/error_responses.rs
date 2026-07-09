@@ -16,3 +16,19 @@ fn anyhow_into_nats_error_includes_truncated_details() {
         assert!(details.len() <= 200);
     }
 }
+
+#[test]
+fn anyhow_into_nats_error_truncates_on_utf8_char_boundaries() {
+    let err = anyhow!("{}", "é".repeat(201));
+    let resp = err.into_nats_error("req-utf8".to_string());
+
+    assert_eq!(resp.code, 500);
+    assert_eq!(resp.request_id, "req-utf8");
+    match resp.details {
+        Some(Value::String(details)) => {
+            assert_eq!(details.chars().count(), 200);
+            assert!(details.is_char_boundary(details.len()));
+        }
+        other => panic!("expected string details, got {other:?}"),
+    }
+}

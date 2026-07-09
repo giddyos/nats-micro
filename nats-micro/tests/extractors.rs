@@ -10,7 +10,7 @@ use prost::Message;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "encryption")]
-use nats_micro::Encrypted;
+use nats_micro::{Encrypted, ServiceKeyPair};
 
 #[derive(Clone, PartialEq, Message)]
 struct ExampleProto {
@@ -187,6 +187,68 @@ fn invalid_protobuf_payloads_return_bad_request() {
     assert_eq!(error.kind, "BAD_PROTOBUF");
     assert_eq!(error.request_id, "req-proto-1");
     assert!(!error.message.is_empty());
+}
+
+#[test]
+fn optional_payload_returns_none_only_for_empty_payloads() {
+    let ctx = request_context(vec![]);
+
+    let decoded = Option::<Json<ExampleJson>>::from_payload(&ctx)
+        .expect("empty optional payload should decode as none");
+
+    assert!(decoded.is_none());
+}
+
+#[test]
+fn optional_json_payload_preserves_decode_errors() {
+    let ctx = request_context(b"{invalid-json".to_vec());
+
+    let error = Option::<Json<ExampleJson>>::from_payload(&ctx)
+        .expect_err("invalid non-empty optional JSON payload should fail");
+
+    assert_eq!(error.code, 400);
+    assert_eq!(error.kind, "BAD_JSON");
+    assert_eq!(error.request_id, "req-proto-1");
+}
+
+#[test]
+fn optional_protobuf_payload_preserves_decode_errors() {
+    let ctx = request_context(vec![0xff, 0xff, 0xff]);
+
+    let error = Option::<Proto<ExampleProto>>::from_payload(&ctx)
+        .expect_err("invalid non-empty optional protobuf payload should fail");
+
+    assert_eq!(error.code, 400);
+    assert_eq!(error.kind, "BAD_PROTOBUF");
+    assert_eq!(error.request_id, "req-proto-1");
+}
+
+#[test]
+fn optional_string_payload_preserves_decode_errors() {
+    let ctx = request_context(vec![0xff]);
+
+    let error = Option::<String>::from_payload(&ctx)
+        .expect_err("invalid non-empty optional string payload should fail");
+
+    assert_eq!(error.code, 400);
+    assert_eq!(error.kind, "BAD_UTF8");
+    assert_eq!(error.request_id, "req-proto-1");
+}
+
+#[cfg(feature = "encryption")]
+#[test]
+fn optional_encrypted_payload_preserves_decode_errors() {
+    let mut ctx = request_context(vec![1, 2, 3]).__with_ephemeral_pub(Some([0; 32]));
+    ctx.states = StateMap::new().insert(ServiceKeyPair::generate());
+
+    let error = match Option::<Encrypted<String>>::from_payload(&ctx) {
+        Ok(_) => panic!("invalid non-empty optional encrypted payload should fail"),
+        Err(error) => error,
+    };
+
+    assert_eq!(error.code, 400);
+    assert_eq!(error.kind, "DECRYPT_FAILED");
+    assert_eq!(error.request_id, "req-proto-1");
 }
 
 #[tokio::test]

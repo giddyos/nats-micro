@@ -381,7 +381,7 @@ where
             return Ok(None);
         }
 
-        Ok(T::from_payload(ctx).ok())
+        T::from_payload(ctx).map(Some)
     }
 }
 
