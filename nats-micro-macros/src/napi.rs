@@ -483,7 +483,6 @@ fn render_connect_support(service_name: &str, nats_micro: &syn::Path) -> TokenSt
             pub token: Option<String>,
             pub username: Option<String>,
             pub password: Option<String>,
-            pub nkey: Option<String>,
         }
 
         impl From<#auth_options_name> for #nats_micro::__napi::AuthOptions {
@@ -492,7 +491,6 @@ fn render_connect_support(service_name: &str, nats_micro: &syn::Path) -> TokenSt
                     token: value.token,
                     username: value.username,
                     password: value.password,
-                    nkey: value.nkey,
                 }
             }
         }

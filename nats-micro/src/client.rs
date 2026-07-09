@@ -24,7 +24,6 @@ pub struct AuthOptions {
     pub token: Option<String>,
     pub username: Option<String>,
     pub password: Option<String>,
-    pub nkey: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -69,18 +68,16 @@ fn apply_auth(
         token,
         username,
         password,
-        nkey,
     } = auth;
 
     let has_token = token.is_some();
     let has_userpass = username.is_some() || password.is_some();
-    let has_nkey = nkey.is_some();
 
-    let modes = u8::from(has_token) + u8::from(has_userpass) + u8::from(has_nkey);
+    let modes = u8::from(has_token) + u8::from(has_userpass);
     if modes > 1 {
         return Err(framework_error(
             FrameworkError::AuthModeConflict,
-            "Choose exactly one authentication mode: token, username/password, or nkey.",
+            "Choose exactly one authentication mode: token or username/password.",
         ));
     }
 
@@ -102,13 +99,6 @@ fn apply_auth(
             )
         })?;
         options = options.user_and_password(username, password);
-    }
-
-    if nkey.is_some() {
-        return Err(framework_error(
-            FrameworkError::AuthNkeyUnsupported,
-            "NKey authentication is not enabled in this nats-micro build.",
-        ));
     }
 
     Ok(options)

@@ -82,7 +82,6 @@ define_error_code_enum! {
         AuthModeConflict => { code: "AUTH_MODE_CONFLICT", status: 400 },
         AuthUsernameRequired => { code: "AUTH_USERNAME_REQUIRED", status: 400 },
         AuthPasswordRequired => { code: "AUTH_PASSWORD_REQUIRED", status: 400 },
-        AuthNkeyUnsupported => { code: "AUTH_NKEY_UNSUPPORTED", status: 400 },
         ClientCertKeyMismatch => { code: "CLIENT_CERT_KEY_MISMATCH", status: 400 },
         ClientConnectFailed => { code: "CLIENT_CONNECT_FAILED", status: 503 }
     }
