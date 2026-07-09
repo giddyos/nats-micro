@@ -96,15 +96,29 @@ fn generated_client_supports_encrypted_default_headers_with_encryption() {
     assert!(expanded.contains("pub fn default_encrypted_header"));
     assert!(expanded.contains("pub fn try_default_bearer_token"));
     assert!(expanded.contains("pub fn default_bearer_token"));
+    assert!(expanded.contains("try_encrypted_header (key . clone () , value . clone ()) ?"));
     assert!(
         expanded.contains(
-            "try_encrypted_header (key . clone () , value . clone ()) ?"
+            "options = options . try_encrypted_header (key . clone () , value . clone ())"
         )
     );
-    assert!(
-        expanded
-            .contains("options = options . try_encrypted_header (key . clone () , value . clone ())")
-    );
+}
+
+#[test]
+fn encrypted_default_headers_use_resolved_nats_micro_path() {
+    let struct_ident = parse_quote!(DemoService);
+    let mut module_spec = build_client_module_spec(&struct_ident, "DemoService", &[]);
+    module_spec.encryption_enabled = true;
+    let renamed_path = parse_quote!(::renamed_nats_micro);
+
+    let expanded = module_spec
+        .encrypted_default_header_fn_tokens(&renamed_path)
+        .to_string();
+
+    assert!(expanded.contains(":: renamed_nats_micro :: NatsErrorResponse"));
+    assert!(expanded.contains(":: renamed_nats_micro :: ClientCallOptions :: new"));
+    assert!(!expanded.contains(":: nats_micro :: NatsErrorResponse"));
+    assert!(!expanded.contains(":: nats_micro :: ClientCallOptions"));
 }
 
 #[test]

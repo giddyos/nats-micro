@@ -268,18 +268,11 @@ fn request_builder_try_bearer_token_rejects_invalid_header_values() {
     let keypair = ServiceKeyPair::generate();
     let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
 
-    let Err(error) = recipient
-        .request_builder()
-        .try_bearer_token("bad\r\nvalue")
-    else {
+    let Err(error) = recipient.request_builder().try_bearer_token("bad\r\nvalue") else {
         panic!("invalid bearer token should be rejected");
     };
 
-    assert!(
-        error
-            .to_string()
-            .contains("invalid encrypted header value")
-    );
+    assert!(error.to_string().contains("invalid encrypted header value"));
 }
 
 #[test]
@@ -288,9 +281,7 @@ fn request_builder_bearer_token_panics_for_invalid_header_values() {
     let keypair = ServiceKeyPair::generate();
     let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
 
-    let _ = recipient
-        .request_builder()
-        .bearer_token("bad\r\nvalue");
+    let _ = recipient.request_builder().bearer_token("bad\r\nvalue");
 }
 
 #[test]

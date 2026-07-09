@@ -34,7 +34,7 @@ impl ClientModuleSpec {
         let encrypted_default_headers_none = self.encrypted_default_headers_none_tokens();
         let encrypted_default_headers_from_builder =
             self.encrypted_default_headers_from_builder_tokens();
-        let encrypted_default_header_fn = self.encrypted_default_header_fn_tokens();
+        let encrypted_default_header_fn = self.encrypted_default_header_fn_tokens(&nats_micro);
         let connect_fn = Self::connect_fn_tokens(&nats_micro);
         let new_fn = self.new_fn_tokens(&nats_micro);
         let from_connected_client_fn = self.connected_client_ctor_fn_tokens(&nats_micro);
@@ -218,17 +218,17 @@ impl ClientModuleSpec {
         }
     }
 
-    fn encrypted_default_header_fn_tokens(&self) -> TokenStream {
+    fn encrypted_default_header_fn_tokens(&self, nats_micro: &syn::Path) -> TokenStream {
         if self.encryption_enabled {
             quote! {
                 pub fn try_default_encrypted_header(
                     mut self,
                     key: impl Into<String>,
                     value: impl Into<String>,
-                ) -> ::std::result::Result<Self, ::nats_micro::NatsErrorResponse> {
+                ) -> ::std::result::Result<Self, #nats_micro::NatsErrorResponse> {
                     let key = key.into();
                     let value = value.into();
-                    ::nats_micro::ClientCallOptions::new()
+                    #nats_micro::ClientCallOptions::new()
                         .try_encrypted_header(key.clone(), value.clone())?;
                     self.default_encrypted_headers.push((key, value));
                     Ok(self)
@@ -246,9 +246,9 @@ impl ClientModuleSpec {
                 pub fn try_default_bearer_token(
                     self,
                     token: impl Into<String>,
-                ) -> ::std::result::Result<Self, ::nats_micro::NatsErrorResponse> {
+                ) -> ::std::result::Result<Self, #nats_micro::NatsErrorResponse> {
                     let token = token.into();
-                    ::nats_micro::ClientCallOptions::new().try_bearer_token(token.clone())?;
+                    #nats_micro::ClientCallOptions::new().try_bearer_token(token.clone())?;
                     self.try_default_encrypted_header(
                         "authorization",
                         format!("Bearer {}", token),
