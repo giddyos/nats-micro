@@ -1,9 +1,0 @@
-[package]
-name = "renamed-nats-micro-service-error"
-version = "0.0.0"
-edition = "2024"
-
-[workspace]
-
-[dependencies]
-nm = { package = "nats-micro", path = "../../.." }

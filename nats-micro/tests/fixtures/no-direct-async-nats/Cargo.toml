@@ -1,9 +1,0 @@
-[package]
-name = "no-direct-async-nats"
-version = "0.0.0"
-edition = "2024"
-
-[workspace]
-
-[dependencies]
-nats-micro = { path = "../../.." }
