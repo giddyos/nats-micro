@@ -1,7 +1,7 @@
 mod headers;
 mod payload;
 
-use std::collections::HashMap;
+use std::{collections::HashMap, str::FromStr};
 
 use base64::{Engine, engine::general_purpose::STANDARD};
 use chacha20poly1305::{
@@ -15,6 +15,7 @@ use zeroize::Zeroizing;
 
 pub(crate) use self::headers::{
     ENCRYPTED_HEADERS_NAME, RESPONSE_PUB_KEY_NAME, SIGNATURE_HEADER_NAME, decode_response_pub_key,
+    is_reserved_encryption_header_name,
 };
 pub use self::{headers::decrypt_headers, payload::Encrypted};
 
@@ -52,6 +53,10 @@ pub enum EncryptionError {
     PublishFailed(String),
     #[error("failed to send the NATS request: {0}")]
     RequestFailed(String),
+    #[error("invalid header: {0}")]
+    InvalidHeader(String),
+    #[error("encrypted header `{0}` is reserved for nats-micro encryption transport metadata")]
+    ReservedHeader(String),
 }
 
 impl EncryptionError {
@@ -69,6 +74,10 @@ impl EncryptionError {
 
     pub(crate) fn encrypt_failed(context: &'static str) -> Self {
         Self::EncryptFailed { context }
+    }
+
+    pub(crate) fn reserved_header(key: impl Into<String>) -> Self {
+        Self::ReservedHeader(key.into())
     }
 }
 
@@ -455,7 +464,7 @@ impl ServiceRecipient {
 pub struct RequestBuilder {
     ctx: EphemeralContext,
     client: Option<async_nats::Client>,
-    plaintext_headers: Vec<(String, String)>,
+    plaintext_headers: Vec<(async_nats::HeaderName, async_nats::HeaderValue)>,
     encrypted_headers: Vec<(String, String)>,
     payload: Option<Vec<u8>>,
     encrypt_payload: bool,
@@ -464,14 +473,61 @@ pub struct RequestBuilder {
 impl RequestBuilder {
     /// Adds a plaintext header. Plaintext headers are untrusted metadata unless
     /// a field is explicitly bound into the request signature transcript.
-    pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.plaintext_headers.push((key.into(), value.into()));
-        self
+    pub fn try_header(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Result<Self, EncryptionError> {
+        let key = key.into();
+        let value = value.into();
+        let name = async_nats::HeaderName::from_str(&key).map_err(|error| {
+            EncryptionError::InvalidHeader(format!(
+                "invalid plaintext header name `{key}`: {error}"
+            ))
+        })?;
+        let value = value.parse::<async_nats::HeaderValue>().map_err(|error| {
+            EncryptionError::InvalidHeader(format!(
+                "invalid plaintext header value for `{key}`: {error}"
+            ))
+        })?;
+        self.plaintext_headers.push((name, value));
+        Ok(self)
     }
 
-    pub fn encrypted_header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.encrypted_headers.push((key.into(), value.into()));
-        self
+    /// Adds a plaintext header. Panics when the header name or value is invalid.
+    pub fn header(self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.try_header(key, value)
+            .expect("invalid encrypted request plaintext header name or value")
+    }
+
+    pub fn try_encrypted_header(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Result<Self, EncryptionError> {
+        let key = key.into();
+        let value = value.into();
+        let _ = async_nats::HeaderName::from_str(&key).map_err(|error| {
+            EncryptionError::InvalidHeader(format!(
+                "invalid encrypted header name `{key}`: {error}"
+            ))
+        })?;
+        let _ = value.parse::<async_nats::HeaderValue>().map_err(|error| {
+            EncryptionError::InvalidHeader(format!(
+                "invalid encrypted header value for `{key}`: {error}"
+            ))
+        })?;
+        if is_reserved_encryption_header_name(&key) {
+            return Err(EncryptionError::reserved_header(key));
+        }
+
+        self.encrypted_headers.push((key, value));
+        Ok(self)
+    }
+
+    pub fn encrypted_header(self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.try_encrypted_header(key, value)
+            .expect("invalid encrypted request encrypted header name or value")
     }
 
     pub fn bearer_token(self, token: impl Into<String>) -> Self {
@@ -494,6 +550,9 @@ impl RequestBuilder {
         &self.ctx
     }
 
+    #[deprecated(
+        note = "use build_for_subject so request signatures are bound to the NATS subject"
+    )]
     pub fn build(self) -> Result<BuiltRequest, EncryptionError> {
         self.build_for_subject("")
     }
@@ -506,11 +565,7 @@ impl RequestBuilder {
         );
 
         for (k, v) in &self.plaintext_headers {
-            headers.insert(
-                k.as_str(),
-                v.parse::<async_nats::HeaderValue>()
-                    .unwrap_or_else(|_| async_nats::HeaderValue::from(v.as_str())),
-            );
+            headers.insert(k.clone(), v.clone());
         }
 
         let encrypted_headers_value = if self.encrypted_headers.is_empty() {

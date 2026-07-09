@@ -204,6 +204,42 @@ fn prepare_request_for_dispatch_rejects_headers_for_wrong_service() {
 }
 
 #[test]
+fn prepare_request_for_dispatch_rejects_reserved_encrypted_header_names() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+    let eph = recipient.begin();
+    let signature_key = keypair.derive_signature_key(&eph.ephemeral_pub_bytes());
+    let encrypted_headers = std::collections::HashMap::from([(
+        "x-signature".to_string(),
+        "handler-visible-forgery".to_string(),
+    )]);
+    let encrypted_json = serde_json::to_vec(&encrypted_headers).expect("serialize headers");
+    let encrypted_blob = eph.encrypt(&encrypted_json).expect("encrypt headers");
+    let encoded_headers = STANDARD.encode(encrypted_blob);
+    let payload = b"plain payload".to_vec();
+    let eph_pub = eph.ephemeral_pub_bytes();
+    let transcript = nats_micro::encryption::SignatureTranscript::new(SUBJECT, &eph_pub, &payload)
+        .encrypted_headers_value(Some(&encoded_headers));
+    let signature =
+        nats_micro::encryption::compute_signature_for_transcript(&signature_key, &transcript);
+
+    let mut headers = HeaderMap::new();
+    headers.insert("x-ephemeral-pub-key", STANDARD.encode(eph_pub));
+    headers.insert("x-encrypted-headers", encoded_headers);
+    headers.insert("x-signature", STANDARD.encode(signature));
+
+    let err = __test_support::prepare_request_for_dispatch_with_state(
+        &state_with_keypair(keypair),
+        request_with_headers(headers, &payload),
+    )
+    .expect_err("reserved decrypted header name should fail");
+
+    assert_eq!(err.code, 400);
+    assert_eq!(err.kind, "DECRYPT_FAILED");
+    assert!(err.message.contains("reserved"));
+}
+
+#[test]
 fn tampered_payload_fails_signature_verification() {
     let keypair = ServiceKeyPair::generate();
     let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
@@ -530,7 +566,7 @@ fn encrypted_payload_requires_registered_service_key() {
     let built = recipient
         .request_builder()
         .encrypted_payload(b"secret payload".to_vec())
-        .build()
+        .build_for_subject(SUBJECT)
         .expect("build request");
 
     let ctx = RequestContext::new(

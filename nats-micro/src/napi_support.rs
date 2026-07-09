@@ -56,7 +56,7 @@ where
                     ));
                 }
 
-                options = options.encrypted_header(name, value);
+                options = options.try_encrypted_header(name, value)?;
                 continue;
             }
 

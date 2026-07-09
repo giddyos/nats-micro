@@ -378,7 +378,7 @@ fn apply_headers_to_builder(
     mut builder: crate::encryption::RequestBuilder,
     plaintext_headers: &HeaderMap,
     encrypted_headers: Vec<(String, String)>,
-) -> crate::encryption::RequestBuilder {
+) -> Result<crate::encryption::RequestBuilder, NatsErrorResponse> {
     for (name, values) in plaintext_headers.iter() {
         let name_str: &str = name.as_ref();
         for val in values {
@@ -386,9 +386,16 @@ fn apply_headers_to_builder(
         }
     }
     for (key, value) in encrypted_headers {
-        builder = builder.encrypted_header(key, value);
+        builder = builder
+            .try_encrypted_header(key, value)
+            .map_err(encryption_error_to_invalid_header)?;
     }
-    builder
+    Ok(builder)
+}
+
+#[cfg(feature = "encryption")]
+fn encryption_error_to_invalid_header(error: crate::EncryptionError) -> NatsErrorResponse {
+    framework_error(FrameworkError::InvalidHeader, error.to_string())
 }
 
 impl ClientCallOptions {
@@ -476,9 +483,42 @@ impl ClientCallOptions {
     }
 
     #[cfg(feature = "encryption")]
-    pub fn encrypted_header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn try_encrypted_header(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Result<Self, NatsErrorResponse> {
+        let key = key.into();
+        let value = value.into();
+        let _ = async_nats::HeaderName::from_str(&key).map_err(|error| {
+            framework_error(
+                FrameworkError::InvalidHeader,
+                format!("invalid encrypted client header name `{key}`: {error}"),
+            )
+        })?;
+        let _ = value.parse::<async_nats::HeaderValue>().map_err(|error| {
+            framework_error(
+                FrameworkError::InvalidHeader,
+                format!("invalid encrypted client header value for `{key}`: {error}"),
+            )
+        })?;
+        if crate::encryption::is_reserved_encryption_header_name(&key) {
+            return Err(framework_error(
+                FrameworkError::InvalidHeader,
+                format!(
+                    "encrypted client header `{key}` is reserved for nats-micro encryption transport metadata"
+                ),
+            ));
+        }
+
         self.encrypted_headers.push((key.into(), value.into()));
-        self
+        Ok(self)
+    }
+
+    #[cfg(feature = "encryption")]
+    pub fn encrypted_header(self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.try_encrypted_header(key, value)
+            .expect("invalid encrypted client header name or value")
     }
 
     #[cfg(feature = "encryption")]
@@ -522,7 +562,7 @@ impl ClientCallOptions {
                 recipient.request_builder(),
                 &self.plaintext_headers,
                 self.encrypted_headers,
-            )
+            )?
             .payload(payload.to_vec());
 
             let request_subject = subject.clone();
@@ -562,7 +602,7 @@ impl ClientCallOptions {
                 recipient.request_builder(),
                 &self.plaintext_headers,
                 self.encrypted_headers,
-            )
+            )?
             .payload(payload.to_vec());
 
             let request_subject = subject.clone();
@@ -597,7 +637,7 @@ impl ClientCallOptions {
             recipient.request_builder(),
             &self.plaintext_headers,
             self.encrypted_headers,
-        )
+        )?
         .encrypted_payload(payload);
 
         let request_subject = subject.clone();
@@ -628,6 +668,19 @@ mod tests {
     #[should_panic(expected = "invalid client header name or value")]
     fn header_panics_for_invalid_header_values() {
         let _ = ClientCallOptions::new().header("x-trace", "bad\r\nvalue");
+    }
+
+    #[cfg(feature = "encryption")]
+    #[test]
+    fn try_encrypted_header_rejects_reserved_transport_names() {
+        let Err(err) =
+            ClientCallOptions::new().try_encrypted_header("x-signature", "not-user-metadata")
+        else {
+            panic!("reserved encrypted header name should be rejected");
+        };
+
+        assert_eq!(err.kind, FrameworkError::InvalidHeader.as_code());
+        assert!(err.message.contains("reserved"));
     }
 
     #[tokio::test]

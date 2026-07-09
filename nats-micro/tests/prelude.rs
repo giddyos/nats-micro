@@ -159,7 +159,7 @@ fn prelude_reexports_encryption_types() {
     } = recipient
         .request_builder()
         .encrypted_header("authorization", "Bearer demo-token")
-        .build()
+        .build_for_subject("prelude.test")
         .expect("encrypted request should build");
 
     let shared_key = keypair.derive_encryption_key(&context.ephemeral_pub_bytes());

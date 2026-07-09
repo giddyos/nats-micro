@@ -53,7 +53,7 @@ fn headers_and_payload_share_ephemeral_key() {
         .header("x-request-id", "req-123")
         .encrypted_header("authorization", "Bearer secret-token")
         .encrypted_payload(b"payload data".to_vec())
-        .build()
+        .build_for_subject("encryption.test")
         .unwrap();
 
     let eph_from_payload: [u8; 32] = built.payload[..32].try_into().unwrap();
@@ -202,13 +202,72 @@ fn request_builder_plaintext_only() {
         .request_builder()
         .header("x-request-id", "req-1")
         .header("content-type", "application/json")
-        .build()
+        .build_for_subject("encryption.test")
         .unwrap();
 
     assert!(built.headers.get("x-encrypted-headers").is_none());
     assert!(built.headers.get("x-ephemeral-pub-key").is_some());
     assert!(built.headers.get("x-signature").is_some());
     assert_eq!(built.headers.get("x-request-id").unwrap().as_str(), "req-1");
+}
+
+#[test]
+fn request_builder_try_header_rejects_invalid_plaintext_name() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+
+    let error = match recipient
+        .request_builder()
+        .try_header("bad header", "value")
+    {
+        Ok(_) => panic!("invalid plaintext header name should be rejected"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains("invalid plaintext header name"));
+}
+
+#[test]
+fn request_builder_try_header_rejects_invalid_plaintext_value() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+
+    let error = match recipient
+        .request_builder()
+        .try_header("x-trace", "bad\r\nvalue")
+    {
+        Ok(_) => panic!("invalid plaintext header value should be rejected"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains("invalid plaintext header value"));
+}
+
+#[test]
+#[should_panic(expected = "invalid encrypted request plaintext header name or value")]
+fn request_builder_header_panics_for_invalid_plaintext_value() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+
+    let _ = recipient
+        .request_builder()
+        .header("x-trace", "bad\r\nvalue");
+}
+
+#[test]
+fn request_builder_rejects_reserved_encrypted_header_names() {
+    let keypair = ServiceKeyPair::generate();
+    let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
+
+    let error = match recipient
+        .request_builder()
+        .try_encrypted_header("x-encrypted-headers", "confusing")
+    {
+        Ok(_) => panic!("reserved encrypted header name should be rejected"),
+        Err(error) => error,
+    };
+
+    assert!(error.to_string().contains("reserved"));
 }
 
 #[test]
@@ -221,7 +280,7 @@ fn request_builder_mixed() {
         .header("x-request-id", "req-2")
         .encrypted_header("x-user-id", "user-42")
         .bearer_token("my-token")
-        .build()
+        .build_for_subject("encryption.test")
         .unwrap();
 
     assert_eq!(built.headers.get("x-request-id").unwrap().as_str(), "req-2");
@@ -287,7 +346,7 @@ fn full_encrypted_request_response_cycle() {
         .header("x-request-id", "cycle-1")
         .encrypted_header("x-secret", "classified")
         .encrypted_payload(b"full cycle request data".to_vec())
-        .build()
+        .build_for_subject("encryption.test")
         .unwrap();
 
     let eph_pub: [u8; 32] = built.payload[..32].try_into().unwrap();
@@ -335,7 +394,7 @@ fn request_builder_encrypted_payload_round_trip() {
     let built = recipient
         .request_builder()
         .encrypted_payload(b"encrypted via builder".to_vec())
-        .build()
+        .build_for_subject("encryption.test")
         .unwrap();
 
     assert!(built.payload.len() > b"encrypted via builder".len());
@@ -353,7 +412,7 @@ fn request_builder_plain_payload_is_unencrypted() {
     let built = recipient
         .request_builder()
         .payload(b"hello plain".to_vec())
-        .build()
+        .build_for_subject("encryption.test")
         .unwrap();
 
     assert_eq!(&*built.payload, b"hello plain");
@@ -366,7 +425,10 @@ fn request_builder_no_payload_produces_empty_bytes() {
         ServiceRecipient::from_bytes(keypair.public_key_bytes())
     };
 
-    let built = recipient.request_builder().build().unwrap();
+    let built = recipient
+        .request_builder()
+        .build_for_subject("encryption.test")
+        .unwrap();
     assert!(built.payload.is_empty());
 }
 
@@ -378,7 +440,7 @@ fn signature_present_on_all_built_requests() {
     let plain = recipient
         .request_builder()
         .payload(b"data".to_vec())
-        .build()
+        .build_for_subject("encryption.test")
         .unwrap();
     assert!(plain.headers.get("x-signature").is_some());
 
@@ -386,11 +448,14 @@ fn signature_present_on_all_built_requests() {
         .request_builder()
         .encrypted_payload(b"data".to_vec())
         .encrypted_header("k", "v")
-        .build()
+        .build_for_subject("encryption.test")
         .unwrap();
     assert!(encrypted.headers.get("x-signature").is_some());
 
-    let empty = recipient.request_builder().build().unwrap();
+    let empty = recipient
+        .request_builder()
+        .build_for_subject("encryption.test")
+        .unwrap();
     assert!(empty.headers.get("x-signature").is_some());
 }
 
@@ -461,7 +526,7 @@ fn request_builder_includes_signature() {
     let built = recipient
         .request_builder()
         .payload(b"test".to_vec())
-        .build()
+        .build_for_subject("encryption.test")
         .unwrap();
 
     assert!(built.headers.get("x-signature").is_some());
@@ -476,7 +541,7 @@ fn request_builder_signature_verifies() {
         .request_builder()
         .encrypted_header("authorization", "Bearer tok")
         .encrypted_payload(b"signed data".to_vec())
-        .build()
+        .build_for_subject("signed.subject")
         .unwrap();
 
     let signature_key = keypair.derive_signature_key(&built.context.ephemeral_pub_bytes());
@@ -487,7 +552,7 @@ fn request_builder_signature_verifies() {
         .get("x-encrypted-headers")
         .map(|value| value.as_str());
     let ephemeral_pub = built.context.ephemeral_pub_bytes();
-    let transcript = SignatureTranscript::new("", &ephemeral_pub, &built.payload)
+    let transcript = SignatureTranscript::new("signed.subject", &ephemeral_pub, &built.payload)
         .encrypted_headers_value(enc_hdr_val);
     verify_signature_for_transcript(&signature_key, &transcript, &signature)
         .expect("signature should verify");

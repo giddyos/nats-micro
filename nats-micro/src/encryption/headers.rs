@@ -9,6 +9,12 @@ pub(crate) const ENCRYPTED_HEADERS_NAME: &str = "x-encrypted-headers";
 pub(crate) const RESPONSE_PUB_KEY_NAME: &str = "x-ephemeral-pub-key";
 pub(crate) const SIGNATURE_HEADER_NAME: &str = "x-signature";
 
+pub(crate) fn is_reserved_encryption_header_name(key: &str) -> bool {
+    key.eq_ignore_ascii_case(ENCRYPTED_HEADERS_NAME)
+        || key.eq_ignore_ascii_case(RESPONSE_PUB_KEY_NAME)
+        || key.eq_ignore_ascii_case(SIGNATURE_HEADER_NAME)
+}
+
 #[doc(hidden)]
 pub trait HeaderLookup {
     fn get_str(&self, key: &str) -> Option<&str>;
@@ -65,5 +71,11 @@ pub fn decrypt_headers<H: HeaderLookup>(
         .map_err(|_| EncryptionError::decrypt_failed("decrypting encrypted headers payload"))?;
     let map: HashMap<String, String> = serde_json::from_slice(&plaintext)
         .map_err(|_| EncryptionError::decrypt_failed("deserializing decrypted headers JSON"))?;
+    if let Some(key) = map
+        .keys()
+        .find(|key| is_reserved_encryption_header_name(key.as_str()))
+    {
+        return Err(EncryptionError::reserved_header(key));
+    }
     Ok(map)
 }

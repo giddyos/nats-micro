@@ -154,7 +154,7 @@ fn encrypted_response_falls_back_to_plain_service_error_payloads() {
     let built = recipient
         .request_builder()
         .encrypted_payload(br#"{\"numbers\":[1]}"#.to_vec())
-        .build()
+        .build_for_subject("client.errors")
         .expect("build encrypted request");
 
     let payload = serde_json::to_vec(
