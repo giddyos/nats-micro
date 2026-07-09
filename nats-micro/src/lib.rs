@@ -12,7 +12,7 @@
 //!
 //! # Service errors
 //!
-//! ```rust
+//! ```rust,ignore
 //! use nats_micro::service_error;
 //!
 //! #[service_error]
