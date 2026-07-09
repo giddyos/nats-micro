@@ -21,7 +21,7 @@ use std::{env, fs};
 use std::{thread, time::Duration};
 use workspace_root::get_workspace_root;
 
-use rand::Rng;
+use rand::RngExt;
 use regex::Regex;
 use serde_json::{self, Value};
 
@@ -196,7 +196,8 @@ impl<'a> IntoConfig<'a> for [&'a str; 3] {
 /// of configs for each replica
 pub fn run_cluster<'a, C: IntoConfig<'a>>(cfg: C) -> Cluster {
     let cfg = cfg.into_config();
-    let port = rand::thread_rng().gen_range(3000..50_000);
+    let mut rng = rand::rng();
+    let port = rng.random_range(3000..50_000);
     let ports = [port, port + 100, port + 200];
 
     let ports = ports
@@ -204,7 +205,7 @@ pub fn run_cluster<'a, C: IntoConfig<'a>>(cfg: C) -> Cluster {
         .map(|port| {
             let mut new_port = *port;
             while !is_port_available(new_port) || !is_port_available(new_port + 1) {
-                new_port = rand::thread_rng().gen_range(2000..50_000);
+                new_port = rng.random_range(2000..50_000);
             }
             new_port
         })
