@@ -1,0 +1,11 @@
+[package]
+name = "renamed-dependency-full"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+nm = { package = "nats-micro", path = "../../.." }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

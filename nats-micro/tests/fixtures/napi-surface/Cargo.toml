@@ -1,0 +1,11 @@
+[package]
+name = "napi-surface"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+nats-micro = { path = "../../..", features = ["napi"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
