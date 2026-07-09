@@ -47,8 +47,8 @@ pub use response::{IntoNatsResponse, NatsResponse, X_SUCCESS_HEADER};
 pub use serde;
 pub use serde_json;
 pub use service::{
-    ConsumerInfo, EndpointDefinition, EndpointDescriptor, EndpointInfo, NatsService, ParamInfo,
-    PayloadEncoding, PayloadMeta, ResponseEncoding, ResponseMeta, ServiceContract,
+    AuthPolicy, ConsumerInfo, EndpointDefinition, EndpointDescriptor, EndpointInfo, NatsService,
+    ParamInfo, PayloadEncoding, PayloadMeta, ResponseEncoding, ResponseMeta, ServiceContract,
     ServiceDefinition, ServiceMetadata,
 };
 pub use shutdown_signal::ShutdownSignal;
@@ -146,8 +146,8 @@ pub mod __macros {
     pub use crate::registry::ServiceRegistration;
     pub use crate::response::{IntoNatsResponse, NatsResponse};
     pub use crate::service::{
-        ConsumerInfo, EndpointInfo, NatsService, ParamInfo, PayloadEncoding, PayloadMeta,
-        ResponseEncoding, ResponseMeta, ServiceDefinition, build_subject,
+        AuthPolicy, ConsumerInfo, EndpointInfo, NatsService, ParamInfo, PayloadEncoding,
+        PayloadMeta, ResponseEncoding, ResponseMeta, ServiceDefinition, build_subject,
     };
     pub use async_nats::jetstream::consumer::push::Config as ConsumerConfig;
     pub use inventory;

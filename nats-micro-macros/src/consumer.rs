@@ -4,7 +4,10 @@ use quote::{format_ident, quote};
 use syn::{Expr, ImplItemFn};
 
 use crate::{
-    endpoint::{build_handler_body, extract_param_info, requires_auth},
+    endpoint::{
+        AuthIntent, auth_policy_tokens, build_handler_body, extract_param_info, has_optional_auth,
+        requires_auth,
+    },
     service::{GeneratedHandlerItem, service_config_module_ident},
     utils::{conditional_attrs, nats_micro_path, parse_attr},
 };
@@ -36,7 +39,14 @@ pub(crate) fn process_consumer_method(
     let fn_name = &method.sig.ident;
     let stream = consumer_stream_tokens(struct_ident, args.stream.as_deref());
     let durable = args.durable.unwrap_or_else(|| fn_name.to_string());
-    let auth_required = requires_auth(&method.sig);
+    let auth_policy = if requires_auth(&method.sig) {
+        AuthIntent::Required
+    } else if has_optional_auth(&method.sig) {
+        AuthIntent::Optional
+    } else {
+        AuthIntent::None
+    };
+    let auth_policy_tokens = auth_policy_tokens(auth_policy, &nats_micro);
     let concurrency_limit = optional_u64_tokens(args.concurrency_limit);
     let config = consumer_config_tokens(args.config, &nats_micro);
     let fn_path = quote! { #struct_ident::#fn_name };
@@ -54,7 +64,7 @@ pub(crate) fn process_consumer_method(
                 #nats_micro::ConsumerDefinition {
                     stream: #stream,
                     durable: #durable.to_string(),
-                    auth_required: #auth_required,
+                    auth_policy: #auth_policy_tokens,
                     concurrency_limit: #concurrency_limit,
                     config: #config,
                     handler: #handler,
@@ -67,7 +77,7 @@ pub(crate) fn process_consumer_method(
                 fn_name: #fn_name_str.to_string(),
                 stream: #stream,
                 durable: #durable.to_string(),
-                auth_required: #auth_required,
+                auth_policy: #auth_policy_tokens,
                 concurrency_limit: #concurrency_limit,
                 params: vec![#(#param_infos),*],
             }

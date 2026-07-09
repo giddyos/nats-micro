@@ -4,9 +4,9 @@ use quote::{format_ident, quote};
 use syn::{Attribute, ImplItemFn, Type};
 
 use crate::endpoint::{
-    EndpointArgs, PayloadEncoding, PayloadMeta, ResponseEncoding, ResponseMeta, SubjectParamMeta,
-    extract_client_meta, extract_result_types, last_segment_ident, parse_subject_template,
-    requires_auth, validate_template_bindings,
+    AuthIntent, EndpointArgs, PayloadEncoding, PayloadMeta, ResponseEncoding, ResponseMeta,
+    SubjectParamMeta, auth_policy_from_intent, extract_client_meta, extract_result_types,
+    last_segment_ident, parse_subject_template, validate_template_bindings,
 };
 use crate::utils::{nats_micro_path, spanned_trait_assertion};
 
@@ -370,11 +370,19 @@ pub(crate) struct ClientEndpointSpec {
     pub error_type: Type,
     pub group: String,
     pub subject: ClientSubjectSpec,
-    pub auth_required: bool,
+    pub auth_policy: AuthIntent,
     pub payload_meta: Option<PayloadMeta>,
     pub response_meta: ResponseMeta,
     pub payload: Option<ClientPayloadSpec>,
     pub response: ClientResponseSpec,
+}
+
+fn auth_policy_doc(policy: AuthIntent) -> &'static str {
+    match policy {
+        AuthIntent::Required => "required",
+        AuthIntent::Optional => "optional",
+        AuthIntent::None => "not required",
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -753,7 +761,8 @@ pub(crate) fn build_endpoint_client_spec(
             pattern,
             params: client_meta.subject_params,
         },
-        auth_required: requires_auth(&method.sig),
+        auth_policy: auth_policy_from_intent(&method.sig, args.auth)
+            .map_err(|error| error.to_compile_error())?,
         payload_meta,
         response_meta,
         payload,
@@ -824,11 +833,7 @@ fn client_contract_doc_lines(
         String::new(),
         format!(
             "- Authentication: {}.",
-            if endpoint.auth_required {
-                "required"
-            } else {
-                "not required"
-            }
+            auth_policy_doc(endpoint.auth_policy)
         ),
         format!(
             "- Request payload: {}",

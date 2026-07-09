@@ -146,7 +146,8 @@ fn process_endpoint_method_emits_metadata_for_service_wiring() {
     assert_eq!(client_endpoint.subject.pattern, "users.*.profile");
     assert_eq!(client_endpoint.subject.params[0].name, "user_id");
     assert!(def_tokens.contains("queue_group : Some (\"workers\" . to_string ())"));
-    assert!(def_tokens.contains("auth_required : true"));
+    assert!(def_tokens.contains("auth_policy"));
+    assert!(def_tokens.contains("AuthPolicy :: Required"));
     assert!(def_tokens.contains("concurrency_limit : Some (8"));
     assert!(info_tokens.contains("PayloadEncoding :: Json"));
     assert!(info_tokens.contains("ResponseEncoding :: Json"));

@@ -65,5 +65,5 @@ fn main() {
     let con = &def_b.consumer_info[0];
     assert_eq!(con.fn_name, "handle_event");
     assert_eq!(con.stream, "EVENTS");
-    assert!(!con.auth_required);
+    assert!(!con.auth_required());
 }

@@ -105,6 +105,21 @@ impl ServiceMetadata {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthPolicy {
+    None,
+    Optional,
+    Required,
+}
+
+impl AuthPolicy {
+    #[must_use]
+    pub fn auth_required(self) -> bool {
+        matches!(self, Self::Required)
+    }
+}
+
 #[derive(Clone)]
 pub struct EndpointDefinition {
     pub subject_prefix: Option<String>,
@@ -116,12 +131,17 @@ pub struct EndpointDefinition {
     pub subject: String,
     pub subject_template: Option<String>,
     pub queue_group: Option<String>,
-    pub auth_required: bool,
+    pub auth_policy: AuthPolicy,
     pub concurrency_limit: Option<u64>,
     pub handler: HandlerFn,
 }
 
 impl EndpointDefinition {
+    #[must_use]
+    pub fn auth_required(&self) -> bool {
+        self.auth_policy.auth_required()
+    }
+
     pub fn full_subject(&self) -> String {
         build_subject(
             self.subject_prefix.as_deref(),
@@ -188,11 +208,18 @@ pub struct EndpointInfo {
     pub subject_pattern: String,
     pub group: String,
     pub queue_group: Option<String>,
-    pub auth_required: bool,
+    pub auth_policy: AuthPolicy,
     pub concurrency_limit: Option<u64>,
     pub params: Vec<ParamInfo>,
     pub payload_meta: Option<PayloadMeta>,
     pub response_meta: ResponseMeta,
+}
+
+impl EndpointInfo {
+    #[must_use]
+    pub fn auth_required(&self) -> bool {
+        self.auth_policy.auth_required()
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -200,9 +227,16 @@ pub struct ConsumerInfo {
     pub fn_name: String,
     pub stream: String,
     pub durable: String,
-    pub auth_required: bool,
+    pub auth_policy: AuthPolicy,
     pub concurrency_limit: Option<u64>,
     pub params: Vec<ParamInfo>,
+}
+
+impl ConsumerInfo {
+    #[must_use]
+    pub fn auth_required(&self) -> bool {
+        self.auth_policy.auth_required()
+    }
 }
 
 #[derive(Clone)]

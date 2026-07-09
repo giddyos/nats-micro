@@ -60,7 +60,10 @@ fn request_context() -> RequestContext {
 fn prelude_reexports_service_authoring_surface() {
     let def = PreludeService::definition();
     assert_eq!(def.metadata.name, "prelude-smoke");
-    assert_eq!(PreludeService::echo_endpoint().full_subject(), "prelude-smoke.v1.echo.*");
+    assert_eq!(
+        PreludeService::echo_endpoint().full_subject(),
+        "prelude-smoke.v1.echo.*"
+    );
 
     let mut headers = Headers::new();
     headers.insert("x-request-id", "req-prelude");

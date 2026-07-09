@@ -61,12 +61,14 @@ fn consumer_methods_emit_config_auth_and_shutdown_metadata() {
     assert_eq!(generated.attrs.len(), 1);
     assert!(def_tokens.contains("stream : \"DEMO\" . to_string ()"));
     assert!(def_tokens.contains("durable : \"cleanup\" . to_string ()"));
-    assert!(def_tokens.contains("auth_required : true"));
+    assert!(def_tokens.contains("auth_policy"));
+    assert!(def_tokens.contains("AuthPolicy :: Required"));
     assert!(def_tokens.contains("concurrency_limit : Some (4"));
     assert!(def_tokens.contains("let __config"));
     assert!(def_tokens.contains("ConsumerConfig"));
     assert!(def_tokens.contains("new_with_shutdown_signal_support (true"));
-    assert!(info_tokens.contains("auth_required : true"));
+    assert!(info_tokens.contains("auth_policy"));
+    assert!(info_tokens.contains("AuthPolicy :: Required"));
     assert!(info_tokens.contains("concurrency_limit : Some (4"));
     assert!(
         generated

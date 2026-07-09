@@ -60,8 +60,9 @@ fn build_endpoint_handler_item(
     client_endpoint: &ClientEndpointSpec,
 ) -> Result<GeneratedHandlerItem, TokenStream> {
     let nats_micro = nats_micro_path();
-    let auth_required = auth_required_from_intent(&method.sig, args.auth)
+    let auth_policy = auth_policy_from_intent(&method.sig, args.auth)
         .map_err(|error| error.to_compile_error())?;
+    let auth_policy_tokens = auth_policy_tokens(auth_policy, &nats_micro);
     let fn_name = &method.sig.ident;
     let subject = &client_endpoint.subject.template;
     let group = &client_endpoint.group;
@@ -97,7 +98,7 @@ fn build_endpoint_handler_item(
                     subject: #nats_subject.to_string(),
                     subject_template: #subject_template,
                     queue_group: #queue_group,
-                    auth_required: #auth_required,
+                    auth_policy: #auth_policy_tokens,
                     concurrency_limit: #concurrency_limit,
                     handler: #handler,
                 }
@@ -111,7 +112,7 @@ fn build_endpoint_handler_item(
                 subject_pattern: #nats_subject.to_string(),
                 group: #group.to_string(),
                 queue_group: #queue_group,
-                auth_required: #auth_required,
+                auth_policy: #auth_policy_tokens,
                 concurrency_limit: #concurrency_limit,
                 params: vec![#(#param_infos),*],
                 payload_meta: #payload_meta,
@@ -121,10 +122,10 @@ fn build_endpoint_handler_item(
     })
 }
 
-fn auth_required_from_intent(
+pub(crate) fn auth_policy_from_intent(
     sig: &Signature,
     intent: Option<AuthIntent>,
-) -> Result<bool, syn::Error> {
+) -> Result<AuthIntent, syn::Error> {
     let has_required = requires_auth(sig);
     let has_optional = has_optional_auth(sig);
 
@@ -143,9 +144,18 @@ fn auth_required_from_intent(
             &sig.ident,
             "`auth = none` cannot be used with `Auth<T>` or `Option<Auth<T>>` handler arguments",
         )),
-        Some(AuthIntent::Required) => Ok(true),
-        Some(AuthIntent::Optional | AuthIntent::None) => Ok(false),
-        None => Ok(has_required),
+        Some(intent) => Ok(intent),
+        None if has_required => Ok(AuthIntent::Required),
+        None if has_optional => Ok(AuthIntent::Optional),
+        None => Ok(AuthIntent::None),
+    }
+}
+
+pub(crate) fn auth_policy_tokens(policy: AuthIntent, nats_micro: &syn::Path) -> TokenStream {
+    match policy {
+        AuthIntent::None => quote! { #nats_micro::__macros::AuthPolicy::None },
+        AuthIntent::Optional => quote! { #nats_micro::__macros::AuthPolicy::Optional },
+        AuthIntent::Required => quote! { #nats_micro::__macros::AuthPolicy::Required },
     }
 }
 

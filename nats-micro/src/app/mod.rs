@@ -351,7 +351,7 @@ impl NatsApp {
                 subject = %endpoint_subject,
                 full_subject = %endpoint_full_subject,
                 queue_group = ?queue_group,
-                auth_required = endpoint_def.auth_required,
+                auth_policy = ?endpoint_def.auth_policy,
                 requested_concurrency_limit = ?endpoint_def.concurrency_limit,
                 concurrency_limit = concurrency_limit,
                 "registering endpoint"
@@ -428,7 +428,7 @@ impl NatsApp {
                 service = %service_name,
                 stream = %consumer_def.stream,
                 durable = %consumer_def.durable,
-                auth_required = consumer_def.auth_required,
+                auth_policy = ?consumer_def.auth_policy,
                 requested_concurrency_limit = ?consumer_def.concurrency_limit,
                 "initializing consumer"
             );
