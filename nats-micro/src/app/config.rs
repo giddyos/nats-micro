@@ -114,6 +114,10 @@ impl NatsAppConfig {
             self.max_concurrency_limit > 0,
             "NatsAppConfig.max_concurrency_limit must be greater than 0"
         );
+        anyhow::ensure!(
+            self.default_concurrency_limit <= self.max_concurrency_limit,
+            "NatsAppConfig.default_concurrency_limit cannot exceed max_concurrency_limit"
+        );
         Ok(())
     }
 }

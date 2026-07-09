@@ -11,7 +11,7 @@ use super::{
     limits::{
         DEFAULT_CONCURRENCY_LIMIT, DEFAULT_MAX_CONCURRENCY_LIMIT, ResolvedConsumerConcurrencyLimit,
         resolve_consumer_concurrency_limit, resolve_endpoint_concurrency_limit,
-        validate_consumer_concurrency_limit,
+        validate_consumer_concurrency_limit, validate_requested_concurrency_limit,
     },
     shutdown::{
         ShutdownHookFuture, run_shutdown_hook, shutdown_deadline, spawn_supervised_worker,
@@ -26,7 +26,8 @@ fn endpoint_concurrency_limit_defaults_to_constant() {
             None,
             DEFAULT_CONCURRENCY_LIMIT,
             DEFAULT_MAX_CONCURRENCY_LIMIT
-        ),
+        )
+        .unwrap(),
         DEFAULT_CONCURRENCY_LIMIT
     );
     assert_eq!(
@@ -34,17 +35,18 @@ fn endpoint_concurrency_limit_defaults_to_constant() {
             Some(42),
             DEFAULT_CONCURRENCY_LIMIT,
             DEFAULT_MAX_CONCURRENCY_LIMIT
-        ),
+        )
+        .unwrap(),
         42
     );
 }
 
 #[test]
-fn endpoint_concurrency_limit_is_capped() {
-    assert_eq!(
-        resolve_endpoint_concurrency_limit(Some(10_000), DEFAULT_CONCURRENCY_LIMIT, 4_096),
-        4_096
-    );
+fn endpoint_concurrency_limit_rejects_explicit_values_above_max() {
+    let err = resolve_endpoint_concurrency_limit(Some(10_000), DEFAULT_CONCURRENCY_LIMIT, 4_096)
+        .unwrap_err();
+
+    assert!(err.to_string().contains("max_concurrency_limit"));
 }
 
 #[test]
@@ -52,6 +54,12 @@ fn consumer_concurrency_limit_rejects_positive_max_ack_pending_violations() {
     assert!(validate_consumer_concurrency_limit(11, 10).is_err());
     assert!(validate_consumer_concurrency_limit(10, 10).is_ok());
     assert!(validate_consumer_concurrency_limit(100, 0).is_ok());
+}
+
+#[test]
+fn requested_concurrency_limit_rejects_values_above_max() {
+    assert!(validate_requested_concurrency_limit(4_097, 4_096).is_err());
+    assert!(validate_requested_concurrency_limit(4_096, 4_096).is_ok());
 }
 
 #[test]
@@ -100,23 +108,6 @@ fn explicit_consumer_concurrency_limit_is_preserved() {
         ),
         ResolvedConsumerConcurrencyLimit {
             value: 64,
-            promoted_from_default: false,
-        }
-    );
-}
-
-#[test]
-fn explicit_consumer_concurrency_limit_is_capped() {
-    assert_eq!(
-        resolve_consumer_concurrency_limit(
-            Some(8_192),
-            100_000,
-            DEFAULT_CONCURRENCY_LIMIT,
-            4_096,
-            true
-        ),
-        ResolvedConsumerConcurrencyLimit {
-            value: 4_096,
             promoted_from_default: false,
         }
     );
@@ -188,6 +179,17 @@ fn app_config_rejects_zero_max_concurrency_limit() {
         .unwrap_err();
 
     assert!(err.to_string().contains("greater than 0"));
+}
+
+#[test]
+fn app_config_rejects_default_concurrency_above_max() {
+    let err = NatsAppConfig::new()
+        .with_default_concurrency_limit(128)
+        .with_max_concurrency_limit(64)
+        .validate()
+        .unwrap_err();
+
+    assert!(err.to_string().contains("cannot exceed"));
 }
 
 #[tokio::test]

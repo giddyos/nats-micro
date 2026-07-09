@@ -13,8 +13,16 @@ pub(super) fn resolve_endpoint_concurrency_limit(
     requested_limit: Option<u64>,
     default_limit: u64,
     max_limit: u64,
-) -> u64 {
-    requested_limit.unwrap_or(default_limit).min(max_limit)
+) -> Result<u64> {
+    if let Some(limit) = requested_limit {
+        anyhow::ensure!(
+            limit <= max_limit,
+            "requested concurrency_limit ({limit}) cannot exceed max_concurrency_limit ({max_limit})"
+        );
+        Ok(limit)
+    } else {
+        Ok(default_limit)
+    }
 }
 
 pub(super) fn validate_consumer_concurrency_limit(limit: u64, max_ack_pending: i64) -> Result<()> {
@@ -37,8 +45,12 @@ pub(super) fn resolve_consumer_concurrency_limit(
     promote_server_max_ack_pending: bool,
 ) -> ResolvedConsumerConcurrencyLimit {
     if let Some(limit) = requested_limit {
+        debug_assert!(
+            limit <= max_limit,
+            "requested consumer concurrency_limit must be validated before resolving"
+        );
         ResolvedConsumerConcurrencyLimit {
-            value: limit.min(max_limit),
+            value: limit,
             promoted_from_default: false,
         }
     } else {
@@ -53,11 +65,19 @@ pub(super) fn resolve_consumer_concurrency_limit(
                 promoted_from_default: true,
             },
             None => ResolvedConsumerConcurrencyLimit {
-                value: default_limit.min(max_limit),
+                value: default_limit,
                 promoted_from_default: false,
             },
         }
     }
+}
+
+pub(super) fn validate_requested_concurrency_limit(limit: u64, max_limit: u64) -> Result<()> {
+    anyhow::ensure!(
+        limit <= max_limit,
+        "requested concurrency_limit ({limit}) cannot exceed max_concurrency_limit ({max_limit})"
+    );
+    Ok(())
 }
 
 pub(super) fn semaphore_permits(limit: u64) -> usize {

@@ -26,7 +26,7 @@ use crate::{
 use self::{
     limits::{
         resolve_consumer_concurrency_limit, resolve_endpoint_concurrency_limit,
-        validate_consumer_concurrency_limit,
+        validate_consumer_concurrency_limit, validate_requested_concurrency_limit,
     },
     prepare::{PreparedRequest, prepare_request_for_dispatch_with_state},
     shutdown::{
@@ -343,7 +343,14 @@ impl NatsApp {
                 endpoint_def.concurrency_limit,
                 self.config.default_concurrency_limit(),
                 self.config.max_concurrency_limit(),
-            );
+            )
+            .map_err(|err| {
+                anyhow::anyhow!(
+                    "endpoint `{}` for service `{}` has invalid concurrency limit: {err}",
+                    endpoint_def.fn_name,
+                    endpoint_service_name
+                )
+            })?;
 
             debug!(
                 service = %endpoint_service_name,
@@ -451,6 +458,15 @@ impl NatsApp {
             consumer_config.durable_name = Some(durable.clone());
 
             if let Some(limit) = consumer_def.concurrency_limit {
+                validate_requested_concurrency_limit(limit, max_concurrency_limit).map_err(
+                    |err| {
+                        anyhow::anyhow!(
+                            "consumer `{}` on stream `{}` has invalid concurrency limit: {err}",
+                            durable,
+                            consumer_def.stream
+                        )
+                    },
+                )?;
                 validate_consumer_concurrency_limit(limit, consumer_config.max_ack_pending)
                     .map_err(|err| {
                         anyhow::anyhow!(
