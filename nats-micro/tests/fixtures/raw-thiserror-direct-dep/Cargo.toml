@@ -1,5 +1,5 @@
 [package]
-name = "raw-thiserror-reexport"
+name = "raw-thiserror-direct-dep"
 version = "0.0.0"
 edition = "2024"
 
