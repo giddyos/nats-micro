@@ -1,4 +1,4 @@
-use std::{fmt::Display, path::PathBuf, time::Duration};
+use std::{fmt::Display, path::PathBuf, str::FromStr, time::Duration};
 
 use async_nats::HeaderMap;
 use bytes::Bytes;
@@ -425,13 +425,32 @@ impl ClientCallOptions {
         options
     }
 
-    pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+    pub fn try_header(
+        mut self,
+        key: impl Into<String>,
+        value: impl Into<String>,
+    ) -> Result<Self, NatsErrorResponse> {
         let key = key.into();
         let value = value.into();
-        if let Ok(val) = value.parse::<async_nats::HeaderValue>() {
-            self.plaintext_headers.insert(key.as_str(), val);
-        }
-        self
+        let name = async_nats::HeaderName::from_str(&key).map_err(|error| {
+            framework_error(
+                FrameworkError::InvalidHeader,
+                format!("invalid client header name `{key}`: {error}"),
+            )
+        })?;
+        let val = value.parse::<async_nats::HeaderValue>().map_err(|error| {
+            framework_error(
+                FrameworkError::InvalidHeader,
+                format!("invalid client header value for `{key}`: {error}"),
+            )
+        })?;
+        self.plaintext_headers.insert(name, val);
+        Ok(self)
+    }
+
+    pub fn header(self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.try_header(key, value)
+            .expect("invalid client header name or value")
     }
 
     pub fn bearer_token(mut self, token: impl Into<String>) -> Self {
@@ -592,8 +611,24 @@ impl ClientCallOptions {
 
 #[cfg(test)]
 mod tests {
-    use super::{AuthOptions, ConnectOptions, connect};
+    use super::{AuthOptions, ClientCallOptions, ConnectOptions, connect};
     use nats_micro_shared::FrameworkError;
+
+    #[test]
+    fn try_header_rejects_invalid_header_values() {
+        let Err(err) = ClientCallOptions::new().try_header("x-trace", "bad\r\nvalue") else {
+            panic!("invalid header value should be rejected");
+        };
+
+        assert_eq!(err.kind, FrameworkError::InvalidHeader.as_code());
+        assert!(err.message.contains("invalid client header value"));
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid client header name or value")]
+    fn header_panics_for_invalid_header_values() {
+        let _ = ClientCallOptions::new().header("x-trace", "bad\r\nvalue");
+    }
 
     #[tokio::test]
     async fn connect_rejects_conflicting_auth_modes_before_dialing() {

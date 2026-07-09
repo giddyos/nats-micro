@@ -71,7 +71,7 @@ where
             }
         }
 
-        options = options.header(name, value);
+        options = options.try_header(name, value)?;
     }
 
     Ok(options)

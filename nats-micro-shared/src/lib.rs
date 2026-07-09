@@ -61,6 +61,7 @@ define_error_code_enum! {
         Forbidden => { code: "FORBIDDEN", status: 403 },
         InitializationError => { code: "INITIALIZATION_ERROR", status: 503 },
         InternalError => { code: "INTERNAL_ERROR", status: 500 },
+        InvalidHeader => { code: "INVALID_HEADER", status: 400 },
         InvalidResponse => { code: "INVALID_RESPONSE", status: 502 },
         ParamNameMissing => { code: "PARAM_NAME_MISSING", status: 500 },
         SerializationError => { code: "SERIALIZATION_ERROR", status: 500 },
