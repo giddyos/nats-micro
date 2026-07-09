@@ -59,7 +59,31 @@ fn request_context() -> RequestContext {
 #[test]
 fn prelude_reexports_service_authoring_surface() {
     let def = PreludeService::definition();
+    let contract: ServiceContract = PreludeService::contract();
+    let descriptor = EndpointDescriptor {
+        subject_prefix: def.metadata.subject_prefix.clone(),
+        service_version: def.metadata.version.clone(),
+        group: String::new(),
+        subject_template: "echo.{id}".to_string(),
+        subject_pattern: "echo.*".to_string(),
+    };
+    let payload_meta = PayloadMeta {
+        encoding: PayloadEncoding::Json,
+        encrypted: false,
+        inner_type: "PreludeRequest".to_string(),
+    };
+    let response_meta = ResponseMeta {
+        encoding: ResponseEncoding::Json,
+        encrypted: false,
+        inner_type: "PreludeResponse".to_string(),
+    };
+
     assert_eq!(def.metadata.name, "prelude-smoke");
+    assert_eq!(contract.metadata.name, "prelude-smoke");
+    assert_eq!(descriptor.full_subject(), "prelude-smoke.v1.echo.*");
+    assert_eq!(payload_meta.encoding, PayloadEncoding::Json);
+    assert_eq!(response_meta.encoding, ResponseEncoding::Json);
+    assert!(!AuthPolicy::Optional.auth_required());
     assert_eq!(
         PreludeService::echo_endpoint().full_subject(),
         "prelude-smoke.v1.echo.*"

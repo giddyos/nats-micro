@@ -13,8 +13,9 @@ pub use crate::request::NatsRequest;
 pub use crate::request::{Header, Headers};
 pub use crate::response::{IntoNatsResponse, NatsResponse};
 pub use crate::service::{
-    ConsumerInfo, EndpointDefinition, EndpointInfo, NatsService, ParamInfo, ServiceDefinition,
-    ServiceMetadata,
+    AuthPolicy, ConsumerInfo, EndpointDefinition, EndpointDescriptor, EndpointInfo, NatsService,
+    ParamInfo, PayloadEncoding, PayloadMeta, ResponseEncoding, ResponseMeta, ServiceContract,
+    ServiceDefinition, ServiceMetadata,
 };
 pub use crate::state::StateMap;
 pub use crate::{HandlerPanicPolicy, NatsApp, NatsAppConfig, WorkerFailurePolicy};
