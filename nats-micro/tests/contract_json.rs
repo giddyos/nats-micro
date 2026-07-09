@@ -1,3 +1,5 @@
+#![allow(clippy::unused_async)]
+
 use nats_micro::{Json, NatsErrorResponse, Payload, service, service_handlers};
 use serde::{Deserialize, Serialize};
 

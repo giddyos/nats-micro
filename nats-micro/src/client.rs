@@ -378,13 +378,13 @@ fn apply_headers_to_builder(
     for (key, value) in encrypted_headers {
         builder = builder
             .try_encrypted_header(key, value)
-            .map_err(encryption_error_to_invalid_header)?;
+            .map_err(|error| encryption_error_to_invalid_header(&error))?;
     }
     Ok(builder)
 }
 
 #[cfg(feature = "encryption")]
-fn encryption_error_to_invalid_header(error: crate::EncryptionError) -> NatsErrorResponse {
+fn encryption_error_to_invalid_header(error: &crate::EncryptionError) -> NatsErrorResponse {
     framework_error(FrameworkError::InvalidHeader, error.to_string())
 }
 
@@ -508,7 +508,7 @@ impl ClientCallOptions {
             ));
         }
 
-        self.encrypted_headers.push((key.into(), value.into()));
+        self.encrypted_headers.push((key, value));
         Ok(self)
     }
 

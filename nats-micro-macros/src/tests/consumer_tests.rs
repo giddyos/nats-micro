@@ -19,9 +19,8 @@ fn consumer_methods_require_stream() {
         }
     };
 
-    let error = match process_consumer_method(&struct_ident, &method, consumer_attr(&method)) {
-        Ok(_) => panic!("missing consumer stream should fail macro validation"),
-        Err(error) => error,
+    let Err(error) = process_consumer_method(&struct_ident, &method, consumer_attr(&method)) else {
+        panic!("missing consumer stream should fail macro validation");
     };
     let error = error.to_string();
 

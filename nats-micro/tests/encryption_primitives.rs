@@ -212,12 +212,11 @@ fn request_builder_try_header_rejects_invalid_plaintext_name() {
     let keypair = ServiceKeyPair::generate();
     let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
 
-    let error = match recipient
+    let Err(error) = recipient
         .request_builder()
         .try_header("bad header", "value")
-    {
-        Ok(_) => panic!("invalid plaintext header name should be rejected"),
-        Err(error) => error,
+    else {
+        panic!("invalid plaintext header name should be rejected");
     };
 
     assert!(error.to_string().contains("invalid plaintext header name"));
@@ -228,12 +227,11 @@ fn request_builder_try_header_rejects_invalid_plaintext_value() {
     let keypair = ServiceKeyPair::generate();
     let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
 
-    let error = match recipient
+    let Err(error) = recipient
         .request_builder()
         .try_header("x-trace", "bad\r\nvalue")
-    {
-        Ok(_) => panic!("invalid plaintext header value should be rejected"),
-        Err(error) => error,
+    else {
+        panic!("invalid plaintext header value should be rejected");
     };
 
     assert!(error.to_string().contains("invalid plaintext header value"));
@@ -255,12 +253,11 @@ fn request_builder_rejects_reserved_encrypted_header_names() {
     let keypair = ServiceKeyPair::generate();
     let recipient = ServiceRecipient::from_bytes(keypair.public_key_bytes());
 
-    let error = match recipient
+    let Err(error) = recipient
         .request_builder()
         .try_encrypted_header("x-encrypted-headers", "confusing")
-    {
-        Ok(_) => panic!("reserved encrypted header name should be rejected"),
-        Err(error) => error,
+    else {
+        panic!("reserved encrypted header name should be rejected");
     };
 
     assert!(error.to_string().contains("reserved"));
