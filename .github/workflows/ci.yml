@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-features --all-targets -- -D warnings
+
+      - name: Test all features
+        run: cargo test --workspace --all-features
+
+      - name: Check no default features
+        run: cargo check -p nats-micro --no-default-features
+
+      - name: Check client feature
+        run: cargo check -p nats-micro --features client
+
+      - name: Check encryption feature
+        run: cargo check -p nats-micro --features encryption
+
+      - name: Check release all features
+        run: cargo check --release --workspace --all-features
