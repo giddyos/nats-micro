@@ -20,6 +20,25 @@ pub(crate) struct EndpointArgs {
     pub group: Option<String>,
     pub queue_group: Option<String>,
     pub concurrency_limit: Option<u64>,
+    pub auth: Option<AuthIntent>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AuthIntent {
+    Required,
+    Optional,
+    None,
+}
+
+impl FromMeta for AuthIntent {
+    fn from_string(value: &str) -> darling::Result<Self> {
+        match value {
+            "required" => Ok(Self::Required),
+            "optional" => Ok(Self::Optional),
+            "none" => Ok(Self::None),
+            _ => Err(darling::Error::unknown_value(value)),
+        }
+    }
 }
 
 pub(crate) fn process_endpoint_method(
@@ -41,7 +60,8 @@ fn build_endpoint_handler_item(
     client_endpoint: &ClientEndpointSpec,
 ) -> Result<GeneratedHandlerItem, TokenStream> {
     let nats_micro = nats_micro_path();
-    let auth_required = requires_auth(&method.sig);
+    let auth_required = auth_required_from_intent(&method.sig, args.auth)
+        .map_err(|error| error.to_compile_error())?;
     let fn_name = &method.sig.ident;
     let subject = &client_endpoint.subject.template;
     let group = &client_endpoint.group;
@@ -99,6 +119,34 @@ fn build_endpoint_handler_item(
             }
         },
     })
+}
+
+fn auth_required_from_intent(
+    sig: &Signature,
+    intent: Option<AuthIntent>,
+) -> Result<bool, syn::Error> {
+    let has_required = requires_auth(sig);
+    let has_optional = has_optional_auth(sig);
+
+    match intent {
+        Some(AuthIntent::Required) if !has_required => Err(syn::Error::new_spanned(
+            &sig.ident,
+            "`auth = required` requires a non-optional `Auth<T>` handler argument",
+        )),
+        Some(AuthIntent::Optional) if has_required || !has_optional => {
+            Err(syn::Error::new_spanned(
+                &sig.ident,
+                "`auth = optional` requires `Option<Auth<T>>` and no required `Auth<T>` arguments",
+            ))
+        }
+        Some(AuthIntent::None) if has_required || has_optional => Err(syn::Error::new_spanned(
+            &sig.ident,
+            "`auth = none` cannot be used with `Auth<T>` or `Option<Auth<T>>` handler arguments",
+        )),
+        Some(AuthIntent::Required) => Ok(true),
+        Some(AuthIntent::Optional | AuthIntent::None) => Ok(false),
+        None => Ok(has_required),
+    }
 }
 
 fn optional_string_tokens(value: Option<&str>) -> TokenStream {
@@ -391,6 +439,13 @@ pub(crate) fn requires_auth(sig: &Signature) -> bool {
         .iter()
         .filter_map(typed_arg_type)
         .any(|ty| is_auth_type(ty) && !is_option_auth(ty))
+}
+
+pub(crate) fn has_optional_auth(sig: &Signature) -> bool {
+    sig.inputs
+        .iter()
+        .filter_map(typed_arg_type)
+        .any(is_option_auth)
 }
 
 pub(crate) fn is_shutdown_signal_type(ty: &Type) -> bool {

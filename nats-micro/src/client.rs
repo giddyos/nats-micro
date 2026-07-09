@@ -396,6 +396,35 @@ impl ClientCallOptions {
         Self::default()
     }
 
+    pub fn from_request_context(ctx: &crate::RequestContext) -> Self {
+        let mut options = Self::new();
+
+        if !ctx.request.request_id.is_empty() {
+            options = options.header("x-request-id", ctx.request.request_id.clone());
+        }
+
+        for header in ctx.request.headers.iter() {
+            if !matches!(
+                header.key.to_ascii_lowercase().as_str(),
+                "traceparent" | "tracestate" | "baggage" | "x-client-name"
+            ) {
+                continue;
+            }
+
+            #[cfg(feature = "encryption")]
+            {
+                if header.was_encrypted {
+                    options = options.encrypted_header(header.key.clone(), header.value.clone());
+                    continue;
+                }
+            }
+
+            options = options.header(header.key.clone(), header.value.clone());
+        }
+
+        options
+    }
+
     pub fn header(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
         let key = key.into();
         let value = value.into();

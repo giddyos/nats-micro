@@ -12,6 +12,7 @@ fn service_metadata_includes_prefix_when_present() {
             version: "1.0.0".to_string(),
             description: Some("test".to_string()),
             prefix: Some("api".to_string()),
+            default_stream: None,
             #[cfg(feature = "macros_napi_feature")]
             napi: false,
         },
@@ -36,6 +37,7 @@ fn service_metadata_defaults_prefix_to_service_name_when_absent() {
             version: "1.0.0".to_string(),
             description: Some("test".to_string()),
             prefix: None,
+            default_stream: None,
             #[cfg(feature = "macros_napi_feature")]
             napi: false,
         },
@@ -61,6 +63,7 @@ fn service_expansion_emits_napi_gate_module() {
             version: "1.0.0".to_string(),
             description: Some("test".to_string()),
             prefix: None,
+            default_stream: Some("EVENTS".to_string()),
             napi: true,
         },
         &item_struct,
@@ -119,6 +122,7 @@ fn service_args_reject_non_numeric_semver() {
                 version: "1.2.3".to_string(),
                 description: None,
                 prefix: None,
+                default_stream: None,
                 #[cfg(feature = "macros_napi_feature")]
                 napi: false,
             },
@@ -133,6 +137,7 @@ fn service_args_reject_non_numeric_semver() {
             version: "1.2".to_string(),
             description: None,
             prefix: None,
+            default_stream: None,
             #[cfg(feature = "macros_napi_feature")]
             napi: false,
         },

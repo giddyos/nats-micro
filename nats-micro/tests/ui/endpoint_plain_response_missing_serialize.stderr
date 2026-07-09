@@ -22,7 +22,6 @@ help: the trait `nats_micro::serde::Serialize` is not implemented for `MissingSe
              (T0, T1, T2, T3, T4)
            and $N others
    = note: required for `Vec<MissingSerialize>` to implement `nats_micro::serde::Serialize`
-   = help: see issue #48214
    = note: this error originates in the attribute macro `service_handlers` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `MissingSerialize: serde::Deserialize<'de>` is not satisfied
@@ -50,7 +49,6 @@ help: the trait `nats_micro::serde::Deserialize<'_>` is not implemented for `Mis
            and $N others
    = note: required for `Vec<MissingSerialize>` to implement `for<'de> nats_micro::serde::Deserialize<'de>`
    = note: required for `Vec<MissingSerialize>` to implement `DeserializeOwned`
-   = help: see issue #48214
    = note: this error originates in the attribute macro `service_handlers` (in Nightly builds, run with -Z macro-backtrace for more info)
 
 error[E0277]: the trait bound `MissingSerialize: serde::Deserialize<'de>` is not satisfied
@@ -78,7 +76,7 @@ help: the trait `nats_micro::serde::Deserialize<'_>` is not implemented for `Mis
            and $N others
    = note: required for `Vec<MissingSerialize>` to implement `for<'de> nats_micro::serde::Deserialize<'de>`
    = note: required for `Vec<MissingSerialize>` to implement `DeserializeOwned`
-note: required by a bound in `deserialize_response`
+note: required by a bound in `nats_micro::__macros::deserialize_response`
   --> src/response.rs
    |
    | pub fn deserialize_response<

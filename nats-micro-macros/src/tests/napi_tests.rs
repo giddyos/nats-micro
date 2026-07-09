@@ -11,6 +11,7 @@ fn endpoint_args(subject: &str, group: Option<&str>) -> EndpointArgs {
         group: group.map(str::to_string),
         queue_group: None,
         concurrency_limit: None,
+        auth: None,
     }
 }
 

@@ -1,5 +1,6 @@
 use crate::consumer::ConsumerDefinition;
 use crate::handler::HandlerFn;
+use serde::Serialize;
 
 #[must_use]
 pub fn build_subject(prefix: Option<&str>, version: &str, group: &str, subject: &str) -> String {
@@ -39,12 +40,53 @@ pub fn build_subject(prefix: Option<&str>, version: &str, group: &str, subject: 
     full_subject
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ServiceMetadata {
     pub name: String,
     pub version: String,
     pub description: String,
     pub subject_prefix: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct EndpointDescriptor {
+    pub subject_prefix: Option<String>,
+    pub service_version: String,
+    pub group: String,
+    pub subject_template: String,
+    pub subject_pattern: String,
+}
+
+impl EndpointDescriptor {
+    #[must_use]
+    pub fn template(&self) -> &str {
+        &self.subject_template
+    }
+
+    #[must_use]
+    pub fn pattern(&self) -> &str {
+        &self.subject_pattern
+    }
+
+    #[must_use]
+    pub fn full_subject(&self) -> String {
+        build_subject(
+            self.subject_prefix.as_deref(),
+            &self.service_version,
+            &self.group,
+            &self.subject_pattern,
+        )
+    }
+
+    #[must_use]
+    pub fn full_subject_template(&self) -> String {
+        build_subject(
+            self.subject_prefix.as_deref(),
+            &self.service_version,
+            &self.group,
+            &self.subject_template,
+        )
+    }
 }
 
 impl ServiceMetadata {
@@ -101,14 +143,14 @@ impl EndpointDefinition {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ParamInfo {
     pub name: String,
     pub type_name: String,
     pub is_subject_param: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum PayloadEncoding {
     Json,
     Proto,
@@ -116,14 +158,14 @@ pub enum PayloadEncoding {
     Raw,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct PayloadMeta {
     pub encoding: PayloadEncoding,
     pub encrypted: bool,
     pub inner_type: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum ResponseEncoding {
     Json,
     Proto,
@@ -132,14 +174,14 @@ pub enum ResponseEncoding {
     Unit,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ResponseMeta {
     pub encoding: ResponseEncoding,
     pub encrypted: bool,
     pub inner_type: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct EndpointInfo {
     pub fn_name: String,
     pub subject_template: String,
@@ -153,7 +195,7 @@ pub struct EndpointInfo {
     pub response_meta: ResponseMeta,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ConsumerInfo {
     pub fn_name: String,
     pub stream: String,
@@ -172,8 +214,38 @@ pub struct ServiceDefinition {
     pub consumer_info: Vec<ConsumerInfo>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ServiceContract {
+    pub metadata: ServiceMetadata,
+    pub endpoints: Vec<EndpointInfo>,
+    pub consumers: Vec<ConsumerInfo>,
+}
+
+impl ServiceDefinition {
+    #[must_use]
+    pub fn contract(&self) -> ServiceContract {
+        ServiceContract {
+            metadata: self.metadata.clone(),
+            endpoints: self.endpoint_info.clone(),
+            consumers: self.consumer_info.clone(),
+        }
+    }
+
+    pub fn contract_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(&self.contract())
+    }
+}
+
 pub trait NatsService: Send + Sync + 'static {
     fn definition() -> ServiceDefinition;
+
+    fn contract() -> ServiceContract {
+        Self::definition().contract()
+    }
+
+    fn contract_json() -> Result<String, serde_json::Error> {
+        Self::definition().contract_json()
+    }
 }
 
 #[cfg(test)]

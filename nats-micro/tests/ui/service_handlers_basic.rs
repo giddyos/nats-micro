@@ -63,6 +63,15 @@ fn main() {
 
     let greet_endpoint = GreeterService::greet_endpoint();
     assert_eq!(greet_endpoint.full_subject(), "greeter.v1.hello.greet.*");
+    let endpoints = GreeterService::endpoints();
+    assert_eq!(endpoints.greet.template(), "greet.{name}");
+    assert_eq!(endpoints.greet.full_subject(), "greeter.v1.hello.greet.*");
+    assert_eq!(
+        endpoints.greet.full_subject_template(),
+        "greeter.v1.hello.greet.{name}"
+    );
+    assert_eq!(GreeterService::contract().endpoints.len(), 3);
+    assert!(GreeterService::contract_json().unwrap().contains("\"greeter\""));
 
     let _ = GreeterService::status_endpoint();
     let _ = GreeterService::greet_endpoint();

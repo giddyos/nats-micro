@@ -76,8 +76,13 @@ pub(super) fn prepare_request_for_dispatch_with_state(
                 .headers
                 .get("x-client-version")
                 .map(crate::request::Header::as_str);
+            let signed_request_id = req
+                .headers
+                .get("x-request-id")
+                .map(crate::request::Header::as_str)
+                .filter(|value| *value == req.request_id);
             let transcript = SignatureTranscript::new(&req.subject, &eph_pub, &req.payload)
-                .request_id(Some(&req.request_id))
+                .request_id(signed_request_id)
                 .client_version(client_version)
                 .encrypted_headers_value(encrypted_headers);
             verify_signature_for_transcript(&signature_key, &transcript, &signature).map_err(|_| {

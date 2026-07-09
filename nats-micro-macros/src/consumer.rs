@@ -5,7 +5,7 @@ use syn::{Expr, ImplItemFn};
 
 use crate::{
     endpoint::{build_handler_body, extract_param_info, requires_auth},
-    service::GeneratedHandlerItem,
+    service::{GeneratedHandlerItem, service_config_module_ident},
     utils::{conditional_attrs, nats_micro_path, parse_attr},
 };
 
@@ -34,7 +34,7 @@ pub(crate) fn process_consumer_method(
     let nats_micro = nats_micro_path();
     let args = parse_attr::<ConsumerArgs>(attr)?;
     let fn_name = &method.sig.ident;
-    let stream = args.stream.as_deref().unwrap_or("DEFAULT");
+    let stream = consumer_stream_tokens(struct_ident, args.stream.as_deref());
     let durable = args.durable.unwrap_or_else(|| fn_name.to_string());
     let auth_required = requires_auth(&method.sig);
     let concurrency_limit = optional_u64_tokens(args.concurrency_limit);
@@ -52,7 +52,7 @@ pub(crate) fn process_consumer_method(
             #[doc(hidden)]
             pub fn #accessor_name() -> #nats_micro::ConsumerDefinition {
                 #nats_micro::ConsumerDefinition {
-                    stream: #stream.to_string(),
+                    stream: #stream,
                     durable: #durable.to_string(),
                     auth_required: #auth_required,
                     concurrency_limit: #concurrency_limit,
@@ -65,7 +65,7 @@ pub(crate) fn process_consumer_method(
         info_expr: quote! {
             #nats_micro::__macros::ConsumerInfo {
                 fn_name: #fn_name_str.to_string(),
-                stream: #stream.to_string(),
+                stream: #stream,
                 durable: #durable.to_string(),
                 auth_required: #auth_required,
                 concurrency_limit: #concurrency_limit,
@@ -73,6 +73,20 @@ pub(crate) fn process_consumer_method(
             }
         },
     })
+}
+
+fn consumer_stream_tokens(struct_ident: &syn::Ident, stream: Option<&str>) -> TokenStream {
+    match stream {
+        Some(stream) => quote! { #stream.to_string() },
+        None => {
+            let service_config_module = service_config_module_ident(struct_ident);
+            quote! {
+                #service_config_module::DEFAULT_STREAM
+                    .expect("consumer stream is required; set `#[consumer(stream = \"...\")]` or `#[service(default_stream = \"...\")]`")
+                    .to_string()
+            }
+        }
+    }
 }
 
 fn optional_u64_tokens(value: Option<u64>) -> TokenStream {

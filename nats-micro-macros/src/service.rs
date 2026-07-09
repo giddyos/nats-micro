@@ -16,6 +16,7 @@ pub struct ServiceArgs {
     version: String,
     description: Option<String>,
     prefix: Option<String>,
+    default_stream: Option<String>,
     #[cfg(feature = "macros_napi_feature")]
     #[darling(default)]
     napi: bool,
@@ -55,6 +56,7 @@ pub fn expand_service(args: ServiceArgs, item_struct: &ItemStruct) -> TokenStrea
         version,
         description,
         prefix,
+        default_stream,
         napi,
     } = args;
     #[cfg(not(feature = "macros_napi_feature"))]
@@ -63,6 +65,7 @@ pub fn expand_service(args: ServiceArgs, item_struct: &ItemStruct) -> TokenStrea
         version,
         description,
         prefix,
+        default_stream,
     } = args;
 
     let service_name = name;
@@ -76,6 +79,7 @@ pub fn expand_service(args: ServiceArgs, item_struct: &ItemStruct) -> TokenStrea
     let napi_enabled = false;
 
     let emit_napi_items = emit_napi_items_tokens(napi_enabled);
+    let default_stream_tokens = default_stream_tokens(default_stream.as_deref());
 
     quote! {
         #item_struct
@@ -94,6 +98,8 @@ pub fn expand_service(args: ServiceArgs, item_struct: &ItemStruct) -> TokenStrea
 
         #[doc(hidden)]
         mod #service_config_module {
+            pub(crate) const DEFAULT_STREAM: Option<&'static str> = #default_stream_tokens;
+
             #emit_napi_items
         }
     }
@@ -178,6 +184,7 @@ pub fn expand_service_handlers(item_impl: &ItemImpl) -> TokenStream {
     cleaned_impl.items = cleaned_items;
     let client_module = render_client_module(&struct_ident, &client_endpoints);
     let napi_items = render_napi_items(&struct_ident, &client_endpoints);
+    let endpoint_descriptors = render_endpoint_descriptors(&struct_ident, &client_endpoints);
 
     quote! {
         #cleaned_impl
@@ -206,6 +213,7 @@ pub fn expand_service_handlers(item_impl: &ItemImpl) -> TokenStream {
         }
 
         #client_module
+        #endpoint_descriptors
         #napi_items
     }
 }
@@ -218,11 +226,18 @@ fn extract_ident_from_type(ty: &Type) -> Option<syn::Ident> {
     }
 }
 
-fn service_config_module_ident(service_ident: &syn::Ident) -> syn::Ident {
+pub(crate) fn service_config_module_ident(service_ident: &syn::Ident) -> syn::Ident {
     format_ident!(
         "__nats_micro_service_config_{}",
         service_ident.to_string().to_snake_case()
     )
+}
+
+fn default_stream_tokens(default_stream: Option<&str>) -> TokenStream {
+    match default_stream {
+        Some(default_stream) => quote! { Some(#default_stream) },
+        None => quote! { None },
+    }
 }
 
 fn service_subject_prefix_tokens(service_name: &str, prefix: Option<String>) -> TokenStream {
@@ -336,6 +351,63 @@ fn render_client_module(
         generate_client_module(struct_ident, &service_name, client_endpoints)
     } else {
         quote! {}
+    }
+}
+
+fn render_endpoint_descriptors(
+    struct_ident: &syn::Ident,
+    endpoints: &[ClientEndpointSpec],
+) -> TokenStream {
+    let nats_micro = nats_micro_path();
+    let descriptor_struct = format_ident!("{}Endpoints", struct_ident);
+    let fields: Vec<_> = endpoints
+        .iter()
+        .map(|endpoint| {
+            let field = &endpoint.fn_name;
+            quote! { pub #field: #nats_micro::EndpointDescriptor }
+        })
+        .collect();
+    let values: Vec<_> = endpoints
+        .iter()
+        .map(|endpoint| {
+            let field = &endpoint.fn_name;
+            let group = &endpoint.group;
+            let template = &endpoint.subject.template;
+            let pattern = &endpoint.subject.pattern;
+            quote! {
+                #field: #nats_micro::EndpointDescriptor {
+                    subject_prefix: __meta.subject_prefix.clone(),
+                    service_version: __meta.version.clone(),
+                    group: #group.to_string(),
+                    subject_template: #template.to_string(),
+                    subject_pattern: #pattern.to_string(),
+                }
+            }
+        })
+        .collect();
+
+    quote! {
+        #[derive(Debug, Clone)]
+        pub struct #descriptor_struct {
+            #(#fields,)*
+        }
+
+        impl #struct_ident {
+            pub fn endpoints() -> #descriptor_struct {
+                let __meta = Self::__nats_micro_service_meta();
+                #descriptor_struct {
+                    #(#values,)*
+                }
+            }
+
+            pub fn contract() -> #nats_micro::ServiceContract {
+                <Self as #nats_micro::NatsService>::contract()
+            }
+
+            pub fn contract_json() -> Result<String, #nats_micro::serde_json::Error> {
+                <Self as #nats_micro::NatsService>::contract_json()
+            }
+        }
     }
 }
 

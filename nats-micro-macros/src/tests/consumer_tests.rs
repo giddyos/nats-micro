@@ -10,7 +10,7 @@ fn consumer_attr(method: &ImplItemFn) -> &syn::Attribute {
 }
 
 #[test]
-fn consumer_methods_default_stream_and_durable_names() {
+fn consumer_methods_use_service_default_stream_and_durable_names() {
     let struct_ident = parse_quote!(DemoService);
     let method: ImplItemFn = parse_quote! {
         #[consumer()]
@@ -24,10 +24,11 @@ fn consumer_methods_default_stream_and_durable_names() {
     let def_tokens = generated.accessor_fn.to_string();
     let info_tokens = generated.info_expr.to_string();
 
-    assert!(def_tokens.contains("stream : \"DEFAULT\" . to_string ()"));
+    assert!(def_tokens.contains("DEFAULT_STREAM"));
+    assert!(def_tokens.contains("consumer stream is required"));
     assert!(def_tokens.contains("durable : \"jobs\" . to_string ()"));
     assert!(def_tokens.contains("new_with_shutdown_signal_support (false"));
-    assert!(info_tokens.contains("stream : \"DEFAULT\" . to_string ()"));
+    assert!(info_tokens.contains("DEFAULT_STREAM"));
     assert!(info_tokens.contains("durable : \"jobs\" . to_string ()"));
 }
 

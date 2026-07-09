@@ -47,8 +47,9 @@ pub use response::{IntoNatsResponse, NatsResponse, X_SUCCESS_HEADER};
 pub use serde;
 pub use serde_json;
 pub use service::{
-    ConsumerInfo, EndpointDefinition, EndpointInfo, NatsService, ParamInfo, PayloadEncoding,
-    PayloadMeta, ResponseEncoding, ResponseMeta, ServiceDefinition, ServiceMetadata,
+    ConsumerInfo, EndpointDefinition, EndpointDescriptor, EndpointInfo, NatsService, ParamInfo,
+    PayloadEncoding, PayloadMeta, ResponseEncoding, ResponseMeta, ServiceContract,
+    ServiceDefinition, ServiceMetadata,
 };
 pub use shutdown_signal::ShutdownSignal;
 pub use state::StateMap;

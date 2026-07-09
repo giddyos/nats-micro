@@ -94,13 +94,24 @@ fn _assert_client_module() {
     fn _assert_constructors(client: nats_micro::async_nats::Client) {
         let recipient = [7u8; 32];
         let _typed = DemoServiceClient::new(client.clone(), Some(recipient));
-        let _prefixed = DemoServiceClient::with_prefix(client, "demo", Some(recipient));
+        let _prefixed = DemoServiceClient::with_prefix(client.clone(), "demo", Some(recipient));
+        let _built = DemoServiceClient::builder(client)
+            .prefix("demo")
+            .default_header("x-client-name", "compile-test")
+            .expect("valid default header")
+            .with_recipient(recipient)
+            .build();
     }
 
     #[cfg(not(feature = "encryption"))]
     fn _assert_constructors(client: nats_micro::async_nats::Client) {
         let _typed = DemoServiceClient::new(client.clone());
-        let _prefixed = DemoServiceClient::with_prefix(client, "demo");
+        let _prefixed = DemoServiceClient::with_prefix(client.clone(), "demo");
+        let _built = DemoServiceClient::builder(client)
+            .prefix("demo")
+            .default_header("x-client-name", "compile-test")
+            .expect("valid default header")
+            .build();
     }
 
     fn _assert_sum(client: &DemoServiceClient) {
@@ -140,10 +151,29 @@ fn _assert_client_module() {
                 client.sum_with(&req, opts).await;
         };
     }
+
+    fn _assert_with_context(client: &DemoServiceClient, ctx: &nats_micro::RequestContext) {
+        let _ = async {
+            let req = SumRequest { numbers: vec![1] };
+            let _result: Result<SumResponse, nats_micro::ClientError<NatsErrorResponse>> =
+                client.sum_with_context(ctx, &req).await;
+        };
+    }
 }
 
 fn main() {
     let def = DemoService::definition();
     assert_eq!(def.metadata.name, "demo_svc");
     assert_eq!(def.endpoints.len(), 4);
+    let endpoints = DemoService::endpoints();
+    assert_eq!(endpoints.sum.full_subject(), "demo_svc.v1.math.sum");
+    assert_eq!(endpoints.get_profile.template(), "users.{user_id}.profile");
+    assert_eq!(
+        endpoints.get_profile.full_subject_template(),
+        "demo_svc.v1.accounts.users.{user_id}.profile"
+    );
+    let contract = DemoService::contract();
+    assert_eq!(contract.metadata.name, "demo_svc");
+    assert_eq!(contract.endpoints.len(), 4);
+    assert!(DemoService::contract_json().unwrap().contains("\"demo_svc\""));
 }

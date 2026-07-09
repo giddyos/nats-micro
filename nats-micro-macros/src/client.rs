@@ -24,8 +24,11 @@ impl ClientModuleSpec {
         let nats_micro = nats_micro_path();
         let module_name = &self.module_name;
         let client_struct_name = &self.client_struct_name;
+        let service_ident = &self.service_ident;
         let methods: Vec<_> = self.endpoints.iter().map(render_client_method).collect();
         let recipient_field = self.recipient_field_tokens(&nats_micro);
+        let recipient_none = self.recipient_none_tokens();
+        let recipient_from_builder = self.recipient_from_builder_tokens();
         let connect_fn = Self::connect_fn_tokens(&nats_micro);
         let new_fn = self.new_fn_tokens(&nats_micro);
         let from_connected_client_fn = self.connected_client_ctor_fn_tokens(&nats_micro);
@@ -42,11 +45,68 @@ impl ClientModuleSpec {
                     client: #nats_micro::async_nats::Client,
                     prefix: Option<String>,
                     service_version: String,
+                    default_headers: #nats_micro::async_nats::HeaderMap,
                     #recipient_field
+                }
+
+                pub struct ClientBuilder {
+                    client: #nats_micro::async_nats::Client,
+                    prefix: Option<String>,
+                    default_headers: #nats_micro::async_nats::HeaderMap,
+                    #recipient_field
+                }
+
+                impl ClientBuilder {
+                    pub fn prefix(mut self, prefix: impl Into<String>) -> Self {
+                        self.prefix = Some(prefix.into());
+                        self
+                    }
+
+                    pub fn default_header(
+                        mut self,
+                        key: impl AsRef<str>,
+                        value: impl AsRef<str>,
+                    ) -> Result<Self, #nats_micro::NatsErrorResponse> {
+                        let value = value.as_ref().parse::<#nats_micro::async_nats::HeaderValue>()
+                            .map_err(|error| {
+                                #nats_micro::NatsErrorResponse::framework(
+                                    #nats_micro::FrameworkError::Error,
+                                    format!("invalid default client header value: {error}"),
+                                )
+                            })?;
+                        self.default_headers.insert(key.as_ref(), value);
+                        Ok(self)
+                    }
+
+                    #with_recipient_fn
+
+                    pub fn build(self) -> #client_struct_name {
+                        let service_meta = #client_struct_name::service_meta();
+                        #client_struct_name {
+                            client: self.client,
+                            prefix: self.prefix.or(service_meta.subject_prefix),
+                            service_version: service_meta.version,
+                            default_headers: self.default_headers,
+                            #recipient_from_builder
+                        }
+                    }
                 }
 
                 impl #client_struct_name {
                     #connect_fn
+
+                    fn service_meta() -> #nats_micro::ServiceMetadata {
+                        #service_ident::__nats_micro_service_meta()
+                    }
+
+                    pub fn builder(client: #nats_micro::async_nats::Client) -> ClientBuilder {
+                        ClientBuilder {
+                            client,
+                            prefix: None,
+                            default_headers: #nats_micro::async_nats::HeaderMap::new(),
+                            #recipient_none
+                        }
+                    }
 
                     #new_fn
 
@@ -96,6 +156,22 @@ impl ClientModuleSpec {
         }
     }
 
+    fn recipient_none_tokens(&self) -> TokenStream {
+        if self.encryption_enabled {
+            quote! { recipient: None, }
+        } else {
+            quote! {}
+        }
+    }
+
+    fn recipient_from_builder_tokens(&self) -> TokenStream {
+        if self.encryption_enabled {
+            quote! { recipient: self.recipient, }
+        } else {
+            quote! {}
+        }
+    }
+
     fn new_fn_tokens(&self, nats_micro: &syn::Path) -> TokenStream {
         let service_ident = &self.service_ident;
         let service_meta = service_meta_tokens(service_ident);
@@ -111,6 +187,7 @@ impl ClientModuleSpec {
                         client,
                         prefix: service_meta.subject_prefix,
                         service_version: service_meta.version,
+                        default_headers: #nats_micro::async_nats::HeaderMap::new(),
                         #recipient_init
                     }
                 }
@@ -123,6 +200,7 @@ impl ClientModuleSpec {
                         client,
                         prefix: service_meta.subject_prefix,
                         service_version: service_meta.version,
+                        default_headers: #nats_micro::async_nats::HeaderMap::new(),
                     }
                 }
             }
@@ -146,6 +224,7 @@ impl ClientModuleSpec {
                         client,
                         prefix: subject_prefix.or(service_meta.subject_prefix),
                         service_version: service_meta.version,
+                        default_headers: #nats_micro::async_nats::HeaderMap::new(),
                         recipient,
                     }
                 }
@@ -163,6 +242,7 @@ impl ClientModuleSpec {
                         client,
                         prefix: subject_prefix.or(service_meta.subject_prefix),
                         service_version: service_meta.version,
+                        default_headers: #nats_micro::async_nats::HeaderMap::new(),
                     }
                 }
             }
@@ -185,6 +265,7 @@ impl ClientModuleSpec {
                         client,
                         prefix: Some(prefix.into()),
                         service_version: service_meta.version,
+                        default_headers: #nats_micro::async_nats::HeaderMap::new(),
                         #recipient_init
                     }
                 }
@@ -200,6 +281,7 @@ impl ClientModuleSpec {
                         client,
                         prefix: Some(prefix.into()),
                         service_version: service_meta.version,
+                        default_headers: #nats_micro::async_nats::HeaderMap::new(),
                     }
                 }
             }
@@ -229,6 +311,13 @@ impl ClientModuleSpec {
                     &self,
                     options: #nats_micro::ClientCallOptions,
                 ) -> #nats_micro::ClientCallOptions {
+                    let mut options = options;
+                    for (name, values) in self.default_headers.iter() {
+                        let name_str: &str = name.as_ref();
+                        for value in values {
+                            options = options.header(name_str, value.as_str());
+                        }
+                    }
                     let options = match &self.recipient {
                         Some(recipient) => options.with_default_recipient(recipient.clone()),
                         None => options,
@@ -246,6 +335,13 @@ impl ClientModuleSpec {
                     &self,
                     options: #nats_micro::ClientCallOptions,
                 ) -> #nats_micro::ClientCallOptions {
+                    let mut options = options;
+                    for (name, values) in self.default_headers.iter() {
+                        let name_str: &str = name.as_ref();
+                        for value in values {
+                            options = options.header(name_str, value.as_str());
+                        }
+                    }
                     options.with_required_header(
                         #nats_micro::X_CLIENT_VERSION_HEADER,
                         self.service_version.clone(),
@@ -785,9 +881,11 @@ fn render_client_method(endpoint: &ClientEndpointSpec) -> TokenStream {
     let nats_micro = nats_micro_path();
     let cfg_attrs = &endpoint.cfg_attrs;
     let docs = render_client_doc_attrs(endpoint, false);
+    let context_docs = render_client_doc_attrs(endpoint, false);
     let with_docs = render_client_doc_attrs(endpoint, true);
     let fn_ident = &endpoint.fn_name;
     let fn_with_ident = format_ident!("{}_with", fn_ident);
+    let fn_with_context_ident = format_ident!("{}_with_context", fn_ident);
     let error_type = &endpoint.error_type;
     let return_type = endpoint.response.return_type_tokens();
     let assertions = render_client_assertions(endpoint);
@@ -818,6 +916,20 @@ fn render_client_method(endpoint: &ClientEndpointSpec) -> TokenStream {
         ) -> Result<#return_type, #nats_micro::ClientError<#error_type>> {
             self.#fn_with_ident(#(#forward_args,)* #nats_micro::ClientCallOptions::new())
                 .await
+        }
+
+        #(#cfg_attrs)*
+        #(#context_docs)*
+        pub async fn #fn_with_context_ident(
+            &self,
+            ctx: &#nats_micro::RequestContext,
+            #(#all_with_args,)*
+        ) -> Result<#return_type, #nats_micro::ClientError<#error_type>> {
+            self.#fn_with_ident(
+                #(#forward_args,)*
+                #nats_micro::ClientCallOptions::from_request_context(ctx),
+            )
+            .await
         }
 
         #(#cfg_attrs)*

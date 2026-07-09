@@ -160,6 +160,7 @@ fn endpoint_args_capture_optional_queue_group_and_limit() {
         group: Some("demo".to_string()),
         queue_group: Some("workers".to_string()),
         concurrency_limit: Some(3),
+        auth: None,
     };
 
     assert_eq!(args.group.as_deref(), Some("demo"));
