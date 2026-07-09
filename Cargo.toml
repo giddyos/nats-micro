@@ -9,9 +9,9 @@ resolver = "2"
 
 [workspace.dependencies]
 # Workspace crates
-nats-micro-macros = { path = "nats-micro-macros", default-features = false }
-nats-micro-shared = { path = "nats-micro-shared" }
-nats-server = { path = "nats-server" }
+nats-micro-macros = { path = "nats-micro-macros", version = "1.0.0", default-features = false }
+nats-micro-shared = { path = "nats-micro-shared", version = "1.0.0" }
+nats-server = { path = "nats-server", version = "1.0.0" }
 
 # Runtime/shared
 anyhow = ">=1, <2"

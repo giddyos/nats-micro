@@ -1,7 +1,13 @@
 [package]
 name = "nats-micro"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/giddyos/nats-micro"
+description = "NATS microservice framework with service macros, generated clients, typed errors, consumers, and optional encryption"
+readme = "../README.md"
+keywords = ["nats", "microservices", "async", "rpc", "jetstream"]
+categories = ["asynchronous", "network-programming", "web-programming"]
 
 [features]
 default = ["encryption", "client"]

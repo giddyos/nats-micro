@@ -1,7 +1,13 @@
 [package]
 name = "nats-micro-macros"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/giddyos/nats-micro"
+description = "Procedural macros for nats-micro services, handlers, clients, consumers, objects, and service errors"
+readme = "../README.md"
+keywords = ["nats", "microservices", "macros", "rpc"]
+categories = ["asynchronous", "network-programming"]
 
 [lib]
 proc-macro = true

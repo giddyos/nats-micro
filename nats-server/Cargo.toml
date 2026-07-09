@@ -1,8 +1,13 @@
 [package]
 name = "nats-server"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
 license = "Apache-2.0"
+repository = "https://github.com/giddyos/nats-micro"
+description = "Test helper for launching local nats-server processes"
+readme = "../README.md"
+keywords = ["nats", "testing"]
+categories = ["development-tools::testing"]
 
 [dependencies]
 regex = { workspace = true, default-features = false, features = [

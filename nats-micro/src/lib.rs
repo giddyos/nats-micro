@@ -12,7 +12,7 @@
 //!
 //! # Service errors
 //!
-//! ```rust,ignore
+//! ```rust
 //! use nats_micro::service_error;
 //!
 //! #[service_error]
@@ -24,6 +24,8 @@
 //!     #[error("database query failed")]
 //!     Database(#[from] std::io::Error),
 //! }
+//!
+//! # fn main() {}
 //! ```
 //!
 //! Raw `thiserror` is available as [`thiserror`] / [`Error`] for advanced local

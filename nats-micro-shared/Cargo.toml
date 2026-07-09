@@ -1,7 +1,13 @@
 [package]
 name = "nats-micro-shared"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/giddyos/nats-micro"
+description = "Shared error codes and transport types for nats-micro"
+readme = "../README.md"
+keywords = ["nats", "microservices", "errors"]
+categories = ["asynchronous", "network-programming"]
 
 [dependencies]
 serde = { workspace = true }
