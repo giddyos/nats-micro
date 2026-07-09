@@ -1,0 +1,17 @@
+error: #[service_error] enums must be declared `pub` when the `client` feature is enabled
+ --> tests/ui/service_error_private_with_client_feature.rs:4:6
+  |
+4 | enum DemoError {
+  |      ^^^^^^^^^
+
+error: cannot find attribute `error` in this scope
+ --> tests/ui/service_error_private_with_client_feature.rs:5:7
+  |
+5 |     #[error("empty")]
+  |       ^^^^^
+  |
+help: `error` is an attribute that can be used by the derive macro `Error`, you might be missing a `derive` attribute
+  |
+4 + #[derive(Error)]
+5 | enum DemoError {
+  |

@@ -1,0 +1,6 @@
+error: #[source] is only valid on one field per service_error variant
+ --> tests/ui/service_error_duplicate_source.rs:8:9
+  |
+8 | /         #[source]
+9 | |         cause: std::io::Error,
+  | |_____________________________^

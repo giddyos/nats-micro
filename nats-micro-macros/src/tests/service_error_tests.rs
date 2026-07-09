@@ -20,7 +20,7 @@ fn service_error_adds_debug_and_error_impls() {
 }
 
 #[test]
-fn service_error_strips_existing_error_derive() {
+fn service_error_rejects_existing_error_derive() {
     let input = parse_quote! {
         #[derive(Debug, thiserror::Error)]
         pub enum DemoError {
@@ -31,25 +31,68 @@ fn service_error_strips_existing_error_derive() {
 
     let expanded = expand_service_error(input).to_string();
 
-    assert!(expanded.contains("derive (Debug)"));
-    assert!(!expanded.contains("thiserror"));
+    assert!(expanded.contains("compile_error"));
+    assert!(expanded.contains("already implements Display and Error"));
 }
 
 #[test]
-fn service_error_formats_tuple_and_named_fields_without_thiserror() {
+fn service_error_formats_common_thiserror_shorthand_without_thiserror() {
     let input = parse_quote! {
         pub enum DemoError {
             #[error("retry after {0} seconds")]
             RetryAfter(u64),
-            #[error("invalid range {min}..{max}")]
+            #[error("invalid range {min:?}..{max}")]
             InvalidRange { min: i64, max: i64 },
+            #[error("invalid value {}", .0)]
+            InvalidValue(String),
         }
     };
 
     let expanded = expand_service_error(input).to_string();
 
     assert!(expanded.contains("write ! (f , \"retry after {} seconds\" , __field_0)"));
-    assert!(expanded.contains("write ! (f , \"invalid range {}..{}\" , __min , __max)"));
+    assert!(expanded.contains("write ! (f , \"invalid range {:?}..{}\" , __min , __max)"));
+    assert!(expanded.contains("write ! (f , \"invalid value {}\" , __field_0)"));
+}
+
+#[test]
+fn service_error_supports_from_source_and_transparent() {
+    let input = parse_quote! {
+        pub enum DemoError {
+            #[internal]
+            #[error("io failed")]
+            Io(#[from] std::io::Error),
+
+            #[error("outer failed")]
+            Outer { #[source] source: std::io::Error },
+
+            #[error(transparent)]
+            Transparent(std::io::Error),
+        }
+    };
+
+    let expanded = expand_service_error(input).to_string();
+
+    assert!(expanded.contains("impl :: std :: convert :: From < std :: io :: Error >"));
+    assert!(expanded.contains("fn source"));
+    assert!(expanded.contains("Display :: fmt"));
+    assert!(expanded.contains("ServiceErrorMatch :: Untyped"));
+}
+
+#[test]
+fn service_error_preserves_non_error_derives() {
+    let input = parse_quote! {
+        #[derive(Clone, PartialEq)]
+        pub enum DemoError {
+            #[error("boom")]
+            Boom,
+        }
+    };
+
+    let expanded = expand_service_error(input).to_string();
+
+    assert!(expanded.contains("derive (Clone , PartialEq)"));
+    assert!(expanded.contains("derive (Debug)"));
 }
 
 #[test]

@@ -1,7 +1,10 @@
 use heck::{AsShoutySnakeCase, ToSnakeCase};
 use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
-use syn::{Data, DeriveInput, Fields, Path, Token, punctuated::Punctuated};
+use syn::{
+    Data, DeriveInput, Fields, Path, Token, parse::Parse, parse::ParseStream,
+    punctuated::Punctuated,
+};
 
 use crate::utils::{error_stream, nats_micro_path};
 
@@ -33,9 +36,13 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
         );
     }
 
-    normalize_service_error_derives(&mut input);
+    if let Err(error) = normalize_service_error_derives(&mut input) {
+        return error.to_compile_error();
+    }
 
     let mut display_arms = Vec::new();
+    let mut source_arms = Vec::new();
+    let mut from_impls = Vec::new();
     let mut variant_arms = Vec::new();
     let mut from_response_arms = Vec::new();
     let mut napi_js_variants = Vec::new();
@@ -48,12 +55,18 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
         let v_name = v_ident.to_string();
         let v_code = format!("{}", AsShoutySnakeCase(&v_name));
         let js_variant_ident = format_ident!("{}", v_code);
-        let error_message = match variant_error_message(variant) {
-            Ok(message) => message,
+        let error_attr = match variant_error_attr(variant) {
+            Ok(attr) => attr,
+            Err(error) => return error.to_compile_error(),
+        };
+        let field_meta = match FieldMeta::for_variant(variant) {
+            Ok(meta) => meta,
             Err(error) => return error.to_compile_error(),
         };
 
-        let is_internal = variant_is_internal(variant);
+        let is_internal = variant_is_internal(variant)
+            || ((field_meta.has_from || matches!(error_attr, ErrorAttr::Transparent))
+                && !variant_has_code(variant));
         let code = variant_code(variant, is_internal);
 
         let message = if is_internal {
@@ -68,12 +81,25 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
             Fields::Named(_) => quote! { #enum_ident::#v_ident { .. } },
         };
 
-        let display_arm = match display_arm_tokens(&enum_ident, variant, &error_message) {
+        let display_arm = match display_arm_tokens(&enum_ident, variant, &error_attr) {
             Ok(tokens) => tokens,
             Err(error) => return error.to_compile_error(),
         };
+        let source_arm = match source_arm_tokens(&enum_ident, variant, &field_meta, &error_attr) {
+            Ok(tokens) => tokens,
+            Err(error) => return error.to_compile_error(),
+        };
+        from_impls.extend(from_impl_tokens(
+            &enum_ident,
+            &impl_generics,
+            &ty_generics,
+            where_clause,
+            variant,
+            &field_meta,
+        ));
 
         display_arms.push(display_arm);
+        source_arms.push(source_arm);
         napi_js_variants.push(quote! { #js_variant_ident });
         napi_as_ref_arms.push(quote! {
             Self::#js_variant_ident => #v_code,
@@ -94,7 +120,9 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
                     (#code, #v_code) => #nats_micro::ServiceErrorMatch::Typed(#enum_ident::#v_ident),
                 },
             ),
-            Fields::Unnamed(fields) if fields.unnamed.len() == 1 => {
+            Fields::Unnamed(fields)
+                if fields.unnamed.len() == 1 && field_meta.wire_indices().len() == 1 =>
+            {
                 let field = fields.unnamed.first().expect("single field");
                 match &field.ty {
                     syn::Type::Path(type_path) if type_path.path.is_ident("String") => (
@@ -123,6 +151,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
                         code,
                         &v_code,
                         fields,
+                        &field_meta,
                         is_internal,
                     ),
                 }
@@ -133,11 +162,18 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
                 code,
                 &v_code,
                 fields,
+                &field_meta,
                 is_internal,
             ),
-            Fields::Named(fields) => {
-                build_named_variant_tokens(&enum_ident, v_ident, code, &v_code, fields, is_internal)
-            }
+            Fields::Named(fields) => build_named_variant_tokens(
+                &enum_ident,
+                v_ident,
+                code,
+                &v_code,
+                fields,
+                &field_meta,
+                is_internal,
+            ),
         };
 
         variant_arms.push(quote! {
@@ -165,6 +201,13 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
                     && !attr.path().is_ident("code")
                     && !attr.path().is_ident("error")
             });
+            for field in &mut variant.fields {
+                field.attrs.retain(|attr| {
+                    !attr.path().is_ident("from")
+                        && !attr.path().is_ident("source")
+                        && !attr.path().is_ident("backtrace")
+                });
+            }
         }
     }
 
@@ -177,7 +220,14 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
             }
         }
 
-        impl #impl_generics ::std::error::Error for #enum_ident #ty_generics #where_clause {}
+        impl #impl_generics ::std::error::Error for #enum_ident #ty_generics #where_clause {
+            fn source(&self) -> ::std::option::Option<&(dyn ::std::error::Error + 'static)> {
+                match self {
+                    #(#source_arms)*
+                    _ => None,
+                }
+            }
+        }
     };
 
     let enum_impl = quote! {
@@ -200,6 +250,8 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
                 }
             }
         }
+
+        #(#from_impls)*
     };
 
     let napi_impl = if cfg!(feature = "macros_napi_feature") {
@@ -252,7 +304,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
     out
 }
 
-fn normalize_service_error_derives(input: &mut DeriveInput) {
+fn normalize_service_error_derives(input: &mut DeriveInput) -> Result<(), syn::Error> {
     let mut has_debug = false;
     let mut attrs = Vec::with_capacity(input.attrs.len() + 2);
 
@@ -282,7 +334,10 @@ fn normalize_service_error_derives(input: &mut DeriveInput) {
             }
 
             if segment.ident == "Error" {
-                continue;
+                return Err(syn::Error::new_spanned(
+                    path,
+                    "#[service_error] already implements Display and Error; remove the Error derive",
+                ));
             }
 
             rewritten.push(path);
@@ -298,9 +353,10 @@ fn normalize_service_error_derives(input: &mut DeriveInput) {
     }
 
     input.attrs = attrs;
+    Ok(())
 }
 
-fn variant_error_message(variant: &syn::Variant) -> Result<syn::LitStr, syn::Error> {
+fn variant_error_attr(variant: &syn::Variant) -> Result<ErrorAttr, syn::Error> {
     let Some(attr) = variant
         .attrs
         .iter()
@@ -308,26 +364,34 @@ fn variant_error_message(variant: &syn::Variant) -> Result<syn::LitStr, syn::Err
     else {
         return Err(syn::Error::new_spanned(
             variant,
-            "service_error variants require #[error(\"...\")]",
+            "service_error variants require #[error(\"...\")] or #[error(transparent)]",
         ));
     };
 
-    attr.parse_args::<syn::LitStr>().map_err(|_| {
-        syn::Error::new_spanned(
-            attr,
-            "service_error only supports #[error(\"...\")] string literals",
-        )
-    })
+    attr.parse_args::<ErrorAttr>()
+        .map_err(|error| syn::Error::new_spanned(attr, error))
 }
 
 fn display_arm_tokens(
     enum_ident: &syn::Ident,
     variant: &syn::Variant,
-    message: &syn::LitStr,
+    error_attr: &ErrorAttr,
 ) -> Result<TokenStream, syn::Error> {
+    let v_ident = &variant.ident;
+
+    if matches!(error_attr, ErrorAttr::Transparent) {
+        return transparent_display_arm_tokens(enum_ident, variant);
+    }
+
+    let ErrorAttr::Message {
+        message,
+        args: explicit_args,
+    } = error_attr
+    else {
+        unreachable!("transparent handled above");
+    };
     let (format_string, placeholders) = parse_error_format(message)?;
     let format_lit = syn::LitStr::new(&format_string, message.span());
-    let v_ident = &variant.ident;
 
     match &variant.fields {
         Fields::Unit => {
@@ -348,7 +412,7 @@ fn display_arm_tokens(
                     syn::Ident::new(&format!("__field_{index}"), proc_macro2::Span::call_site())
                 })
                 .collect();
-            let args = display_args_tokens(variant, &bindings, &[], &placeholders)?;
+            let args = display_args_tokens(variant, &bindings, &[], &placeholders, explicit_args)?;
 
             Ok(if args.is_empty() {
                 quote! {
@@ -370,7 +434,13 @@ fn display_arm_tokens(
                 .iter()
                 .map(|ident| syn::Ident::new(&format!("__{ident}"), ident.span()))
                 .collect();
-            let args = display_args_tokens(variant, &bindings, &field_idents, &placeholders)?;
+            let args = display_args_tokens(
+                variant,
+                &bindings,
+                &field_idents,
+                &placeholders,
+                explicit_args,
+            )?;
 
             Ok(if args.is_empty() {
                 quote! {
@@ -390,11 +460,32 @@ fn display_args_tokens(
     bindings: &[syn::Ident],
     field_idents: &[syn::Ident],
     placeholders: &[FormatPlaceholder],
+    explicit_args: &[FormatArg],
 ) -> Result<Vec<TokenStream>, syn::Error> {
     let mut args = Vec::with_capacity(placeholders.len());
     let mut next_implicit = 0usize;
+    let mut next_explicit = 0usize;
 
     for placeholder in placeholders {
+        if !explicit_args.is_empty() {
+            if !matches!(placeholder.key, PlaceholderKey::Implicit) {
+                return Err(syn::Error::new_spanned(
+                    variant,
+                    "#[service_error] does not support mixing explicit error format arguments with named or indexed placeholders",
+                ));
+            }
+
+            let Some(arg) = explicit_args.get(next_explicit) else {
+                return Err(syn::Error::new_spanned(
+                    variant,
+                    "service_error format placeholder has no matching explicit argument",
+                ));
+            };
+            next_explicit += 1;
+            args.push(format_arg_tokens(variant, arg, bindings, field_idents)?);
+            continue;
+        }
+
         let index = match &placeholder.key {
             PlaceholderKey::Implicit => {
                 let index = next_implicit;
@@ -423,7 +514,84 @@ fn display_args_tokens(
         args.push(quote! { #binding });
     }
 
+    if next_explicit != explicit_args.len() {
+        return Err(syn::Error::new_spanned(
+            variant,
+            "#[service_error] does not support thiserror expression argument syntax here; use a simpler format or implement IntoNatsError manually",
+        ));
+    }
+
     Ok(args)
+}
+
+fn format_arg_tokens(
+    variant: &syn::Variant,
+    arg: &FormatArg,
+    bindings: &[syn::Ident],
+    field_idents: &[syn::Ident],
+) -> Result<TokenStream, syn::Error> {
+    let index = match arg {
+        FormatArg::Index(index) => *index,
+        FormatArg::Name(name) => field_idents
+            .iter()
+            .position(|ident| ident == name)
+            .ok_or_else(|| {
+                syn::Error::new_spanned(
+                    variant,
+                    format!("unknown service_error explicit format field `{name}`"),
+                )
+            })?,
+    };
+
+    let Some(binding) = bindings.get(index) else {
+        return Err(syn::Error::new_spanned(
+            variant,
+            format!("service_error explicit format field `{index}` is out of bounds"),
+        ));
+    };
+
+    Ok(quote! { #binding })
+}
+
+fn transparent_display_arm_tokens(
+    enum_ident: &syn::Ident,
+    variant: &syn::Variant,
+) -> Result<TokenStream, syn::Error> {
+    let v_ident = &variant.ident;
+
+    match &variant.fields {
+        Fields::Unit => Err(syn::Error::new_spanned(
+            variant,
+            "#[error(transparent)] requires exactly one field",
+        )),
+        Fields::Unnamed(fields) => {
+            if fields.unnamed.len() != 1 {
+                return Err(syn::Error::new_spanned(
+                    variant,
+                    "#[error(transparent)] requires exactly one field",
+                ));
+            }
+            Ok(quote! {
+                #enum_ident::#v_ident(__source) => ::std::fmt::Display::fmt(__source, f),
+            })
+        }
+        Fields::Named(fields) => {
+            if fields.named.len() != 1 {
+                return Err(syn::Error::new_spanned(
+                    variant,
+                    "#[error(transparent)] requires exactly one field",
+                ));
+            }
+            let field_ident = fields
+                .named
+                .first()
+                .and_then(|field| field.ident.clone())
+                .expect("named field");
+            Ok(quote! {
+                #enum_ident::#v_ident { #field_ident: __source } => ::std::fmt::Display::fmt(__source, f),
+            })
+        }
+    }
 }
 
 fn parse_error_format(
@@ -530,6 +698,272 @@ enum PlaceholderKey {
     Name(syn::Ident),
 }
 
+enum ErrorAttr {
+    Message {
+        message: syn::LitStr,
+        args: Vec<FormatArg>,
+    },
+    Transparent,
+}
+
+impl Parse for ErrorAttr {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        if input.peek(syn::Ident) {
+            let lookahead = input.fork();
+            let ident: syn::Ident = lookahead.parse()?;
+            if ident == "transparent" && lookahead.is_empty() {
+                input.parse::<syn::Ident>()?;
+                return Ok(Self::Transparent);
+            }
+        }
+
+        let message: syn::LitStr = input.parse()?;
+        let mut args = Vec::new();
+        while input.parse::<Option<Token![,]>>()?.is_some() {
+            if input.is_empty() {
+                break;
+            }
+            args.push(input.parse()?);
+        }
+
+        Ok(Self::Message { message, args })
+    }
+}
+
+enum FormatArg {
+    Index(usize),
+    Name(syn::Ident),
+}
+
+impl Parse for FormatArg {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        input.parse::<Token![.]>()?;
+        if input.peek(syn::LitInt) {
+            let lit: syn::LitInt = input.parse()?;
+            let index = lit.base10_parse()?;
+            return Ok(Self::Index(index));
+        }
+        if input.peek(syn::Ident) {
+            return Ok(Self::Name(input.parse()?));
+        }
+        Err(input.error(
+            "#[service_error] does not support thiserror expression argument syntax here; use a simpler format or implement IntoNatsError manually",
+        ))
+    }
+}
+
+struct FieldMeta {
+    roles: Vec<FieldRole>,
+    from_index: Option<usize>,
+    source_index: Option<usize>,
+    has_from: bool,
+}
+
+#[derive(Clone, Copy)]
+struct FieldRole {
+    source: bool,
+    from: bool,
+    backtrace: bool,
+}
+
+impl FieldMeta {
+    fn for_variant(variant: &syn::Variant) -> Result<Self, syn::Error> {
+        let mut roles = Vec::new();
+        let mut source_index = None;
+        let mut from_index = None;
+
+        for (index, field) in variant.fields.iter().enumerate() {
+            let from = field_has_attr(field, "from");
+            let explicit_source = field_has_attr(field, "source");
+            let implicit_source = field.ident.as_ref().is_some_and(|ident| ident == "source");
+            let source = from || explicit_source || implicit_source;
+            let backtrace = field_has_attr(field, "backtrace");
+
+            if from {
+                if from_index.replace(index).is_some() {
+                    return Err(syn::Error::new_spanned(
+                        field,
+                        "#[from] is only valid on one field per service_error variant",
+                    ));
+                }
+            }
+
+            if source {
+                if source_index.replace(index).is_some() {
+                    return Err(syn::Error::new_spanned(
+                        field,
+                        "#[source] is only valid on one field per service_error variant",
+                    ));
+                }
+            }
+
+            roles.push(FieldRole {
+                source,
+                from,
+                backtrace,
+            });
+        }
+
+        if let Some(index) = from_index {
+            if roles.len() != 1 {
+                let field = variant.fields.iter().nth(index).expect("from field index");
+                return Err(syn::Error::new_spanned(
+                    field,
+                    "#[from] is only valid on a single-field service_error variant",
+                ));
+            }
+        }
+
+        if matches!(variant_error_attr(variant)?, ErrorAttr::Transparent) {
+            if roles.len() != 1 {
+                return Err(syn::Error::new_spanned(
+                    variant,
+                    "#[error(transparent)] requires exactly one field",
+                ));
+            }
+            roles[0].source = true;
+            source_index = Some(0);
+        }
+
+        Ok(Self {
+            roles,
+            from_index,
+            source_index,
+            has_from: from_index.is_some(),
+        })
+    }
+
+    fn wire_indices(&self) -> Vec<usize> {
+        self.roles
+            .iter()
+            .enumerate()
+            .filter_map(|(index, role)| {
+                (!role.source && !role.from && !role.backtrace).then_some(index)
+            })
+            .collect()
+    }
+
+    fn has_skipped_wire_fields(&self) -> bool {
+        self.roles
+            .iter()
+            .any(|role| role.source || role.from || role.backtrace)
+    }
+}
+
+fn field_has_attr(field: &syn::Field, name: &str) -> bool {
+    field.attrs.iter().any(|attr| attr.path().is_ident(name))
+}
+
+fn source_arm_tokens(
+    enum_ident: &syn::Ident,
+    variant: &syn::Variant,
+    field_meta: &FieldMeta,
+    error_attr: &ErrorAttr,
+) -> Result<TokenStream, syn::Error> {
+    let Some(source_index) = field_meta
+        .source_index
+        .or_else(|| matches!(error_attr, ErrorAttr::Transparent).then_some(0))
+    else {
+        return Ok(quote! {});
+    };
+
+    let v_ident = &variant.ident;
+    match &variant.fields {
+        Fields::Unit => Ok(quote! {}),
+        Fields::Unnamed(fields) => {
+            let bindings: Vec<_> = (0..fields.unnamed.len())
+                .map(|index| {
+                    if index == source_index {
+                        format_ident!("__source")
+                    } else {
+                        format_ident!("__field_{index}")
+                    }
+                })
+                .collect();
+            Ok(quote! {
+                #enum_ident::#v_ident(#(#bindings),*) => {
+                    let __source: &(dyn ::std::error::Error + ::std::marker::Send + ::std::marker::Sync + 'static) = __source;
+                    Some(__source)
+                }
+            })
+        }
+        Fields::Named(fields) => {
+            let field_idents: Vec<_> = fields
+                .named
+                .iter()
+                .map(|field| field.ident.clone().expect("named field"))
+                .collect();
+            let bindings: Vec<_> = field_idents
+                .iter()
+                .enumerate()
+                .map(|(index, ident)| {
+                    if index == source_index {
+                        format_ident!("__source")
+                    } else {
+                        format_ident!("__{ident}")
+                    }
+                })
+                .collect();
+            Ok(quote! {
+                #enum_ident::#v_ident { #(#field_idents: #bindings),* } => {
+                    let __source: &(dyn ::std::error::Error + ::std::marker::Send + ::std::marker::Sync + 'static) = __source;
+                    Some(__source)
+                }
+            })
+        }
+    }
+}
+
+fn from_impl_tokens(
+    enum_ident: &syn::Ident,
+    impl_generics: &syn::ImplGenerics<'_>,
+    ty_generics: &syn::TypeGenerics<'_>,
+    where_clause: Option<&syn::WhereClause>,
+    variant: &syn::Variant,
+    field_meta: &FieldMeta,
+) -> Vec<TokenStream> {
+    let Some(from_index) = field_meta.from_index else {
+        return Vec::new();
+    };
+
+    let v_ident = &variant.ident;
+    let source_ty = variant
+        .fields
+        .iter()
+        .nth(from_index)
+        .map(|field| &field.ty)
+        .expect("from field type");
+
+    let body = match &variant.fields {
+        Fields::Unnamed(_) => quote! { #enum_ident::#v_ident(value) },
+        Fields::Named(fields) => {
+            let field_ident = fields
+                .named
+                .iter()
+                .nth(from_index)
+                .and_then(|field| field.ident.as_ref())
+                .expect("from named field");
+            quote! { #enum_ident::#v_ident { #field_ident: value } }
+        }
+        Fields::Unit => return Vec::new(),
+    };
+
+    vec![quote! {
+        impl #impl_generics ::std::convert::From<#source_ty> for #enum_ident #ty_generics #where_clause {
+            fn from(value: #source_ty) -> Self {
+                #body
+            }
+        }
+    }]
+}
+
+fn variant_has_code(variant: &syn::Variant) -> bool {
+    variant
+        .attrs
+        .iter()
+        .any(|attr| attr.path().is_ident("code"))
+}
+
 fn variant_is_internal(variant: &syn::Variant) -> bool {
     variant
         .attrs
@@ -553,6 +987,7 @@ fn build_unnamed_variant_tokens(
     code: u16,
     variant_name: &str,
     fields: &syn::FieldsUnnamed,
+    field_meta: &FieldMeta,
     is_internal: bool,
 ) -> (TokenStream, TokenStream, TokenStream) {
     let nats_micro = nats_micro_path();
@@ -562,19 +997,22 @@ fn build_unnamed_variant_tokens(
     let bindings: Vec<syn::Ident> = (0..fields.unnamed.len())
         .map(|index| syn::Ident::new(&format!("__field_{index}"), proc_macro2::Span::call_site()))
         .collect();
-    let types: Vec<_> = fields.unnamed.iter().map(|field| &field.ty).collect();
-    let details = if is_internal {
+    let wire_indices = field_meta.wire_indices();
+    let wire_bindings: Vec<_> = wire_indices.iter().map(|index| &bindings[*index]).collect();
+    let details = if is_internal || wire_bindings.is_empty() {
         quote! { None }
     } else {
-        let serialize_value = singleton_or_tuple(&bindings);
+        let serialize_value = singleton_or_tuple(&wire_bindings);
         quote! { #nats_micro::serde_json::to_value(#serialize_value).ok() }
     };
-    let tuple_type = singleton_or_tuple(&types);
-    let deserialize_pattern = singleton_or_tuple(&bindings);
-
-    (
-        quote! { #enum_ident::#variant_ident(#(#bindings),*) },
-        details,
+    let from_response = if field_meta.has_skipped_wire_fields() {
+        quote! {
+            (#code, #variant_name) => #nats_micro::ServiceErrorMatch::Untyped(response),
+        }
+    } else {
+        let types: Vec<_> = fields.unnamed.iter().map(|field| &field.ty).collect();
+        let tuple_type = singleton_or_tuple(&types);
+        let deserialize_pattern = singleton_or_tuple(&bindings);
         quote! {
             (#code, #variant_name) => match response
                 .details
@@ -586,7 +1024,13 @@ fn build_unnamed_variant_tokens(
                 }
                 None => #nats_micro::ServiceErrorMatch::Untyped(response),
             },
-        },
+        }
+    };
+
+    (
+        quote! { #enum_ident::#variant_ident(#(#bindings),*) },
+        details,
+        from_response,
     )
 }
 
@@ -596,6 +1040,7 @@ fn build_named_variant_tokens(
     code: u16,
     variant_name: &str,
     fields: &syn::FieldsNamed,
+    field_meta: &FieldMeta,
     is_internal: bool,
 ) -> (TokenStream, TokenStream, TokenStream) {
     let nats_micro = nats_micro_path();
@@ -611,19 +1056,22 @@ fn build_named_variant_tokens(
         .iter()
         .map(|ident| syn::Ident::new(&format!("__{ident}"), ident.span()))
         .collect();
-    let types: Vec<_> = fields.named.iter().map(|field| &field.ty).collect();
-    let details = if is_internal {
+    let wire_indices = field_meta.wire_indices();
+    let wire_bindings: Vec<_> = wire_indices.iter().map(|index| &bindings[*index]).collect();
+    let details = if is_internal || wire_bindings.is_empty() {
         quote! { None }
     } else {
-        let serialize_value = singleton_or_tuple(&bindings);
+        let serialize_value = singleton_or_tuple(&wire_bindings);
         quote! { #nats_micro::serde_json::to_value(#serialize_value).ok() }
     };
-    let tuple_type = singleton_or_tuple(&types);
-    let deserialize_pattern = singleton_or_tuple(&bindings);
-
-    (
-        quote! { #enum_ident::#variant_ident { #(#field_idents: #bindings),* } },
-        details,
+    let from_response = if field_meta.has_skipped_wire_fields() {
+        quote! {
+            (#code, #variant_name) => #nats_micro::ServiceErrorMatch::Untyped(response),
+        }
+    } else {
+        let types: Vec<_> = fields.named.iter().map(|field| &field.ty).collect();
+        let tuple_type = singleton_or_tuple(&types);
+        let deserialize_pattern = singleton_or_tuple(&bindings);
         quote! {
             (#code, #variant_name) => match response
                 .details
@@ -635,7 +1083,13 @@ fn build_named_variant_tokens(
                 }
                 None => #nats_micro::ServiceErrorMatch::Untyped(response),
             },
-        },
+        }
+    };
+
+    (
+        quote! { #enum_ident::#variant_ident { #(#field_idents: #bindings),* } },
+        details,
+        from_response,
     )
 }
 

@@ -1,0 +1,5 @@
+error: #[from] is only valid on a single-field service_error variant
+ --> tests/ui/service_error_from_multiple_fields.rs:6:8
+  |
+6 |     Io(#[from] std::io::Error, String),
+  |        ^^^^^^^^^^^^^^^^^^^^^^
