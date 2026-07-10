@@ -94,7 +94,8 @@ fn uses_renamed_client(client: nm::NatsClient) {
     };
 }
 
-fn main() {
+#[test]
+fn renamed_dependency_surface_works() {
     let response = RenameError::BadRename.into_nats_error("req-1".to_string());
     let _: nm::NatsErrorResponse = response;
     assert_eq!(
@@ -108,3 +109,5 @@ fn main() {
     assert!(RenamedService::contract_json().unwrap().contains("events"));
     let _ = uses_renamed_client;
 }
+
+fn main() {}

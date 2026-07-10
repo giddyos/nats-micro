@@ -1,0 +1,5 @@
+error: #[details(...)] on a field only accepts skip
+ --> tests/ui/service_error_invalid_details.rs:8:9
+  |
+8 |         #[details(secret)]
+  |         ^^^^^^^^^^^^^^^^^^

@@ -44,15 +44,15 @@ run cargo test -p nats-micro --doc --all-features
 
 run bash scripts/check-fixture-manifests.sh
 
-fixture_check service-authoring-basic
-fixture_check generated-client-app
+fixture_test service-authoring-basic
+fixture_test generated-client-app
 fixture_check consumer-jetstream
 fixture_check encryption-client
-fixture_check renamed-dependency-full
-fixture_check no-default-features-service
+fixture_test renamed-dependency-full
+fixture_test no-default-features-service
 fixture_check napi-surface
-fixture_check raw-thiserror-direct-dep
-fixture_check existing-thiserror-service-error
+fixture_test raw-thiserror-direct-dep
+fixture_test existing-thiserror-service-error
 
 if command -v nats-server >/dev/null 2>&1; then
   run cargo test -p nats-micro --all-features --test live_runtime

@@ -1,0 +1,5 @@
+error: #[internal] only accepts #[internal] or #[internal(expose_kind)]
+ --> tests/ui/service_error_invalid_internal.rs:5:5
+  |
+5 |     #[internal(false)]
+  |     ^^^^^^^^^^^^^^^^^^

@@ -1,0 +1,5 @@
+error: #[code(...)] must be in the range 400..=599
+ --> tests/ui/service_error_invalid_code_success.rs:5:5
+  |
+5 |     #[code(200)]
+  |     ^^^^^^^^^^^^

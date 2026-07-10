@@ -1,0 +1,6 @@
+error: duplicate service_error wire kind `FOO_BAR` for code 400; rename one variant or use #[kind(...)]
+ --> tests/ui/service_error_duplicate_kind.rs:8:5
+  |
+8 | /     #[error("b")]
+9 | |     FOO_BAR,
+  | |___________^

@@ -34,9 +34,12 @@ impl BasicService {
     }
 }
 
-fn main() {
+#[test]
+fn no_default_features_service_surface_works() {
     let _config = NatsAppConfig::new().with_default_concurrency_limit(8);
     let contract = BasicService::contract();
     assert_eq!(contract.endpoints.len(), 2);
     assert!(BasicService::contract_json().unwrap().contains("\"basic\""));
 }
+
+fn main() {}

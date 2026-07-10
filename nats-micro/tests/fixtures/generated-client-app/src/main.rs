@@ -125,6 +125,7 @@ fn uses_client(client: nats_micro::NatsClient, ctx: &RequestContext) {
     };
 }
 
+#[test]
 fn assert_public_error_path() {
     let response = UserServiceError::EmailExists.into_nats_error("req-1".to_string());
     let typed: ClientError<UserServiceError> = ClientError::from_service_response(response);
@@ -135,10 +136,13 @@ fn assert_public_error_path() {
     assert!(matches!(untyped, ClientError::ServiceResponse(_)));
 }
 
-fn main() {
+#[test]
+fn rejects_invalid_header_values() {
     assert!(ClientCallOptions::new()
         .try_header("x-test", "bad\r\nvalue")
         .is_err());
-    assert_public_error_path();
+}
+
+fn main() {
     let _ = uses_client;
 }

@@ -6,7 +6,10 @@ pub enum LocalError {
 
 pub fn assert_error<E: std::error::Error>() {}
 
-fn main() {
+#[test]
+fn raw_thiserror_reexport_works_with_direct_dependency() {
     assert_error::<LocalError>();
     assert_eq!(LocalError::BadConfig("missing".to_string()).to_string(), "bad config: missing");
 }
+
+fn main() {}

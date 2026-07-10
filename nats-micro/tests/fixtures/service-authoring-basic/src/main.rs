@@ -194,6 +194,7 @@ impl UserService {
     }
 }
 
+#[test]
 fn assert_service_error_wire() {
     let err = UserServiceError::EmailExists {
         email: "a@b.com".to_string(),
@@ -228,7 +229,8 @@ fn assert_service_error_wire() {
         response
             .details
             .as_ref()
-            .and_then(|details| details.get("retry_after"))
+            .and_then(|details| details.as_array())
+            .and_then(|details| details.first())
             .and_then(nats_micro::serde_json::Value::as_u64),
         Some(30)
     );
@@ -243,7 +245,8 @@ fn assert_service_error_wire() {
         response
             .details
             .as_ref()
-            .and_then(|details| details.get("email"))
+            .and_then(|details| details.as_array())
+            .and_then(|details| details.first())
             .and_then(nats_micro::serde_json::Value::as_str),
         Some("a@b.com")
     );
@@ -262,6 +265,7 @@ fn assert_service_error_wire() {
     assert_eq!(response.message, "an internal error occurred");
 }
 
+#[test]
 fn assert_contract() {
     let definition = UserService::definition();
     assert_eq!(
@@ -306,14 +310,11 @@ fn assert_contract() {
     assert!(json.contains("\"auth_policy\": \"none\""));
 }
 
+#[test]
 fn assert_prelude_surface() {
     let _headers = Headers::new();
     let _config = NatsAppConfig::new().with_default_concurrency_limit(32);
     let _policy = WorkerFailurePolicy::Ignore;
 }
 
-fn main() {
-    assert_service_error_wire();
-    assert_contract();
-    assert_prelude_surface();
-}
+fn main() {}

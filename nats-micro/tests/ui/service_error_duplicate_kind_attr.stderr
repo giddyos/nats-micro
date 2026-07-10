@@ -1,0 +1,5 @@
+error: #[kind(...)] may only be specified once per service_error variant
+ --> tests/ui/service_error_duplicate_kind_attr.rs:6:5
+  |
+6 |     #[kind("TWO")]
+  |     ^^^^^^^^^^^^^^

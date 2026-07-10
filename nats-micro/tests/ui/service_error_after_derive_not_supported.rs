@@ -1,7 +1,8 @@
 use nats_micro::service_error;
+use thiserror::Error;
 
+#[derive(Debug, Error)]
 #[service_error]
-#[derive(nats_micro::Error)]
 pub enum DemoError {
     #[error("empty")]
     Empty,

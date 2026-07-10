@@ -1,0 +1,27 @@
+error[E0119]: conflicting implementations of trait `Debug` for type `DemoError`
+ --> tests/ui/service_error_after_derive_not_supported.rs:5:1
+  |
+4 | #[derive(Debug, Error)]
+  |          ----- first implementation here
+5 | #[service_error]
+  | ^^^^^^^^^^^^^^^^ conflicting implementation for `DemoError`
+
+error[E0119]: conflicting implementations of trait `std::fmt::Display` for type `DemoError`
+ --> tests/ui/service_error_after_derive_not_supported.rs:5:1
+  |
+4 | #[derive(Debug, Error)]
+  |                 ----- first implementation here
+5 | #[service_error]
+  | ^^^^^^^^^^^^^^^^ conflicting implementation for `DemoError`
+  |
+  = note: this error originates in the attribute macro `service_error` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0119]: conflicting implementations of trait `StdError` for type `DemoError`
+ --> tests/ui/service_error_after_derive_not_supported.rs:5:1
+  |
+4 | #[derive(Debug, Error)]
+  |                 ----- first implementation here
+5 | #[service_error]
+  | ^^^^^^^^^^^^^^^^ conflicting implementation for `DemoError`
+  |
+  = note: this error originates in the attribute macro `service_error` (in Nightly builds, run with -Z macro-backtrace for more info)

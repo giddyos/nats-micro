@@ -96,11 +96,30 @@ Without an `Error` derive, `#[service_error]` owns `Display`,
 `std::error::Error`, and `From` for `#[from]` fields. With an `Error` derive,
 `thiserror` owns those local error impls and `#[service_error]` only adds NATS
 wire conversion. A direct `thiserror` dependency is only needed when you choose
-the existing-derive mode.
+the existing-derive mode. `#[service_error]` must be placed before
+`#[derive(Error)]` when reusing an existing `thiserror` enum.
 
-Public coded variants are serialized with their display message and details.
+Public coded variants are serialized with their display message and details by
+default. Details are part of the wire protocol, so do not put secrets in public
+error fields. Use `#[internal]` for private failures, `#[details(skip)]` on a
+field, or `#[details(skip_all)]` on a variant to omit fields from details:
+
+```rust
+#[nats_micro::service_error]
+pub enum LoginError {
+    #[code(401)]
+    #[error("invalid login for {username}")]
+    InvalidLogin {
+        username: String,
+        #[details(skip)]
+        attempted_password: String,
+    },
+}
+```
+
 Internal `#[from]` and transparent variants default to HTTP 500 with
-`"an internal error occurred"` unless a `#[code(...)]` is supplied.
+`"an internal error occurred"` and `INTERNAL_ERROR` unless a `#[code(...)]`,
+`#[kind("...")]`, or `#[internal(expose_kind)]` override is supplied.
 
 ## Dependency Ownership
 
@@ -131,6 +150,7 @@ cargo check -p nats-micro --no-default-features --features client
 cargo check -p nats-micro --no-default-features --features client,encryption
 bash scripts/check.sh
 NATS_MICRO_REQUIRE_NATS_SERVER=1 bash scripts/check.sh
+bash scripts/release-check.sh
 ```
 
 Downstream fixture coverage is documented in

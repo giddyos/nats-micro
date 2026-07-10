@@ -1,0 +1,5 @@
+error: #[code(...)] requires an integer literal
+ --> tests/ui/service_error_invalid_code_string.rs:5:5
+  |
+5 |     #[code("404")]
+  |     ^^^^^^^^^^^^^^

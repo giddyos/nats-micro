@@ -1,5 +1,0 @@
-error: #[service_error] already implements Display and Error; remove the Error derive
- --> tests/ui/service_error_error_derive_conflict.rs:4:10
-  |
-4 | #[derive(nats_micro::Error)]
-  |          ^^^^^^^^^^^^^^^^^

@@ -33,12 +33,22 @@ fn macro_ui_validation() {
     tests.pass("tests/ui/service_error_transparent.rs");
     tests.pass("tests/ui/service_error_no_direct_thiserror.rs");
     tests.pass("tests/ui/service_error_renamed_nats_micro.rs");
-    tests.pass("tests/ui/service_error_error_derive_conflict.rs");
+    tests.pass("tests/ui/service_error_existing_error_derive.rs");
     tests.compile_fail("tests/ui/service_error_duplicate_source.rs");
     tests.compile_fail("tests/ui/service_error_from_multiple_fields.rs");
     tests.compile_fail("tests/ui/service_error_transparent_multiple_fields.rs");
     tests.compile_fail("tests/ui/service_error_source_not_error.rs");
     tests.compile_fail("tests/ui/service_error_private_with_client_feature.rs");
+    tests.compile_fail("tests/ui/service_error_after_derive_not_supported.rs");
+    tests.compile_fail("tests/ui/service_error_invalid_code_string.rs");
+    tests.compile_fail("tests/ui/service_error_invalid_code_success.rs");
+    tests.compile_fail("tests/ui/service_error_invalid_code_out_of_range.rs");
+    tests.compile_fail("tests/ui/service_error_duplicate_code.rs");
+    tests.compile_fail("tests/ui/service_error_duplicate_kind.rs");
+    tests.compile_fail("tests/ui/service_error_duplicate_kind_attr.rs");
+    tests.compile_fail("tests/ui/service_error_invalid_kind.rs");
+    tests.compile_fail("tests/ui/service_error_invalid_internal.rs");
+    tests.compile_fail("tests/ui/service_error_invalid_details.rs");
 
     #[cfg(feature = "encryption")]
     tests.compile_fail("tests/ui/endpoint_nested_encrypted_response.rs");

@@ -1,0 +1,5 @@
+error: #[code(...)] may only be specified once per service_error variant
+ --> tests/ui/service_error_duplicate_code.rs:6:5
+  |
+6 |     #[code(409)]
+  |     ^^^^^^^^^^^^

@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use heck::{AsShoutySnakeCase, ToSnakeCase};
 use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
@@ -49,13 +51,14 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
     let mut napi_js_variants = Vec::new();
     let mut napi_as_ref_arms = Vec::new();
     let mut napi_from_error_arms = Vec::new();
+    let mut wire_kinds = BTreeSet::<(u16, String)>::new();
     let js_enum_ident = format_ident!("Js{}", enum_ident);
 
     for variant in &data_enum.variants {
         let v_ident = &variant.ident;
         let v_name = v_ident.to_string();
-        let v_code = format!("{}", AsShoutySnakeCase(&v_name));
-        let js_variant_ident = format_ident!("{}", v_code);
+        let default_kind = format!("{}", AsShoutySnakeCase(&v_name));
+        let js_variant_ident = format_ident!("{}", default_kind);
         let error_attr = if mode == ErrorImplMode::SelfContained {
             match variant_error_attr_strict(variant) {
                 Ok(attr) => Some(attr),
@@ -72,10 +75,39 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
             Ok(meta) => meta,
             Err(error) => return error.to_compile_error(),
         };
+        let code_attr = match variant_code_attr(variant) {
+            Ok(code) => code,
+            Err(error) => return error.to_compile_error(),
+        };
+        let internal_attr = match variant_internal_attr(variant) {
+            Ok(internal) => internal,
+            Err(error) => return error.to_compile_error(),
+        };
+        let kind_attr = match variant_kind_attr(variant) {
+            Ok(kind) => kind,
+            Err(error) => return error.to_compile_error(),
+        };
 
-        let is_internal = variant_is_internal(variant)
-            || ((field_meta.has_from || is_transparent) && !variant_has_code(variant));
-        let code = variant_code(variant, is_internal);
+        let is_internal = internal_attr.present
+            || ((field_meta.has_from || is_transparent) && code_attr.is_none());
+        let code = code_attr.unwrap_or(if is_internal { 500 } else { 400 });
+        let wire_kind = kind_attr.unwrap_or_else(|| {
+            if is_internal && !internal_attr.expose_kind {
+                "INTERNAL_ERROR".to_string()
+            } else {
+                default_kind.clone()
+            }
+        });
+        let generic_internal_kind = is_internal && wire_kind == "INTERNAL_ERROR";
+        if !generic_internal_kind && !wire_kinds.insert((code, wire_kind.clone())) {
+            return syn::Error::new_spanned(
+                variant,
+                format!(
+                    "duplicate service_error wire kind `{wire_kind}` for code {code}; rename one variant or use #[kind(...)]"
+                ),
+            )
+            .to_compile_error();
+        }
 
         let message = if is_internal {
             quote! { "an internal error occurred".to_string() }
@@ -109,7 +141,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
         }
         napi_js_variants.push(quote! { #js_variant_ident });
         napi_as_ref_arms.push(quote! {
-            Self::#js_variant_ident => #v_code,
+            Self::#js_variant_ident => #wire_kind,
         });
         napi_from_error_arms.push(quote! {
             #napi_from_pattern => #js_enum_ident::#js_variant_ident,
@@ -124,7 +156,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
                 quote! { #enum_ident::#v_ident },
                 quote! { None },
                 quote! {
-                    (#code, #v_code) => #nats_micro::ServiceErrorMatch::Typed(#enum_ident::#v_ident),
+                    (#code, #wire_kind) => #nats_micro::ServiceErrorMatch::Typed(#enum_ident::#v_ident),
                 },
             ),
             Fields::Unnamed(fields)
@@ -140,7 +172,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
                             quote! { Some(#nats_micro::serde_json::Value::String(__value.clone())) }
                         },
                         quote! {
-                            (#code, #v_code) => #nats_micro::ServiceErrorMatch::Typed(
+                            (#code, #wire_kind) => #nats_micro::ServiceErrorMatch::Typed(
                                 #enum_ident::#v_ident(
                                     response
                                         .details
@@ -156,7 +188,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
                         &enum_ident,
                         v_ident,
                         code,
-                        &v_code,
+                        &wire_kind,
                         fields,
                         &field_meta,
                         is_internal,
@@ -167,7 +199,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
                 &enum_ident,
                 v_ident,
                 code,
-                &v_code,
+                &wire_kind,
                 fields,
                 &field_meta,
                 is_internal,
@@ -176,18 +208,29 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
                 &enum_ident,
                 v_ident,
                 code,
-                &v_code,
+                &wire_kind,
                 fields,
                 &field_meta,
                 is_internal,
             ),
+        };
+        let from_response = if is_internal {
+            if generic_internal_kind {
+                quote! {}
+            } else {
+                quote! {
+                    (#code, #wire_kind) => #nats_micro::ServiceErrorMatch::Untyped(response),
+                }
+            }
+        } else {
+            from_response
         };
 
         variant_arms.push(quote! {
             #pattern => {
                 let __error = #nats_micro::NatsErrorResponse::new(
                     #code,
-                    #v_code,
+                    #wire_kind,
                     #message,
                     request_id,
                 );
@@ -779,13 +822,16 @@ struct FieldMeta {
     from_index: Option<usize>,
     source_index: Option<usize>,
     has_from: bool,
+    details_skip_all: bool,
 }
 
 #[derive(Clone, Copy)]
+#[allow(clippy::struct_excessive_bools)]
 struct FieldRole {
     source: bool,
     from: bool,
     backtrace: bool,
+    details_skip: bool,
 }
 
 impl FieldMeta {
@@ -797,6 +843,7 @@ impl FieldMeta {
         let mut roles = Vec::new();
         let mut source_index = None;
         let mut from_index = None;
+        let details_skip_all = variant_details_skip_all(variant)?;
 
         for (index, field) in variant.fields.iter().enumerate() {
             let from = field_has_attr(field, "from");
@@ -804,6 +851,7 @@ impl FieldMeta {
             let implicit_source = field.ident.as_ref().is_some_and(|ident| ident == "source");
             let source = from || explicit_source || implicit_source;
             let backtrace = field_has_attr(field, "backtrace");
+            let details_skip = field_details_skip(field)?;
 
             if from && from_index.replace(index).is_some() && mode == ErrorImplMode::SelfContained {
                 return Err(syn::Error::new_spanned(
@@ -826,6 +874,7 @@ impl FieldMeta {
                 source,
                 from,
                 backtrace,
+                details_skip,
             });
         }
 
@@ -859,6 +908,7 @@ impl FieldMeta {
             from_index,
             source_index,
             has_from: from_index.is_some(),
+            details_skip_all,
         })
     }
 
@@ -867,15 +917,22 @@ impl FieldMeta {
             .iter()
             .enumerate()
             .filter_map(|(index, role)| {
-                (!role.source && !role.from && !role.backtrace).then_some(index)
+                (!self.details_skip_all
+                    && !role.source
+                    && !role.from
+                    && !role.backtrace
+                    && !role.details_skip)
+                    .then_some(index)
             })
             .collect()
     }
 
     fn has_skipped_wire_fields(&self) -> bool {
-        self.roles
-            .iter()
-            .any(|role| role.source || role.from || role.backtrace)
+        (self.details_skip_all && !self.roles.is_empty())
+            || self
+                .roles
+                .iter()
+                .any(|role| role.source || role.from || role.backtrace || role.details_skip)
     }
 }
 
@@ -889,6 +946,8 @@ fn strip_service_error_only_attrs(input: &mut DeriveInput, mode: ErrorImplMode) 
             variant.attrs.retain(|attr| {
                 !attr.path().is_ident("internal")
                     && !attr.path().is_ident("code")
+                    && !attr.path().is_ident("kind")
+                    && !attr.path().is_ident("details")
                     && match mode {
                         ErrorImplMode::SelfContained => !attr.path().is_ident("error"),
                         ErrorImplMode::ExternalDerive => true,
@@ -900,8 +959,9 @@ fn strip_service_error_only_attrs(input: &mut DeriveInput, mode: ErrorImplMode) 
                         !attr.path().is_ident("from")
                             && !attr.path().is_ident("source")
                             && !attr.path().is_ident("backtrace")
+                            && !attr.path().is_ident("details")
                     }
-                    ErrorImplMode::ExternalDerive => true,
+                    ErrorImplMode::ExternalDerive => !attr.path().is_ident("details"),
                 });
             }
         }
@@ -1011,28 +1071,170 @@ fn from_impl_tokens(
     }]
 }
 
-fn variant_has_code(variant: &syn::Variant) -> bool {
-    variant
-        .attrs
-        .iter()
-        .any(|attr| attr.path().is_ident("code"))
+#[derive(Default)]
+struct InternalAttr {
+    present: bool,
+    expose_kind: bool,
 }
 
-fn variant_is_internal(variant: &syn::Variant) -> bool {
-    variant
+fn variant_code_attr(variant: &syn::Variant) -> Result<Option<u16>, syn::Error> {
+    let mut code = None;
+    for attr in variant
         .attrs
         .iter()
-        .any(|attr| attr.path().is_ident("internal"))
+        .filter(|attr| attr.path().is_ident("code"))
+    {
+        if code.is_some() {
+            return Err(syn::Error::new_spanned(
+                attr,
+                "#[code(...)] may only be specified once per service_error variant",
+            ));
+        }
+
+        let lit = attr.parse_args::<syn::LitInt>().map_err(|_| {
+            syn::Error::new_spanned(attr, "#[code(...)] requires an integer literal")
+        })?;
+        let value = lit.base10_parse::<u16>().map_err(|_| {
+            syn::Error::new_spanned(attr, "#[code(...)] must be in the range 400..=599")
+        })?;
+        if !(400..=599).contains(&value) {
+            return Err(syn::Error::new_spanned(
+                attr,
+                "#[code(...)] must be in the range 400..=599",
+            ));
+        }
+        code = Some(value);
+    }
+    Ok(code)
 }
 
-fn variant_code(variant: &syn::Variant, is_internal: bool) -> u16 {
-    variant
+fn variant_internal_attr(variant: &syn::Variant) -> Result<InternalAttr, syn::Error> {
+    let mut parsed = InternalAttr::default();
+    for attr in variant
         .attrs
         .iter()
-        .find(|attr| attr.path().is_ident("code"))
-        .and_then(|attr| attr.parse_args::<syn::LitInt>().ok())
-        .and_then(|lit| lit.base10_parse().ok())
-        .unwrap_or(if is_internal { 500 } else { 400 })
+        .filter(|attr| attr.path().is_ident("internal"))
+    {
+        if parsed.present {
+            return Err(syn::Error::new_spanned(
+                attr,
+                "#[internal] may only be specified once per service_error variant",
+            ));
+        }
+
+        let expose_kind = if matches!(attr.meta, syn::Meta::Path(_)) {
+            false
+        } else {
+            attr.parse_args_with(|input: ParseStream<'_>| {
+                let ident: syn::Ident = input.parse()?;
+                if ident == "expose_kind" && input.is_empty() {
+                    Ok(true)
+                } else {
+                    Err(input.error("#[internal] only accepts optional expose_kind"))
+                }
+            })
+            .map_err(|_| {
+                syn::Error::new_spanned(
+                    attr,
+                    "#[internal] only accepts #[internal] or #[internal(expose_kind)]",
+                )
+            })?
+        };
+
+        parsed.present = true;
+        parsed.expose_kind = expose_kind;
+    }
+    Ok(parsed)
+}
+
+fn variant_kind_attr(variant: &syn::Variant) -> Result<Option<String>, syn::Error> {
+    let mut kind = None;
+    for attr in variant
+        .attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("kind"))
+    {
+        if kind.is_some() {
+            return Err(syn::Error::new_spanned(
+                attr,
+                "#[kind(...)] may only be specified once per service_error variant",
+            ));
+        }
+
+        let lit = attr
+            .parse_args::<syn::LitStr>()
+            .map_err(|_| syn::Error::new_spanned(attr, "#[kind(...)] requires a string literal"))?;
+        let value = lit.value();
+        if value.is_empty() {
+            return Err(syn::Error::new_spanned(
+                attr,
+                "#[kind(...)] cannot be empty",
+            ));
+        }
+        kind = Some(value);
+    }
+    Ok(kind)
+}
+
+fn variant_details_skip_all(variant: &syn::Variant) -> Result<bool, syn::Error> {
+    let mut skip_all = false;
+    for attr in variant
+        .attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("details"))
+    {
+        if skip_all {
+            return Err(syn::Error::new_spanned(
+                attr,
+                "#[details(...)] may only be specified once per service_error variant",
+            ));
+        }
+        skip_all = attr
+            .parse_args_with(|input: ParseStream<'_>| {
+                let ident: syn::Ident = input.parse()?;
+                if (ident == "skip" || ident == "skip_all") && input.is_empty() {
+                    Ok(true)
+                } else {
+                    Err(input.error("#[details(...)] on a variant only accepts skip or skip_all"))
+                }
+            })
+            .map_err(|_| {
+                syn::Error::new_spanned(
+                    attr,
+                    "#[details(...)] on a variant only accepts skip or skip_all",
+                )
+            })?;
+    }
+    Ok(skip_all)
+}
+
+fn field_details_skip(field: &syn::Field) -> Result<bool, syn::Error> {
+    let mut skip = false;
+    for attr in field
+        .attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("details"))
+    {
+        if skip {
+            return Err(syn::Error::new_spanned(
+                attr,
+                "#[details(skip)] may only be specified once per service_error field",
+            ));
+        }
+        skip = attr
+            .parse_args_with(|input: ParseStream<'_>| {
+                let ident: syn::Ident = input.parse()?;
+                if ident == "skip" && input.is_empty() {
+                    Ok(true)
+                } else {
+                    Err(input.error("#[details(...)] on a field only accepts skip"))
+                }
+            })
+            .map_err(|_| {
+                syn::Error::new_spanned(attr, "#[details(...)] on a field only accepts skip")
+            })?;
+    }
+    Ok(skip)
 }
 
 fn build_unnamed_variant_tokens(

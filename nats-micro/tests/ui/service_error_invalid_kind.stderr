@@ -1,0 +1,5 @@
+error: #[kind(...)] requires a string literal
+ --> tests/ui/service_error_invalid_kind.rs:5:5
+  |
+5 |     #[kind(123)]
+  |     ^^^^^^^^^^^^

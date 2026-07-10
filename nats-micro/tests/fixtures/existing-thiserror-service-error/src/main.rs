@@ -29,7 +29,8 @@ pub enum ExistingOrderError {
 
 fn assert_error<E: std::error::Error>() {}
 
-fn main() {
+#[test]
+fn existing_thiserror_service_error_wire_behavior() {
     assert_error::<ExistingUserError>();
     assert_error::<ExistingOrderError>();
 
@@ -52,12 +53,16 @@ fn main() {
     assert!(std::error::Error::source(&err).is_some());
     let response = err.into_nats_error("req-2".to_string());
     assert_eq!(response.code, 500);
+    assert_eq!(response.kind, "INTERNAL_ERROR");
     assert_eq!(response.message, "an internal error occurred");
 
     let parse = "bad".parse::<u64>().expect_err("expected parse error");
     let err = ExistingUserError::from(parse);
-    assert!(std::error::Error::source(&err).is_some());
+    assert!(err.to_string().contains("invalid digit"));
     let response = err.into_nats_error("req-3".to_string());
     assert_eq!(response.code, 500);
+    assert_eq!(response.kind, "INTERNAL_ERROR");
     assert_eq!(response.message, "an internal error occurred");
 }
+
+fn main() {}

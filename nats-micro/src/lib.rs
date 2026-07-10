@@ -52,6 +52,12 @@
 //!
 //! Direct `thiserror` is only needed when you choose the existing-derive mode.
 //! Normal [`service_error`] users still do not need direct `thiserror`.
+//! Place [`service_error`] before `#[derive(Error)]` when reusing an existing
+//! `thiserror` enum.
+//!
+//! Public error fields are serialized into wire `details` by default. Details
+//! are part of the public protocol, so use `#[internal]` for private failures
+//! and `#[details(skip)]` or `#[details(skip_all)]` for sensitive fields.
 //!
 //! Raw `thiserror` is available as [`thiserror`] / [`Error`] for advanced local
 //! error types:
