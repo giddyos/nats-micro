@@ -1,0 +1,5 @@
+error: #[from] does not accept arguments in self-contained service_error mode
+ --> tests/ui/service_error_invalid_from_attr.rs:6:8
+  |
+6 |     Io(#[from(foo)] std::io::Error),
+  |        ^^^^^^^^^^^^

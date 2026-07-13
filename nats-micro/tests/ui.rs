@@ -46,9 +46,17 @@ fn macro_ui_validation() {
     tests.compile_fail("tests/ui/service_error_duplicate_code.rs");
     tests.compile_fail("tests/ui/service_error_duplicate_kind.rs");
     tests.compile_fail("tests/ui/service_error_duplicate_kind_attr.rs");
+    tests.compile_fail("tests/ui/service_error_duplicate_generic_internal_kind.rs");
     tests.compile_fail("tests/ui/service_error_invalid_kind.rs");
+    tests.compile_fail("tests/ui/service_error_invalid_kind_empty.rs");
+    tests.compile_fail("tests/ui/service_error_invalid_kind_lowercase.rs");
+    tests.compile_fail("tests/ui/service_error_invalid_kind_newline.rs");
+    tests.compile_fail("tests/ui/service_error_invalid_kind_whitespace.rs");
     tests.compile_fail("tests/ui/service_error_invalid_internal.rs");
     tests.compile_fail("tests/ui/service_error_invalid_details.rs");
+    tests.compile_fail("tests/ui/service_error_invalid_from_attr.rs");
+    tests.compile_fail("tests/ui/service_error_invalid_source_attr.rs");
+    tests.compile_fail("tests/ui/service_error_invalid_backtrace_attr.rs");
 
     #[cfg(feature = "encryption")]
     tests.compile_fail("tests/ui/endpoint_nested_encrypted_response.rs");

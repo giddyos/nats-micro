@@ -117,9 +117,16 @@ pub enum LoginError {
 }
 ```
 
+Any skipped field, including `#[details(skip_all)]`, prevents typed client
+reconstruction for that variant. The client receives `ClientError::ServiceResponse`
+with the original NATS error response instead.
+
 Internal `#[from]` and transparent variants default to HTTP 500 with
 `"an internal error occurred"` and `INTERNAL_ERROR` unless a `#[code(...)]`,
 `#[kind("...")]`, or `#[internal(expose_kind)]` override is supplied.
+Custom `#[kind("...")]` values must match `^[A-Z][A-Z0-9_]*$`. When N-API
+service error enums are generated, JavaScript enum member names follow Rust
+variant names, and enum string values follow the wire `kind`.
 
 ## Dependency Ownership
 

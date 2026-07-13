@@ -51,7 +51,8 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
     let mut napi_js_variants = Vec::new();
     let mut napi_as_ref_arms = Vec::new();
     let mut napi_from_error_arms = Vec::new();
-    let mut wire_kinds = BTreeSet::<(u16, String)>::new();
+    let mut reserved_generic_internal_kinds = BTreeSet::<(u16, String)>::new();
+    let mut concrete_wire_kinds = BTreeSet::<(u16, String)>::new();
     let js_enum_ident = format_ident!("Js{}", enum_ident);
 
     for variant in &data_enum.variants {
@@ -99,14 +100,16 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
             }
         });
         let generic_internal_kind = is_internal && wire_kind == "INTERNAL_ERROR";
-        if !generic_internal_kind && !wire_kinds.insert((code, wire_kind.clone())) {
-            return syn::Error::new_spanned(
-                variant,
-                format!(
-                    "duplicate service_error wire kind `{wire_kind}` for code {code}; rename one variant or use #[kind(...)]"
-                ),
-            )
-            .to_compile_error();
+        let wire_key = (code, wire_kind.clone());
+        if generic_internal_kind {
+            if concrete_wire_kinds.contains(&wire_key) {
+                return duplicate_wire_kind_error(variant, code, &wire_kind).to_compile_error();
+            }
+            reserved_generic_internal_kinds.insert(wire_key);
+        } else if reserved_generic_internal_kinds.contains(&wire_key)
+            || !concrete_wire_kinds.insert(wire_key)
+        {
+            return duplicate_wire_kind_error(variant, code, &wire_kind).to_compile_error();
         }
 
         let message = if is_internal {
@@ -246,6 +249,18 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
 
     strip_service_error_only_attrs(&mut input, mode);
 
+    let external_error_assertion = match mode {
+        ErrorImplMode::SelfContained => quote! {},
+        ErrorImplMode::ExternalDerive => quote! {
+            impl #impl_generics #enum_ident #ty_generics #where_clause {
+                const __NATS_MICRO_ASSERT_EXTERNAL_ERROR_IMPL: () = {
+                    fn assert_error<T: ::std::fmt::Display + ::std::error::Error + 'static>() {}
+                    let _ = assert_error::<Self>;
+                };
+            }
+        },
+    };
+
     let display_impl = match mode {
         ErrorImplMode::SelfContained => quote! {
             impl #impl_generics ::std::fmt::Display for #enum_ident #ty_generics #where_clause {
@@ -336,10 +351,20 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
 
     let mut out = TokenStream::new();
     out.extend(input.into_token_stream());
+    out.extend(external_error_assertion);
     out.extend(display_impl);
     out.extend(enum_impl);
     out.extend(napi_impl);
     out
+}
+
+fn duplicate_wire_kind_error(variant: &syn::Variant, code: u16, wire_kind: &str) -> syn::Error {
+    syn::Error::new_spanned(
+        variant,
+        format!(
+            "duplicate service_error wire kind `{wire_kind}` for code {code}; rename one variant or use #[kind(...)]"
+        ),
+    )
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -846,11 +871,11 @@ impl FieldMeta {
         let details_skip_all = variant_details_skip_all(variant)?;
 
         for (index, field) in variant.fields.iter().enumerate() {
-            let from = field_has_attr(field, "from");
-            let explicit_source = field_has_attr(field, "source");
+            let from = field_role_attr(field, "from", mode)?;
+            let explicit_source = field_role_attr(field, "source", mode)?;
             let implicit_source = field.ident.as_ref().is_some_and(|ident| ident == "source");
             let source = from || explicit_source || implicit_source;
-            let backtrace = field_has_attr(field, "backtrace");
+            let backtrace = field_role_attr(field, "backtrace", mode)?;
             let details_skip = field_details_skip(field)?;
 
             if from && from_index.replace(index).is_some() && mode == ErrorImplMode::SelfContained {
@@ -936,8 +961,23 @@ impl FieldMeta {
     }
 }
 
-fn field_has_attr(field: &syn::Field, name: &str) -> bool {
-    field.attrs.iter().any(|attr| attr.path().is_ident(name))
+fn field_role_attr(
+    field: &syn::Field,
+    name: &str,
+    mode: ErrorImplMode,
+) -> Result<bool, syn::Error> {
+    let Some(attr) = field.attrs.iter().find(|attr| attr.path().is_ident(name)) else {
+        return Ok(false);
+    };
+
+    if mode == ErrorImplMode::SelfContained && !matches!(attr.meta, syn::Meta::Path(_)) {
+        return Err(syn::Error::new_spanned(
+            attr,
+            format!("#[{name}] does not accept arguments in self-contained service_error mode"),
+        ));
+    }
+
+    Ok(true)
 }
 
 fn strip_service_error_only_attrs(input: &mut DeriveInput, mode: ErrorImplMode) {
@@ -1165,15 +1205,25 @@ fn variant_kind_attr(variant: &syn::Variant) -> Result<Option<String>, syn::Erro
             .parse_args::<syn::LitStr>()
             .map_err(|_| syn::Error::new_spanned(attr, "#[kind(...)] requires a string literal"))?;
         let value = lit.value();
-        if value.is_empty() {
+        if !is_valid_wire_kind(&value) {
             return Err(syn::Error::new_spanned(
                 attr,
-                "#[kind(...)] cannot be empty",
+                "#[kind(...)] must match ^[A-Z][A-Z0-9_]*$",
             ));
         }
         kind = Some(value);
     }
     Ok(kind)
+}
+
+fn is_valid_wire_kind(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+
+    first.is_ascii_uppercase()
+        && chars.all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
 }
 
 fn variant_details_skip_all(variant: &syn::Variant) -> Result<bool, syn::Error> {

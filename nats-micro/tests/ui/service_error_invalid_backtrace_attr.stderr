@@ -1,0 +1,5 @@
+error: #[backtrace] does not accept arguments in self-contained service_error mode
+ --> tests/ui/service_error_invalid_backtrace_attr.rs:9:9
+  |
+9 |         #[backtrace(foo)]
+  |         ^^^^^^^^^^^^^^^^^

@@ -58,6 +58,9 @@
 //! Public error fields are serialized into wire `details` by default. Details
 //! are part of the public protocol, so use `#[internal]` for private failures
 //! and `#[details(skip)]` or `#[details(skip_all)]` for sensitive fields.
+//! Any skipped field prevents typed client reconstruction for that variant; the
+//! client keeps the original service response instead. Custom `#[kind("...")]`
+//! values must match `^[A-Z][A-Z0-9_]*$`.
 //!
 //! Raw `thiserror` is available as [`thiserror`] / [`Error`] for advanced local
 //! error types:

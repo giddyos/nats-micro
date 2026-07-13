@@ -1,0 +1,5 @@
+error: #[source] does not accept arguments in self-contained service_error mode
+ --> tests/ui/service_error_invalid_source_attr.rs:6:11
+  |
+6 |     Outer(#[source(foo)] std::io::Error),
+  |           ^^^^^^^^^^^^^^

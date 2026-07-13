@@ -38,6 +38,8 @@ fn service_error_external_derive_skips_error_impls_and_from_impls() {
     assert!(!expanded.contains("impl :: std :: fmt :: Display for DemoError"));
     assert!(!expanded.contains("impl :: std :: error :: Error for DemoError"));
     assert!(!expanded.contains("impl :: std :: convert :: From < std :: io :: Error >"));
+    assert!(expanded.contains("__NATS_MICRO_ASSERT_EXTERNAL_ERROR_IMPL"));
+    assert!(expanded.contains("assert_error :: < Self >"));
     assert!(expanded.contains("impl :: nats_micro :: IntoNatsError for DemoError"));
 }
 
@@ -144,5 +146,23 @@ fn service_error_napi_output_respects_macro_feature() {
     } else {
         assert!(!expanded.contains("napi_derive :: napi"));
         assert!(!expanded.contains("NapiServiceError"));
+    }
+}
+
+#[test]
+fn service_error_napi_enum_names_follow_rust_variants_and_values_follow_wire_kind() {
+    let input = parse_quote! {
+        pub enum DemoError {
+            #[kind("CUSTOM_ERROR")]
+            #[error("boom")]
+            RustNamed,
+        }
+    };
+
+    let expanded = expand_service_error(input).to_string();
+
+    if cfg!(feature = "macros_napi_feature") {
+        assert!(expanded.contains("pub enum JsDemoError { RUST_NAMED"));
+        assert!(expanded.contains("Self :: RUST_NAMED => \"CUSTOM_ERROR\""));
     }
 }

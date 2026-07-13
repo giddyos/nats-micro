@@ -1,0 +1,5 @@
+error: #[kind(...)] must match ^[A-Z][A-Z0-9_]*$
+ --> tests/ui/service_error_invalid_kind_lowercase.rs:5:5
+  |
+5 |     #[kind("bad_kind")]
+  |     ^^^^^^^^^^^^^^^^^^^

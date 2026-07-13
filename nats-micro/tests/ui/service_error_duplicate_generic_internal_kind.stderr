@@ -1,0 +1,8 @@
+error: duplicate service_error wire kind `INTERNAL_ERROR` for code 500; rename one variant or use #[kind(...)]
+  --> tests/ui/service_error_duplicate_generic_internal_kind.rs:8:5
+   |
+ 8 | /     #[code(500)]
+ 9 | |     #[kind("INTERNAL_ERROR")]
+10 | |     #[error("public internal-ish error")]
+11 | |     PublicInternal,
+   | |__________________^
