@@ -1159,6 +1159,7 @@ dependencies = [
  "prost",
  "serde",
  "serde_json",
+ "tokio",
  "tracing-subscriber",
 ]
 

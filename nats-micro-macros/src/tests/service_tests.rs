@@ -107,6 +107,12 @@ fn service_handlers_collect_endpoint_and_consumer_wiring() {
     assert!(expanded.contains("cfg (feature = \"demo\")"));
     assert!(!expanded.contains("pub fn __ep_status"));
     assert!(!expanded.contains("pub fn __con_jobs"));
+    if cfg!(feature = "macros_test_jetstream_feature") {
+        assert!(expanded.contains("dispatch_consumer_local"));
+        assert!(expanded.contains("testing :: dispatch_consumer"));
+    } else {
+        assert!(!expanded.contains("dispatch_consumer_local"));
+    }
 }
 
 #[test]

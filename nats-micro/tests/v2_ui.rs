@@ -29,4 +29,6 @@ fn v2_service_macro_validation() {
     tests.compile_fail("tests/ui/v2_encryption_without_feature.rs");
     #[cfg(not(feature = "test-util"))]
     tests.compile_fail("tests/ui/v4_test_requires_feature.rs");
+    #[cfg(not(feature = "live-test"))]
+    tests.compile_fail("tests/ui/v5_live_test_requires_feature.rs");
 }

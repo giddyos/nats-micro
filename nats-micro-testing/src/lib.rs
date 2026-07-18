@@ -10,6 +10,15 @@ use nats_micro_shared::TransportError;
 use serde::de::DeserializeOwned;
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
+#[cfg(feature = "jetstream")]
+mod jetstream;
+
+#[cfg(feature = "jetstream")]
+pub use jetstream::{
+    JetStreamConfig, JetStreamSimulator, ManualClock, SimulatedAction, SimulatedConsumerConfig,
+    SimulatedDelivery,
+};
+
 #[derive(Debug, Clone)]
 pub struct CapturedEvent {
     subject: String,

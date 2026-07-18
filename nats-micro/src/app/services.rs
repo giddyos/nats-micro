@@ -34,6 +34,14 @@ pub trait Service<S>: Copy + Send + Sync + 'static {
         state: &S,
         request: crate::testing::LocalRequest,
     ) -> impl Future<Output = crate::testing::LocalDispatch> + Send + '_;
+
+    #[cfg(feature = "test-jetstream")]
+    fn dispatch_consumer_local<'a>(
+        self,
+        state: &'a S,
+        durable: &'a str,
+        request: crate::testing::LocalRequest,
+    ) -> impl Future<Output = crate::testing::LocalConsumerDispatch> + Send + 'a;
 }
 
 /// Recursive startup and validation for a type-level service list.

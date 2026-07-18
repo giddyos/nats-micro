@@ -33,8 +33,16 @@ test-util = [
     "nats-micro-macros/macros_test_util_feature",
     "tokio/test-util",
 ]
-live-test = ["test-util", "dep:nats-server"]
-test-jetstream = ["test-util"]
+live-test = [
+    "test-util",
+    "dep:nats-server",
+    "nats-micro-macros/macros_live_test_feature",
+]
+test-jetstream = [
+    "test-util",
+    "nats-micro-testing/jetstream",
+    "nats-micro-macros/macros_test_jetstream_feature",
+]
 
 [dependencies]
 async-nats = { workspace = true, features = ["service", "jetstream", "kv"] }
@@ -94,6 +102,10 @@ harness = false
 [[example]]
 name = "in_memory"
 required-features = ["test-util"]
+
+[[example]]
+name = "live"
+required-features = ["live-test"]
 
 [lints.clippy]
 complexity = { priority = -1, level = "deny" }

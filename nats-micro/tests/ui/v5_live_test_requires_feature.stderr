@@ -1,0 +1,7 @@
+error: #[nats_micro::live_test] requires the `live-test` feature
+ --> tests/ui/v5_live_test_requires_feature.rs:2:1
+  |
+2 | / async fn needs_live_test() -> nats_micro::Result<()> {
+3 | |     Ok(())
+4 | | }
+  | |_^

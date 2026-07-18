@@ -36,6 +36,7 @@ struct Inner {
     child: Child,
     logfile: PathBuf,
     pidfile: PathBuf,
+    keep_logs: bool,
 }
 
 static SD_RE: LazyLock<Regex> =
@@ -45,17 +46,19 @@ static CLIENT_RE: LazyLock<Regex> =
 
 impl Drop for Server {
     fn drop(&mut self) {
-        self.inner.child.kill().unwrap();
-        self.inner.child.wait().unwrap();
+        let _ = self.inner.child.kill();
+        let _ = self.inner.child.wait();
         if let Ok(log) = fs::read_to_string(self.inner.logfile.as_os_str()) {
             // Check if we had JetStream running and if so cleanup the storage directory.
             if let Some(caps) = SD_RE.captures(&log) {
                 let sd = caps.get(1).map_or("", |m| m.as_str());
                 fs::remove_dir_all(sd).ok();
             }
-            // Remove Logfile.
+        }
+        if !self.inner.keep_logs {
             fs::remove_file(self.inner.logfile.as_os_str()).ok();
         }
+        fs::remove_file(self.inner.pidfile.as_os_str()).ok();
     }
 }
 
@@ -65,11 +68,12 @@ impl Server {
             .inner
             .port
             .clone()
-            .expect("can't restart server with dynamic port");
+            .unwrap_or_else(|| self.client_port().to_string());
         self.inner.child.kill().unwrap();
         self.inner.child.wait().unwrap();
-        let inner = do_run(&self.inner.cfg, Some(&port), Some(self.inner.id.clone()))
+        let mut inner = do_run(&self.inner.cfg, Some(&port), Some(self.inner.id.clone()))
             .expect("failed to restart nats-server");
+        inner.keep_logs = self.inner.keep_logs;
         self.inner = inner;
     }
 
@@ -140,6 +144,23 @@ impl Server {
             .parse()
             .unwrap()
     }
+
+    #[must_use]
+    pub fn log_path(&self) -> &std::path::Path {
+        &self.inner.logfile
+    }
+
+    pub fn preserve_logs(&mut self, preserve: bool) {
+        self.inner.keep_logs = preserve;
+    }
+}
+
+#[must_use]
+pub fn is_server_available() -> bool {
+    Command::new("nats-server")
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success())
 }
 
 pub fn set_lame_duck_mode(s: &Server) {
@@ -161,12 +182,17 @@ pub fn try_run_server(cfg: &str) -> std::io::Result<Server> {
 }
 
 pub fn run_server_with_jetstream() -> Server {
+    try_run_server_with_jetstream()
+        .unwrap_or_else(|error| panic!("failed to start nats-server with JetStream: {error}"))
+}
+
+pub fn try_run_server_with_jetstream() -> std::io::Result<Server> {
     let workspace_dir = get_workspace_root();
     let config_path = workspace_dir
         .join("nats-server")
         .join("configs")
         .join("jetstream.conf");
-    run_server(config_path.to_str().unwrap())
+    try_run_server(config_path.to_str().unwrap())
 }
 
 pub fn is_port_available(port: usize) -> bool {
@@ -309,6 +335,7 @@ fn do_run(cfg: &str, port: Option<&str>, id: Option<String>) -> std::io::Result<
         child,
         logfile,
         pidfile,
+        keep_logs: false,
     })
 }
 
@@ -368,6 +395,7 @@ fn run_cluster_node_with_port(
             child,
             logfile,
             pidfile,
+            keep_logs: false,
         },
     }
 }
@@ -377,8 +405,24 @@ pub fn run_basic_server() -> Server {
     run_server("")
 }
 
+pub fn try_run_basic_server() -> std::io::Result<Server> {
+    try_run_server("")
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn requested_server_logs_survive_cleanup() {
+        let path = {
+            let mut server = crate::run_basic_server();
+            let _ = server.client_url();
+            server.preserve_logs(true);
+            server.log_path().to_owned()
+        };
+
+        assert!(path.is_file());
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[tokio::test]
     async fn cluster_with_js() {

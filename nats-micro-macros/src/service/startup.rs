@@ -30,6 +30,7 @@ pub(crate) fn generate(model: &ServiceModel) -> TokenStream {
         .collect::<Vec<_>>();
     let client = quote::format_ident!("{}Client", service_ident);
     let local_dispatch = super::local::generate_service_method(model);
+    let local_consumer_dispatch = super::local::generate_consumer_service_method(model);
 
     quote! {
         impl #nats_micro::Service<#state_type> for #service_ident {
@@ -62,6 +63,7 @@ pub(crate) fn generate(model: &ServiceModel) -> TokenStream {
             }
 
             #local_dispatch
+            #local_consumer_dispatch
         }
     }
 }

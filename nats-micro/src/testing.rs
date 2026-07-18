@@ -6,10 +6,24 @@ use bytes::Bytes;
 pub use nats_micro_testing::{
     CapturedEvent, EventLog, EventSelection, FaultPlan, init_test_tracing,
 };
+#[cfg(feature = "test-jetstream")]
+pub use nats_micro_testing::{
+    JetStreamConfig, JetStreamSimulator, ManualClock, SimulatedAction, SimulatedConsumerConfig,
+};
 
 use crate::{
     ClientRequest, ClientResponse, ClientTransport, Cons, Nil, RequestEndpoint, Response, Service,
     ServiceSet,
+};
+#[cfg(feature = "test-jetstream")]
+use crate::{ConsumerAction, ConsumerHandler};
+
+#[cfg(feature = "live-test")]
+mod live;
+#[cfg(feature = "live-test")]
+pub use live::{
+    LiveServiceSet, LiveTestApp, LiveTestHarness, init_live_test_diagnostics, is_live_test_skip,
+    live_test_timeout,
 };
 
 #[derive(Debug)]
@@ -78,6 +92,13 @@ pub enum LocalDispatch {
     NotMatched(LocalRequest),
 }
 
+#[cfg(feature = "test-jetstream")]
+#[derive(Debug)]
+pub enum LocalConsumerDispatch {
+    Matched(ConsumerAction),
+    NotMatched(LocalRequest),
+}
+
 pub trait LocalServiceSet<S>: Send + Sync + 'static {
     fn dispatch<'a>(
         &'a self,
@@ -109,11 +130,91 @@ where
     }
 }
 
+#[cfg(feature = "test-jetstream")]
+pub trait LocalConsumerServiceSet<S>: Send + Sync + 'static {
+    fn register_consumers(&self, jetstream: &JetStreamSimulator) -> anyhow::Result<()>;
+
+    fn dispatch_consumer<'a>(
+        &'a self,
+        state: &'a S,
+        durable: &'a str,
+        request: LocalRequest,
+    ) -> impl Future<Output = LocalConsumerDispatch> + Send + 'a;
+}
+
+#[cfg(feature = "test-jetstream")]
+impl<S> LocalConsumerServiceSet<S> for Nil
+where
+    S: Send + Sync + 'static,
+{
+    fn register_consumers(&self, _jetstream: &JetStreamSimulator) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn dispatch_consumer<'a>(
+        &'a self,
+        _state: &'a S,
+        _durable: &'a str,
+        request: LocalRequest,
+    ) -> LocalConsumerDispatch {
+        LocalConsumerDispatch::NotMatched(request)
+    }
+}
+
+#[cfg(feature = "test-jetstream")]
+impl<S, Head, Tail> LocalConsumerServiceSet<S> for Cons<Head, Tail>
+where
+    S: Send + Sync + 'static,
+    Head: Service<S>,
+    Tail: LocalConsumerServiceSet<S>,
+{
+    fn register_consumers(&self, jetstream: &JetStreamSimulator) -> anyhow::Result<()> {
+        for consumer in Head::SPEC.consumers {
+            jetstream.register_consumer(SimulatedConsumerConfig {
+                stream: consumer.stream.to_owned(),
+                durable: consumer.durable.to_owned(),
+                filter_subject: consumer.filter_subject.to_owned(),
+                ack_wait: std::time::Duration::from_millis(consumer.ack_wait_ms),
+                max_deliver: u64::try_from(consumer.max_deliver)
+                    .unwrap_or(u64::MAX)
+                    .max(1),
+                backoff: consumer
+                    .backoff_ms
+                    .iter()
+                    .copied()
+                    .map(std::time::Duration::from_millis)
+                    .collect(),
+            })?;
+        }
+        self.tail.register_consumers(jetstream)
+    }
+
+    async fn dispatch_consumer<'a>(
+        &'a self,
+        state: &'a S,
+        durable: &'a str,
+        request: LocalRequest,
+    ) -> LocalConsumerDispatch {
+        match self
+            .head
+            .dispatch_consumer_local(state, durable, request)
+            .await
+        {
+            LocalConsumerDispatch::Matched(action) => LocalConsumerDispatch::Matched(action),
+            LocalConsumerDispatch::NotMatched(request) => {
+                self.tail.dispatch_consumer(state, durable, request).await
+            }
+        }
+    }
+}
+
 struct Inner<S, Services> {
     state: S,
     services: Services,
     events: EventLog,
     faults: FaultPlan,
+    #[cfg(feature = "test-jetstream")]
+    jetstream: JetStreamSimulator,
 }
 
 pub struct LocalTransport<S, Services> {
@@ -178,6 +279,8 @@ pub struct TestApp<S, Services = Nil> {
     services: Services,
     events: EventLog,
     faults: FaultPlan,
+    #[cfg(feature = "test-jetstream")]
+    jetstream: JetStreamConfig,
 }
 
 impl<S> TestApp<S, Nil>
@@ -191,6 +294,8 @@ where
             services: Nil,
             events: EventLog::default(),
             faults: FaultPlan::default(),
+            #[cfg(feature = "test-jetstream")]
+            jetstream: JetStreamConfig::default(),
         }
     }
 }
@@ -219,9 +324,19 @@ where
             },
             events: self.events,
             faults: self.faults,
+            #[cfg(feature = "test-jetstream")]
+            jetstream: self.jetstream,
         }
     }
 
+    #[cfg(feature = "test-jetstream")]
+    #[must_use]
+    pub fn jetstream(mut self, configure: impl FnOnce(&mut JetStreamConfig)) -> Self {
+        configure(&mut self.jetstream);
+        self
+    }
+
+    #[cfg(not(feature = "test-jetstream"))]
     #[must_use]
     pub fn start(self) -> TestHarness<S, Services>
     where
@@ -234,6 +349,30 @@ where
             services: self.services,
             events: self.events,
             faults: self.faults,
+        });
+        TestHarness {
+            transport: LocalTransport { inner },
+        }
+    }
+
+    #[cfg(feature = "test-jetstream")]
+    #[must_use]
+    pub fn start(self) -> TestHarness<S, Services>
+    where
+        Services: LocalServiceSet<S> + LocalConsumerServiceSet<S> + ServiceSet<S>,
+    {
+        crate::validate_service_set::<S, Services>(&self.services)
+            .expect("test application service validation failed");
+        let jetstream = JetStreamSimulator::new(self.jetstream, self.events.clone());
+        self.services
+            .register_consumers(&jetstream)
+            .expect("simulated JetStream consumer validation failed");
+        let inner = Arc::new(Inner {
+            state: self.state,
+            services: self.services,
+            events: self.events,
+            faults: self.faults,
+            jetstream,
         });
         TestHarness {
             transport: LocalTransport { inner },
@@ -274,6 +413,122 @@ where
     }
 }
 
+#[cfg(feature = "test-jetstream")]
+impl<S, Services> TestHarness<S, Services>
+where
+    S: Send + Sync + 'static,
+    Services: LocalServiceSet<S> + LocalConsumerServiceSet<S>,
+{
+    #[must_use]
+    pub fn jetstream(&self) -> TestJetStream {
+        TestJetStream {
+            simulator: self.transport.inner.jetstream.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn clock(&self) -> ManualClock {
+        self.transport.inner.jetstream.clock()
+    }
+
+    #[must_use]
+    pub fn deliveries(&self, durable: &str) -> u64 {
+        self.transport.inner.jetstream.deliveries(durable)
+    }
+
+    pub async fn run_until_idle(&self) -> anyhow::Result<()> {
+        while let Some(delivery) = self.transport.inner.jetstream.next_due() {
+            if self
+                .transport
+                .inner
+                .jetstream
+                .consume_timeout(delivery.durable())
+            {
+                self.transport.inner.jetstream.complete_timeout(delivery);
+                continue;
+            }
+
+            let durable = delivery.durable().to_owned();
+            let attempt = delivery.attempt();
+            let (subject, payload, mut headers) = delivery.clone().into_parts();
+            headers
+                .get_or_insert_with(HeaderMap::new)
+                .insert("Nats-Num-Delivered", attempt.to_string());
+            let request = LocalRequest {
+                subject: LocalSubject::Owned(subject),
+                payload,
+                headers,
+            };
+            let action = match self
+                .transport
+                .inner
+                .services
+                .dispatch_consumer(&self.transport.inner.state, &durable, request)
+                .await
+            {
+                LocalConsumerDispatch::Matched(action) => action,
+                LocalConsumerDispatch::NotMatched(_) => {
+                    anyhow::bail!("no simulated consumer route matched durable `{durable}`");
+                }
+            };
+            self.transport.inner.jetstream.complete(
+                delivery,
+                match action {
+                    ConsumerAction::Ack => SimulatedAction::Ack,
+                    ConsumerAction::Nack => SimulatedAction::Nack,
+                    ConsumerAction::NackAfter(delay) => SimulatedAction::NackAfter(delay),
+                    ConsumerAction::Term => SimulatedAction::Term,
+                },
+            );
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "test-jetstream")]
+/// Deterministic application-semantics simulator for generated consumers.
+///
+/// It intentionally does not model clustering, persistence, account
+/// permissions, server-side stream configuration edge cases, or reconnect
+/// behavior. Use `LiveTestApp` under `live-test` for those protocol concerns.
+#[derive(Debug, Clone)]
+pub struct TestJetStream {
+    simulator: JetStreamSimulator,
+}
+
+#[cfg(feature = "test-jetstream")]
+#[allow(clippy::unused_async)]
+impl TestJetStream {
+    pub async fn publish(&self, subject: &str, payload: impl Into<Bytes>) -> anyhow::Result<()> {
+        self.simulator.publish(subject, &payload.into(), None)
+    }
+
+    pub async fn publish_json<T>(&self, subject: &str, value: &T) -> anyhow::Result<()>
+    where
+        T: serde::Serialize + ?Sized,
+    {
+        self.simulator
+            .publish(subject, &Bytes::from(serde_json::to_vec(value)?), None)
+    }
+
+    pub async fn publish_proto<T>(&self, subject: &str, value: &T) -> anyhow::Result<()>
+    where
+        T: prost::Message,
+    {
+        self.simulator
+            .publish(subject, &Bytes::from(value.encode_to_vec()), None)
+    }
+
+    pub fn timeout_next(&self, durable: impl Into<String>) {
+        self.simulator.timeout_next(durable);
+    }
+
+    #[must_use]
+    pub fn pending(&self) -> usize {
+        self.simulator.pending()
+    }
+}
+
 pub async fn dispatch<S, E>(state: &S, request: LocalRequest) -> LocalDispatch
 where
     S: Send + Sync + 'static,
@@ -298,6 +553,18 @@ where
         },
     };
     LocalDispatch::Matched(Ok(response))
+}
+
+#[cfg(feature = "test-jetstream")]
+pub async fn dispatch_consumer<S, C>(state: &S, request: LocalRequest) -> LocalConsumerDispatch
+where
+    S: Send + Sync + 'static,
+    C: ConsumerHandler<S>,
+{
+    let action = C::call(state, request.view())
+        .await
+        .unwrap_or(ConsumerAction::Nack);
+    LocalConsumerDispatch::Matched(action)
 }
 
 #[cfg(test)]

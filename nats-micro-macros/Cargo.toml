@@ -17,6 +17,8 @@ macros_client_feature = []
 macros_encryption_feature = []
 macros_napi_feature = ["macros_client_feature"]
 macros_test_util_feature = []
+macros_test_jetstream_feature = ["macros_test_util_feature"]
+macros_live_test_feature = ["macros_test_util_feature"]
 
 [dependencies]
 darling = { workspace = true }

@@ -18,6 +18,8 @@ pub use crate::service::{
 };
 pub use crate::spec::AuthPolicy;
 pub use crate::state::StateMap;
+#[cfg(feature = "live-test")]
+pub use crate::testing::{LiveTestApp, LiveTestHarness};
 #[cfg(feature = "test-util")]
 pub use crate::testing::{TestApp, TestHarness};
 pub use crate::{

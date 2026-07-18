@@ -140,14 +140,52 @@ fn expand_test_result(args: TokenStream, input: TokenStream) -> syn::Result<Toke
 }
 
 pub(crate) fn expand_live_test(args: TokenStream, input: &TokenStream) -> TokenStream {
+    if !cfg!(feature = "macros_live_test_feature") {
+        return syn::Error::new_spanned(
+            input,
+            "#[nats_micro::live_test] requires the `live-test` feature",
+        )
+        .to_compile_error();
+    }
     if !args.is_empty() {
         return syn::Error::new_spanned(args, "live_test macro takes no arguments")
             .to_compile_error();
     }
+    let mut function: ItemFn = match syn::parse2(input.clone()) {
+        Ok(function) => function,
+        Err(error) => return error.to_compile_error(),
+    };
+    if function.sig.asyncness.is_none() {
+        return syn::Error::new_spanned(
+            &function.sig,
+            "#[nats_micro::live_test] requires an async function",
+        )
+        .to_compile_error();
+    }
     let nats_micro = nats_micro_path();
+    let statements = function.block.stmts;
+    function.block = syn::parse_quote!({
+        #nats_micro::testing::init_live_test_diagnostics();
+        let __live_result = #nats_micro::tokio::time::timeout(
+            #nats_micro::testing::live_test_timeout(),
+            async move { #(#statements)* },
+        )
+        .await;
+        match __live_result {
+            Ok(Err(error)) if #nats_micro::testing::is_live_test_skip(&error) => {
+                eprintln!("{error}");
+                Ok(())
+            }
+            Ok(result) => result,
+            Err(_) => Err(#nats_micro::anyhow::anyhow!(
+                "live test timed out after {:?}",
+                #nats_micro::testing::live_test_timeout(),
+            )),
+        }
+    });
     quote! {
-        #[#nats_micro::tokio::test]
-        #input
+        #[#nats_micro::tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        #function
     }
 }
 
@@ -197,5 +235,22 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("requires"));
+    }
+
+    #[cfg(feature = "macros_live_test_feature")]
+    #[test]
+    fn live_test_uses_parallel_runtime_diagnostics_and_timeout() {
+        let input = quote! {
+            async fn example() -> anyhow::Result<()> {
+                Ok(())
+            }
+        };
+        let output = super::expand_live_test(quote!(), &input).to_string();
+
+        assert!(output.contains("flavor = \"multi_thread\""));
+        assert!(output.contains("worker_threads = 2"));
+        assert!(output.contains("init_live_test_diagnostics"));
+        assert!(output.contains("live_test_timeout"));
+        assert!(output.contains("is_live_test_skip"));
     }
 }

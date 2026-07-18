@@ -6,6 +6,10 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/giddyos/nats-micro"
 description = "Test-only event, fault, and tracing support for nats-micro"
 
+[features]
+default = []
+jetstream = ["dep:tokio"]
+
 [dependencies]
 anyhow = { workspace = true }
 async-nats = { workspace = true }
@@ -15,6 +19,7 @@ prost = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+tokio = { workspace = true, optional = true, features = ["test-util", "time"] }
 
 [lints.clippy]
 complexity = { priority = -1, level = "deny" }

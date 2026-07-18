@@ -71,6 +71,24 @@ where
     }
 }
 
+#[cfg(feature = "live-test")]
+impl<S, Services> App<S, Services, NoStartupHook>
+where
+    S: Send + Sync + 'static,
+{
+    pub(crate) fn from_service_set(state: S, services: Services) -> Self {
+        Self {
+            state: Arc::new(state),
+            services,
+            startup_hook: NoStartupHook,
+            config: AppConfig::default(),
+            connection: ConnectionConfig::from_env(),
+            connected_client: None,
+            shutdown_hook: None,
+        }
+    }
+}
+
 impl<S, Services, Hook> App<S, Services, Hook>
 where
     S: Send + Sync + 'static,
@@ -233,6 +251,13 @@ pub struct RunningApp {
 }
 
 impl RunningApp {
+    #[cfg(feature = "live-test")]
+    pub(crate) fn request_shutdown(&self) {
+        let _ = self
+            .shutdown
+            .send(ShutdownState::requested(Some(self.drain_timeout)));
+    }
+
     pub async fn ready(&self) -> crate::Result<()> {
         let mut ready = self.ready.clone();
         while !*ready.borrow() {
