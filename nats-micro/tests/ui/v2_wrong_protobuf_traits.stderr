@@ -1,0 +1,80 @@
+error[E0277]: the trait bound `NotProtobuf: nats_micro::prost::Message` is not satisfied
+ --> tests/ui/v2_wrong_protobuf_traits.rs:8:34
+  |
+8 |     async fn decode(input: Proto<NotProtobuf>) -> Proto<NotProtobuf> {
+  |                                  ^^^^^^^^^^^ unsatisfied trait bound
+  |
+help: the trait `nats_micro::prost::Message` is not implemented for `NotProtobuf`
+ --> tests/ui/v2_wrong_protobuf_traits.rs:3:1
+  |
+3 | struct NotProtobuf;
+  | ^^^^^^^^^^^^^^^^^^
+  = help: the following other types implement trait `nats_micro::prost::Message`:
+            ()
+            Box<M>
+            Vec<u8>
+            bool
+            f32
+            f64
+            i32
+            i64
+          and $N others
+note: required by a bound in `decode_proto`
+ --> src/codec.rs
+  |
+  | pub fn decode_proto<T>(request: &Request<'_>) -> Result<T, ErrorReply>
+  |        ------------ required by a bound in this function
+  | where
+  |     T: prost::Message + Default,
+  |        ^^^^^^^^^^^^^^ required by this bound in `decode_proto`
+
+error[E0277]: the trait bound `NotProtobuf: std::default::Default` is not satisfied
+ --> tests/ui/v2_wrong_protobuf_traits.rs:8:34
+  |
+8 |     async fn decode(input: Proto<NotProtobuf>) -> Proto<NotProtobuf> {
+  |                                  ^^^^^^^^^^^ the trait `std::default::Default` is not implemented for `NotProtobuf`
+  |
+note: required by a bound in `decode_proto`
+ --> src/codec.rs
+  |
+  | pub fn decode_proto<T>(request: &Request<'_>) -> Result<T, ErrorReply>
+  |        ------------ required by a bound in this function
+  | where
+  |     T: prost::Message + Default,
+  |                         ^^^^^^^ required by this bound in `decode_proto`
+help: consider annotating `NotProtobuf` with `#[derive(Default)]`
+  |
+3 + #[derive(Default)]
+4 | struct NotProtobuf;
+  |
+
+error[E0277]: the trait bound `NotProtobuf: nats_micro::prost::Message` is not satisfied
+ --> tests/ui/v2_wrong_protobuf_traits.rs:5:1
+  |
+5 | #[service(name = "demo", version = "1.0.0")]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+  |
+help: the trait `nats_micro::prost::Message` is not implemented for `NotProtobuf`
+ --> tests/ui/v2_wrong_protobuf_traits.rs:3:1
+  |
+3 | struct NotProtobuf;
+  | ^^^^^^^^^^^^^^^^^^
+  = help: the following other types implement trait `nats_micro::prost::Message`:
+            ()
+            Box<M>
+            Vec<u8>
+            bool
+            f32
+            f64
+            i32
+            i64
+          and $N others
+note: required by a bound in `encode_proto`
+ --> src/codec.rs
+  |
+  | pub fn encode_proto<T>(value: &T) -> Result<Bytes, ErrorReply>
+  |        ------------ required by a bound in this function
+  | where
+  |     T: prost::Message,
+  |        ^^^^^^^^^^^^^^ required by this bound in `encode_proto`
+  = note: this error originates in the attribute macro `service` (in Nightly builds, run with -Z macro-backtrace for more info)

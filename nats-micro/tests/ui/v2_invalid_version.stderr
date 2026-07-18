@@ -1,0 +1,5 @@
+error: service `version` must match x.x.x with ASCII digits
+ --> tests/ui/v2_invalid_version.rs:4:6
+  |
+4 | impl Demo {
+  |      ^^^^

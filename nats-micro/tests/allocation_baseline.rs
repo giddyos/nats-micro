@@ -8,8 +8,8 @@ use std::{
 
 use nats_micro::{
     __macros::into_handler_fn, AuthPolicy, Bytes, Codec, DispatchResult, NatsErrorResponse,
-    NatsRequest, OperationKind, OperationSpec, Request, RequestContext, RequestEndpoint, Response,
-    StateMap,
+    NatsRequest, OperationKind, OperationSpec, OwnedHeaders, Request, RequestContext,
+    RequestEndpoint, Response, StateMap,
 };
 
 struct CountingAllocator;
@@ -104,7 +104,7 @@ fn v1_dynamic_raw_static_response_allocation_baseline() {
             NatsRequest {
                 subject: "users.v1.users.lookup".to_owned(),
                 payload: Bytes::from_static(b"request"),
-                headers: nats_micro::Headers::new(),
+                headers: OwnedHeaders::new(),
                 reply: Some("_INBOX.baseline".to_owned()),
                 request_id: "019b-baseline-request".to_owned(),
             },

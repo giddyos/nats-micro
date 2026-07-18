@@ -1,0 +1,13 @@
+error: consumer backoff durations must be greater than zero
+  --> tests/ui/v2_invalid_consumer_backoff.rs:11:14
+   |
+11 |     async fn consume(body: Body<'_>) -> ConsumerAction {
+   |              ^^^^^^^
+
+warning: unused imports: `Body` and `ConsumerAction`
+ --> tests/ui/v2_invalid_consumer_backoff.rs:1:18
+  |
+1 | use nats_micro::{Body, ConsumerAction, service};
+  |                  ^^^^  ^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

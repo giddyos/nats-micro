@@ -1,0 +1,5 @@
+error: duplicate subject placeholder `user_id`
+ --> tests/ui/v2_duplicate_placeholders.rs:6:14
+  |
+6 |     async fn get(user_id: &str) {
+  |              ^^^

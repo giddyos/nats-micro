@@ -1,0 +1,5 @@
+error: unsupported payload argument shape
+ --> tests/ui/v2_unsupported_payload.rs:6:31
+  |
+6 |     async fn create(callback: fn()) {
+  |                               ^^^^

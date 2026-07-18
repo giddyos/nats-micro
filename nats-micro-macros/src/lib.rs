@@ -1,51 +1,72 @@
-use darling::{FromMeta, ast::NestedMeta};
-use proc_macro::TokenStream;
-use syn::{DeriveInput, ItemImpl, ItemStruct, parse_macro_input};
+#![allow(special_module_name)]
 
-mod client;
-mod consumer;
-mod endpoint;
-mod napi;
+use proc_macro::TokenStream;
+use syn::{DeriveInput, parse_macro_input};
+
+mod app_state;
+mod application;
+mod main;
+mod message;
 mod object;
 mod service;
 mod service_error;
-mod utils;
+mod test;
+mod util;
 
-fn parse_attr_args(attr: TokenStream) -> Result<Vec<NestedMeta>, TokenStream> {
-    NestedMeta::parse_meta_list(attr.into())
-        .map_err(|error| darling::Error::from(error).write_errors().into())
+#[proc_macro_attribute]
+pub fn service(args: TokenStream, input: TokenStream) -> TokenStream {
+    service::expand(args.into(), input.into()).into()
 }
 
 #[proc_macro_attribute]
-pub fn service(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let attr_args = match parse_attr_args(attr) {
-        Ok(v) => v,
-        Err(e) => return e,
-    };
-    let item_struct = parse_macro_input!(item as ItemStruct);
-    match service::ServiceArgs::from_list(&attr_args) {
-        Ok(args) => match service::validate_service_args(&args, &item_struct) {
-            Ok(()) => service::expand_service(args, &item_struct).into(),
-            Err(error) => error.to_compile_error().into(),
-        },
-        Err(e) => e.write_errors().into(),
-    }
+pub fn message(args: TokenStream, input: TokenStream) -> TokenStream {
+    message::expand(args.into(), input.into()).into()
 }
 
 #[proc_macro_attribute]
-pub fn object(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let item_struct = parse_macro_input!(item as ItemStruct);
-    object::expand_object(&item_struct).into()
-}
-
-#[proc_macro_attribute]
-pub fn service_handlers(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let item_impl = parse_macro_input!(item as ItemImpl);
-    service::expand_service_handlers(&item_impl).into()
-}
-
-#[proc_macro_attribute]
-pub fn service_error(_attr: TokenStream, item: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(item as DeriveInput);
+pub fn service_error(_args: TokenStream, input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
     service_error::expand_service_error(input).into()
+}
+
+#[proc_macro_derive(AppState, attributes(state))]
+pub fn app_state(input: TokenStream) -> TokenStream {
+    app_state::expand(parse_macro_input!(input as DeriveInput)).into()
+}
+
+#[proc_macro_attribute]
+pub fn main(args: TokenStream, input: TokenStream) -> TokenStream {
+    main::expand(args.into(), &input.into()).into()
+}
+
+#[proc_macro_attribute]
+pub fn test(args: TokenStream, input: TokenStream) -> TokenStream {
+    test::expand(args.into(), &input.into()).into()
+}
+
+#[proc_macro_attribute]
+pub fn live_test(args: TokenStream, input: TokenStream) -> TokenStream {
+    test::expand(args.into(), &input.into()).into()
+}
+
+#[proc_macro]
+pub fn application(input: TokenStream) -> TokenStream {
+    application::expand(input.into()).into()
+}
+
+#[proc_macro_attribute]
+pub fn object(_args: TokenStream, input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as syn::ItemStruct);
+    object::expand_object(&input).into()
+}
+
+#[proc_macro_attribute]
+pub fn service_handlers(_args: TokenStream, input: TokenStream) -> TokenStream {
+    let input: proc_macro2::TokenStream = input.into();
+    let error = syn::Error::new_spanned(
+        &input,
+        "#[service_handlers] was removed in v2; place #[service(...)] on the impl block",
+    )
+    .to_compile_error();
+    quote::quote!(#error #input).into()
 }

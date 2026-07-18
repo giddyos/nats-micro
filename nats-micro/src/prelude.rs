@@ -1,17 +1,16 @@
 pub use crate::Bytes;
 pub use crate::ConsumerConfig;
 pub use crate::ShutdownSignal;
-pub use crate::auth::{Auth, AuthError, FromAuthRequest};
+pub use crate::auth::{Auth, AuthError, FromAuthRequest, FromRequestMeta};
 pub use crate::consumer::{ConsumerDefinition, ConsumerHandlerFn};
 pub use crate::error::{ClientError, IntoNatsError, NatsError, NatsErrorResponse};
 pub use crate::extractors::{
-    FromPayload, FromRequest, FromSubjectParam, IntoPayloadInner, Json, Payload, Proto, RequestId,
-    State, Subject, SubjectParam,
+    FromPayload, FromRequest, FromSubjectParam, IntoPayloadInner, Json, Payload, Proto,
+    RequestId as OwnedRequestId, State, Subject, SubjectParam,
 };
 pub use crate::handler::{HandlerFn, RequestContext};
-pub use crate::request::NatsRequest;
-pub use crate::request::{Header, Headers};
-pub use crate::response::{IntoNatsResponse, NatsResponse};
+pub use crate::request::{Header, Headers as OwnedHeaders, NatsRequest};
+pub use crate::response::{IntoNatsResponse, IntoServiceError, NatsResponse, Response};
 pub use crate::service::{
     ConsumerInfo, EndpointDefinition, EndpointDescriptor, EndpointInfo, NatsService, ParamInfo,
     PayloadEncoding, PayloadMeta, ResponseEncoding, ResponseMeta, ServiceContract,
@@ -19,8 +18,9 @@ pub use crate::service::{
 };
 pub use crate::spec::AuthPolicy;
 pub use crate::state::StateMap;
+pub use crate::{App, HandlerPanicPolicy, NatsApp, NatsAppConfig, WorkerFailurePolicy};
+pub use crate::{Body, Headers, Request, RequestId, RequestMeta, StateRef, Text};
 pub use crate::{Error, ThisError};
-pub use crate::{HandlerPanicPolicy, NatsApp, NatsAppConfig, WorkerFailurePolicy};
 
 #[cfg(feature = "client")]
 pub use crate::{
@@ -40,4 +40,6 @@ pub use crate::{napi, napi_derive};
 pub use nats_micro_macros::object;
 
 pub use crate::async_nats;
-pub use nats_micro_macros::{service, service_error, service_handlers};
+pub use nats_micro_macros::{
+    AppState, application, live_test, message, service, service_error, service_handlers,
+};

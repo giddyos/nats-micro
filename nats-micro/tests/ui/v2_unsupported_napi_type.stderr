@@ -1,0 +1,13 @@
+error: unsupported N-API wire type
+ --> tests/ui/v2_unsupported_napi_type.rs:8:23
+  |
+8 |     async fn map() -> HashMap<String, String> {
+  |                       ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::collections::HashMap`
+ --> tests/ui/v2_unsupported_napi_type.rs:1:5
+  |
+1 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

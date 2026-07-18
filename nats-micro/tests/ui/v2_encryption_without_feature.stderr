@@ -1,0 +1,5 @@
+error: encrypted operations require the `encryption` feature
+ --> tests/ui/v2_encryption_without_feature.rs:6:28
+  |
+6 |     async fn secret(input: Encrypted<String>) -> String {
+  |                            ^^^^^^^^^^^^^^^^^

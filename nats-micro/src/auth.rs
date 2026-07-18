@@ -50,6 +50,13 @@ pub trait FromAuthRequest: Sized + Send + Sync + 'static {
     ) -> impl Future<Output = Result<Self, AuthError>> + Send;
 }
 
+/// Builds authentication claims from borrowed v2 request metadata.
+pub trait FromRequestMeta: Sized + Send + Sync + 'static {
+    fn from_request_meta(
+        meta: crate::RequestMeta<'_>,
+    ) -> impl Future<Output = Result<Self, AuthError>> + Send + '_;
+}
+
 #[derive(Clone)]
 pub struct Auth<U>(Arc<U>);
 

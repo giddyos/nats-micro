@@ -2,7 +2,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote, quote_spanned};
 use syn::{Fields, ItemStruct, Visibility, spanned::Spanned};
 
-use crate::utils::nats_micro_path;
+use crate::util::nats_micro_path;
 
 pub(crate) fn expand_object(item: &ItemStruct) -> TokenStream {
     if !item.generics.params.is_empty() {

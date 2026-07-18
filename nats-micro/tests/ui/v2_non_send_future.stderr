@@ -1,0 +1,19 @@
+error: future cannot be sent between threads safely
+  --> tests/ui/v2_non_send_future.rs:5:1
+   |
+ 5 | #[service(name = "demo", version = "1.0.0")]
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ future returned by `call` is not `Send`
+   |
+   = help: within `impl Future<Output = Result<nats_micro::Response, ErrorReply>>`, the trait `std::marker::Send` is not implemented for `Rc<&str>`
+note: future is not `Send` as this value is used across an await
+  --> tests/ui/v2_non_send_future.rs:10:32
+   |
+ 9 |         let value = Rc::new("not-send");
+   |             ----- has type `Rc<&str>` which is not `Send`
+10 |         std::future::ready(()).await;
+   |                                ^^^^^ await occurs here, with `value` maybe used later
+note: required by a bound in `RequestEndpoint::call::{anon_assoc#0}`
+  --> src/handler.rs
+   |
+   |     ) -> impl Future<Output = DispatchResult> + Send + 'a;
+   |                                                 ^^^^ required by this bound in `RequestEndpoint::call::{anon_assoc#0}`

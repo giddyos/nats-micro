@@ -1,0 +1,13 @@
+error: `auth = optional` requires `Option<Auth<T>>` and no required auth argument
+ --> tests/ui/v2_optional_auth_mismatch.rs:8:14
+  |
+8 |     async fn me(auth: Auth<Claims>) {
+  |              ^^
+
+warning: unused import: `Auth`
+ --> tests/ui/v2_optional_auth_mismatch.rs:1:18
+  |
+1 | use nats_micro::{Auth, service};
+  |                  ^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use async_nats::HeaderMap;
 use bytes::Bytes;
 use nats_micro_shared::FrameworkError;
@@ -57,7 +59,7 @@ impl Response {
 #[derive(Debug)]
 pub struct ErrorReply {
     pub code: u16,
-    pub kind: &'static str,
+    pub kind: Cow<'static, str>,
     pub message: String,
     pub payload: Bytes,
     pub request_id: Option<String>,
@@ -91,7 +93,7 @@ impl ErrorReply {
 
         Self {
             code,
-            kind,
+            kind: Cow::Borrowed(kind),
             message,
             payload,
             request_id,
@@ -111,6 +113,71 @@ impl ErrorReply {
     pub fn with_payload(mut self, payload: impl Into<Bytes>) -> Self {
         self.payload = payload.into();
         self
+    }
+
+    #[must_use]
+    pub fn from_nats_error(error: crate::NatsErrorResponse) -> Self {
+        let payload = serde_json::to_vec(&error).map_or_else(|_| Bytes::new(), Bytes::from);
+        let request_id = (!error.request_id.is_empty()).then(|| error.request_id.clone());
+        Self {
+            code: error.code,
+            kind: Cow::Owned(error.kind),
+            message: error.message,
+            payload,
+            request_id,
+        }
+    }
+
+    #[must_use]
+    pub fn missing_subject_parameter(name: &str, request_id: Option<&str>) -> Self {
+        Self::framework(
+            FrameworkError::SubjectParamMissing,
+            format!("subject parameter `{name}` is missing"),
+            request_id,
+        )
+    }
+
+    #[must_use]
+    pub fn invalid_subject_parameter(
+        name: &str,
+        error: impl std::fmt::Display,
+        request_id: Option<&str>,
+    ) -> Self {
+        Self::framework(
+            FrameworkError::SubjectParamInvalid,
+            format!("subject parameter `{name}` is invalid: {error}"),
+            request_id,
+        )
+    }
+
+    #[must_use]
+    pub fn missing_header(name: &str, request_id: Option<&str>) -> Self {
+        Self::framework(
+            FrameworkError::InvalidHeader,
+            format!("required header `{name}` is missing"),
+            request_id,
+        )
+    }
+}
+
+/// Converts a typed service failure into the v2 response protocol.
+pub trait IntoServiceError {
+    fn into_service_error(self, request_id: &crate::RequestId<'_>) -> ErrorReply;
+}
+
+impl IntoServiceError for ErrorReply {
+    fn into_service_error(self, _: &crate::RequestId<'_>) -> ErrorReply {
+        self
+    }
+}
+
+impl<T> IntoServiceError for T
+where
+    T: crate::IntoNatsError,
+{
+    fn into_service_error(self, request_id: &crate::RequestId<'_>) -> ErrorReply {
+        let error = self.into_nats_error(request_id.get_or_generate().to_owned());
+        ErrorReply::from_nats_error(error)
     }
 }
 

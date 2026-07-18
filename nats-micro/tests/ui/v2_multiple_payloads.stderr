@@ -1,0 +1,5 @@
+error: service operations may have at most one payload argument
+ --> tests/ui/v2_multiple_payloads.rs:6:44
+  |
+6 |     async fn create(first: String, second: String) {
+  |                                            ^^^^^^

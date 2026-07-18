@@ -1,0 +1,5 @@
+error: application state must be borrowed as `&State`, not `&mut State`
+ --> tests/ui/v2_mutable_state.rs:8:25
+  |
+8 |     async fn get(state: &mut State) {
+  |                         ^^^^^^^^^^

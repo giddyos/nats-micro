@@ -1,0 +1,11 @@
+error: duplicate operation subject `demo.v1.same`
+ --> tests/ui/v2_duplicate_subjects.rs:9:14
+  |
+9 |     async fn two() {}
+  |              ^^^
+
+error: first declared here
+ --> tests/ui/v2_duplicate_subjects.rs:6:14
+  |
+6 |     async fn one() {}
+  |              ^^^

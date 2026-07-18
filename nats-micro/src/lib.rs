@@ -82,13 +82,14 @@ mod app;
 mod auth;
 #[cfg(feature = "client")]
 mod client;
-mod codec;
+pub mod codec;
 mod consumer;
 #[cfg(feature = "encryption")]
 pub mod encryption;
 mod error;
 mod extractors;
 mod handler;
+mod message;
 #[cfg(feature = "napi")]
 mod napi_support;
 pub mod prelude;
@@ -100,7 +101,9 @@ mod service;
 mod shutdown_signal;
 mod spec;
 mod state;
-mod subject;
+mod state_ref;
+mod static_app;
+pub mod subject;
 mod utils;
 
 pub use anyhow;
@@ -108,6 +111,7 @@ pub use nats_micro_shared::{FrameworkError, TransportError};
 pub use thiserror;
 pub use thiserror::Error;
 pub use thiserror::Error as ThisError;
+pub use tokio;
 
 pub use app::{HandlerPanicPolicy, NatsApp, NatsAppConfig, WorkerFailurePolicy};
 pub use async_nats;
@@ -118,7 +122,7 @@ pub type NatsHeaderMap = async_nats::HeaderMap;
 pub type NatsHeaderName = async_nats::HeaderName;
 pub type NatsHeaderValue = async_nats::HeaderValue;
 pub type NatsConsumerConfig = async_nats::jetstream::consumer::push::Config;
-pub use auth::{Auth, AuthError, FromAuthRequest};
+pub use auth::{Auth, AuthError, FromAuthRequest, FromRequestMeta};
 pub use codec::{decode_json, decode_proto, decode_text, encode_json, encode_proto};
 pub use consumer::{ConsumerAction, ConsumerDefinition, ConsumerHandler, ConsumerHandlerFn};
 pub use error::{
@@ -126,36 +130,41 @@ pub use error::{
     NatsErrorResponse, ServiceErrorMatch,
 };
 pub use extractors::{
-    FromPayload, FromRequest, FromSubjectParam, IntoPayloadInner, Json, Payload, Proto, RequestId,
-    State, Subject, SubjectParam,
+    FromPayload, FromRequest, FromSubjectParam, IntoPayloadInner, Json, Payload, Proto,
+    RequestId as OwnedRequestId, State, Subject, SubjectParam,
 };
 pub use handler::{
     DispatchResult, HandlerFn, RequestContext, RequestEndpoint, SubscriptionHandler,
 };
+pub use message::JsonMessage;
 #[cfg(feature = "napi")]
 pub use napi;
 #[cfg(feature = "napi")]
 pub use napi_derive;
 pub use prost;
 pub use request::{
-    Body, BorrowedHeaders, Header, Headers, NatsRequest, Request, RequestId as BorrowedRequestId,
-    RequestMeta, Text,
+    Body, BorrowedHeaders as Headers, Header, Headers as OwnedHeaders, NatsRequest, Request,
+    RequestId, RequestMeta, Text,
 };
 pub use response::{
-    ErrorReply, IntoNatsResponse, NatsResponse, PRESENT_HEADER, Response, X_SUCCESS_HEADER,
+    ErrorReply, IntoNatsResponse, IntoServiceError, NatsResponse, PRESENT_HEADER, Response,
+    X_SUCCESS_HEADER,
 };
 pub use serde;
 pub use serde_json;
 pub use service::{
-    ConsumerInfo, EndpointDefinition, EndpointDescriptor, EndpointInfo, NatsService, ParamInfo,
-    PayloadEncoding, PayloadMeta, ResponseEncoding, ResponseMeta, ServiceContract,
-    ServiceDefinition, ServiceMetadata,
+    ConsumerInfo, EndpointDefinition, EndpointDescriptor, EndpointInfo, LocalService, NatsService,
+    OperationMarker, ParamInfo, PayloadEncoding, PayloadMeta, PublishOperation, ResponseEncoding,
+    ResponseMeta, RunnableService, ServiceContract, ServiceDefinition, ServiceMetadata,
+    StaticService,
 };
 pub use shutdown_signal::{ShutdownSignal, ShutdownState};
 pub use spec::{
     AuthPolicy, Codec, ConsumerSpec, OperationKind, OperationSpec, ParamSpec, ServiceSpec,
 };
 pub use state::StateMap;
+pub use state_ref::{FromAppState, StateRef};
+pub use static_app::App;
 pub use subject::{FromSubject, segment};
 
 #[cfg(feature = "client")]
@@ -173,7 +182,9 @@ pub use encryption::{
 pub use bytes::Bytes;
 #[cfg(feature = "napi")]
 pub use nats_micro_macros::object;
-pub use nats_micro_macros::{service, service_error, service_handlers};
+pub use nats_micro_macros::{
+    AppState, application, live_test, main, message, service, service_error, service_handlers, test,
+};
 
 #[cfg(feature = "napi")]
 #[doc(hidden)]

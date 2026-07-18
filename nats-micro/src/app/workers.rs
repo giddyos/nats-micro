@@ -80,7 +80,7 @@ async fn handle_endpoint_request(
     raw_req: service::Request,
     shutdown_signal: Option<ShutdownSignal>,
 ) {
-    let headers: crate::Headers = raw_req.message.headers.clone().unwrap_or_default().into();
+    let headers: crate::OwnedHeaders = raw_req.message.headers.clone().unwrap_or_default().into();
     let request_id = ensure_request_id(&headers);
 
     debug!(
@@ -318,7 +318,7 @@ async fn handle_consumer_message(
     message: jetstream::Message,
     shutdown_signal: Option<ShutdownSignal>,
 ) {
-    let headers: crate::Headers = message.headers.clone().unwrap_or_default().into();
+    let headers: crate::OwnedHeaders = message.headers.clone().unwrap_or_default().into();
     let request_id = ensure_request_id(&headers);
 
     debug!(

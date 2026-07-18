@@ -16,6 +16,10 @@ pub(crate) struct PreparedRequest {
 }
 
 #[allow(clippy::too_many_lines)]
+#[cfg_attr(
+    not(feature = "encryption"),
+    allow(clippy::needless_return, clippy::unnecessary_wraps)
+)]
 pub(super) fn prepare_request_for_dispatch_with_state(
     state: &StateMap,
     req: NatsRequest,

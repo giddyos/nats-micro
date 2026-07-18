@@ -125,7 +125,7 @@ async fn respond_error(
     let mut headers = async_nats::HeaderMap::new();
     headers.insert("Nats-Service-Error", error.message.as_str());
     headers.insert("Nats-Service-Error-Code", error.code.to_string());
-    headers.insert("Nats-Micro-Error-Kind", error.kind);
+    headers.insert("Nats-Micro-Error-Kind", error.kind.as_ref());
     headers.insert("Nats-Micro-Error-Format", "json-v1");
     if let Some(request_id) = error.request_id.as_deref() {
         headers.insert("x-request-id", request_id);

@@ -1,0 +1,5 @@
+error: state reference does not match configured state `ExpectedState`
+ --> tests/ui/v2_state_mismatch.rs:9:25
+  |
+9 |     async fn get(state: &WrongState) {
+  |                         ^^^^^^^^^^^

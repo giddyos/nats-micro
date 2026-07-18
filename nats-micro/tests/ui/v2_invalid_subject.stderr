@@ -1,0 +1,5 @@
+error: invalid subject `demo.v1.bad subject`
+ --> tests/ui/v2_invalid_subject.rs:6:14
+  |
+6 |     async fn bad() {}
+  |              ^^^

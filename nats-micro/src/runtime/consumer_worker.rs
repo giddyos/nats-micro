@@ -137,7 +137,7 @@ where
             Err(error) => {
                 tracing::error!(
                     code = error.code,
-                    kind = error.kind,
+                    kind = %error.kind,
                     message = %error.message,
                     "consumer handler failed"
                 );

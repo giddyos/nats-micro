@@ -1,7 +1,49 @@
+use std::{future::Future, sync::Arc};
+
 use crate::consumer::ConsumerDefinition;
 use crate::handler::HandlerFn;
 use crate::spec::AuthPolicy;
 use serde::Serialize;
+use tokio::sync::watch;
+
+/// A generated compile-time service definition.
+pub trait StaticService<S>: Send + Sync + 'static {
+    const SPEC: crate::ServiceSpec;
+}
+
+/// Static startup hook emitted by `#[service]`.
+///
+/// The concrete future registers and drives generated endpoint types directly.
+#[doc(hidden)]
+pub trait RunnableService<S>: StaticService<S> + Copy {
+    fn run_requests(
+        self,
+        state: Arc<S>,
+        client: crate::NatsClient,
+        shutdown: watch::Receiver<crate::ShutdownState>,
+    ) -> impl Future<Output = anyhow::Result<()>> + Send;
+}
+
+/// Generated local routing over the same concrete endpoint dispatch functions.
+pub trait LocalService<S>: StaticService<S> {
+    fn dispatch_local<'a>(
+        state: &'a S,
+        operation: usize,
+        request: crate::Request<'a>,
+    ) -> impl Future<Output = crate::DispatchResult> + Send + 'a;
+}
+
+/// Static metadata for a generated operation marker.
+#[derive(Debug, Clone, Copy)]
+pub struct OperationMarker {
+    pub index: usize,
+    pub spec: &'static crate::OperationSpec,
+}
+
+/// A generated publish-only operation.
+pub trait PublishOperation: Send + Sync + 'static {
+    const SPEC: crate::OperationSpec;
+}
 
 #[must_use]
 pub fn build_subject(prefix: Option<&str>, version: &str, group: &str, subject: &str) -> String {

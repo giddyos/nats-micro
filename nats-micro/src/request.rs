@@ -2,7 +2,7 @@ use bytes::Bytes;
 
 /// Borrowed request data used by the static v2 dispatcher.
 pub mod borrowed {
-    use std::cell::OnceCell;
+    use std::sync::OnceLock;
 
     use async_nats::HeaderMap;
 
@@ -51,7 +51,7 @@ pub mod borrowed {
     #[derive(Debug)]
     pub struct RequestId<'a> {
         existing: Option<&'a str>,
-        generated: OnceCell<String>,
+        generated: OnceLock<String>,
     }
 
     impl<'a> RequestId<'a> {
@@ -62,7 +62,7 @@ pub mod borrowed {
                 existing: headers
                     .get(REQUEST_ID_HEADER)
                     .filter(|value| is_valid_request_id(value)),
-                generated: OnceCell::new(),
+                generated: OnceLock::new(),
             }
         }
 
@@ -145,7 +145,7 @@ pub mod borrowed {
 
         #[inline]
         #[must_use]
-        pub const fn meta(&'a self) -> RequestMeta<'a> {
+        pub const fn meta(&self) -> RequestMeta<'_> {
             RequestMeta {
                 subject: self.subject,
                 reply: self.reply,

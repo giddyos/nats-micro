@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use heck::{AsShoutySnakeCase, ToSnakeCase};
+use heck::ToSnakeCase;
 use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
 use syn::{
@@ -8,10 +8,18 @@ use syn::{
     punctuated::Punctuated,
 };
 
-use crate::utils::{error_stream, nats_micro_path};
+use crate::util::{error_stream, nats_micro_path};
+
+mod client;
+mod display;
+mod parse;
+mod wire;
 
 #[allow(clippy::too_many_lines)]
 pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
+    if let Err(error) = parse::normalize_v2_error_attrs(&mut input) {
+        return error.to_compile_error();
+    }
     let nats_micro = nats_micro_path();
     let span = input.ident.span();
     let enum_ident = input.ident.clone();
@@ -57,8 +65,7 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
 
     for variant in &data_enum.variants {
         let v_ident = &variant.ident;
-        let v_name = v_ident.to_string();
-        let default_kind = format!("{}", AsShoutySnakeCase(&v_name));
+        let default_kind = display::default_kind(v_ident);
         let js_variant_ident = format_ident!("{}", default_kind);
         let error_attr = if mode == ErrorImplMode::SelfContained {
             match variant_error_attr_strict(variant) {
@@ -94,12 +101,12 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
         let code = code_attr.unwrap_or(if is_internal { 500 } else { 400 });
         let wire_kind = kind_attr.unwrap_or_else(|| {
             if is_internal && !internal_attr.expose_kind {
-                "INTERNAL_ERROR".to_string()
+                wire::INTERNAL_KIND.to_string()
             } else {
                 default_kind.clone()
             }
         });
-        let generic_internal_kind = is_internal && wire_kind == "INTERNAL_ERROR";
+        let generic_internal_kind = is_internal && wire_kind == wire::INTERNAL_KIND;
         let wire_key = (code, wire_kind.clone());
         if generic_internal_kind {
             if concrete_wire_kinds.contains(&wire_key) {
@@ -217,16 +224,14 @@ pub fn expand_service_error(mut input: DeriveInput) -> TokenStream {
                 is_internal,
             ),
         };
-        let from_response = if is_internal {
-            if generic_internal_kind {
-                quote! {}
-            } else {
-                quote! {
-                    (#code, #wire_kind) => #nats_micro::ServiceErrorMatch::Untyped(response),
-                }
-            }
-        } else {
+        let from_response = if client::typed_reconstruction_enabled(is_internal) {
             from_response
+        } else if generic_internal_kind {
+            quote! {}
+        } else {
+            quote! {
+                (#code, #wire_kind) => #nats_micro::ServiceErrorMatch::Untyped(response),
+            }
         };
 
         variant_arms.push(quote! {
@@ -1408,5 +1413,5 @@ fn singleton_or_tuple<T: ToTokens>(items: &[T]) -> TokenStream {
 }
 
 #[cfg(test)]
-#[path = "tests/service_error_tests.rs"]
+#[path = "../tests/service_error_tests.rs"]
 mod tests;

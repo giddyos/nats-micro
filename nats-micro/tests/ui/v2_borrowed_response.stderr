@@ -1,0 +1,5 @@
+error: borrowed server responses require `response = OwnedType`
+  --> tests/ui/v2_borrowed_response.rs:15:43
+   |
+15 |     async fn get<'a>(state: &'a State) -> &'a User {
+   |                                           ^^^^^^^^
