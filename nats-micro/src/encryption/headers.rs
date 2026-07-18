@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use base64::{Engine, engine::general_purpose::STANDARD};
+use zeroize::Zeroizing;
 
 use super::{EncryptionError, ServiceKeyPair};
 use crate::request::Headers;
@@ -8,6 +9,21 @@ use crate::request::Headers;
 pub(crate) const ENCRYPTED_HEADERS_NAME: &str = "x-encrypted-headers";
 pub(crate) const RESPONSE_PUB_KEY_NAME: &str = "x-ephemeral-pub-key";
 pub(crate) const SIGNATURE_HEADER_NAME: &str = "x-signature";
+
+#[derive(Debug, Default)]
+pub(crate) struct EncryptedHeaderOverlay {
+    entries: Vec<(Zeroizing<String>, Zeroizing<String>)>,
+}
+
+impl EncryptedHeaderOverlay {
+    #[must_use]
+    pub(crate) fn get(&self, key: &str) -> Option<&str> {
+        self.entries
+            .iter()
+            .rfind(|(name, _)| name.eq_ignore_ascii_case(key))
+            .map(|(_, value)| value.as_str())
+    }
+}
 
 pub(crate) fn is_reserved_encryption_header_name(key: &str) -> bool {
     key.eq_ignore_ascii_case(ENCRYPTED_HEADERS_NAME)
@@ -78,4 +94,33 @@ pub fn decrypt_headers<H: HeaderLookup>(
         return Err(EncryptionError::reserved_header(key));
     }
     Ok(map)
+}
+
+pub(crate) fn decrypt_header_overlay<H: HeaderLookup>(
+    headers: &H,
+    encryption_key: &[u8; 32],
+) -> Result<EncryptedHeaderOverlay, EncryptionError> {
+    let Some(decoded) = decode_header_blob(headers)? else {
+        return Ok(EncryptedHeaderOverlay::default());
+    };
+
+    let plaintext = Zeroizing::new(
+        ServiceKeyPair::decrypt_with_encryption_key(encryption_key, &decoded)
+            .map_err(|_| EncryptionError::decrypt_failed("decrypting encrypted headers payload"))?,
+    );
+    let map: HashMap<String, String> = serde_json::from_slice(&plaintext)
+        .map_err(|_| EncryptionError::decrypt_failed("deserializing decrypted headers JSON"))?;
+    if let Some(key) = map
+        .keys()
+        .find(|key| is_reserved_encryption_header_name(key.as_str()))
+    {
+        return Err(EncryptionError::reserved_header(key));
+    }
+
+    Ok(EncryptedHeaderOverlay {
+        entries: map
+            .into_iter()
+            .map(|(name, value)| (Zeroizing::new(name), Zeroizing::new(value)))
+            .collect(),
+    })
 }

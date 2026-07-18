@@ -1,5 +1,6 @@
 mod headers;
 mod payload;
+mod request;
 
 use std::{collections::HashMap, str::FromStr};
 
@@ -14,10 +15,10 @@ use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroizing;
 
 pub(crate) use self::headers::{
-    ENCRYPTED_HEADERS_NAME, RESPONSE_PUB_KEY_NAME, SIGNATURE_HEADER_NAME, decode_response_pub_key,
-    is_reserved_encryption_header_name,
+    ENCRYPTED_HEADERS_NAME, EncryptedHeaderOverlay, RESPONSE_PUB_KEY_NAME, SIGNATURE_HEADER_NAME,
+    decode_response_pub_key, is_reserved_encryption_header_name,
 };
-pub use self::{headers::decrypt_headers, payload::Encrypted};
+pub use self::{headers::decrypt_headers, payload::Encrypted, request::EncryptedRequest};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -493,7 +494,7 @@ pub struct RequestBuilder {
     client: Option<crate::NatsClient>,
     plaintext_headers: Vec<(crate::NatsHeaderName, crate::NatsHeaderValue)>,
     encrypted_headers: Vec<(String, String)>,
-    payload: Option<Vec<u8>>,
+    payload: Option<bytes::Bytes>,
     encrypt_payload: bool,
 }
 
@@ -566,13 +567,13 @@ impl RequestBuilder {
             .expect("invalid encrypted request bearer token header value")
     }
 
-    pub fn payload(mut self, data: impl Into<Vec<u8>>) -> Self {
+    pub fn payload(mut self, data: impl Into<bytes::Bytes>) -> Self {
         self.payload = Some(data.into());
         self.encrypt_payload = false;
         self
     }
 
-    pub fn encrypted_payload(mut self, data: impl Into<Vec<u8>>) -> Self {
+    pub fn encrypted_payload(mut self, data: impl Into<bytes::Bytes>) -> Self {
         self.payload = Some(data.into());
         self.encrypt_payload = true;
         self
@@ -619,12 +620,12 @@ impl RequestBuilder {
 
         let final_payload = if let Some(data) = &self.payload {
             if self.encrypt_payload {
-                self.ctx.encrypt(data)?
+                bytes::Bytes::from(self.ctx.encrypt(data)?)
             } else {
                 data.clone()
             }
         } else {
-            Vec::new()
+            bytes::Bytes::new()
         };
 
         let request_id = headers
@@ -643,7 +644,7 @@ impl RequestBuilder {
 
         Ok(BuiltRequest {
             headers,
-            payload: final_payload.into(),
+            payload: final_payload,
             context: self.ctx,
         })
     }

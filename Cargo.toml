@@ -4,6 +4,7 @@ members = [
     "nats-micro",
     "nats-micro-shared",
     "nats-micro-testing",
+    "nats-micro-cli",
     "nats-server",
 ]
 resolver = "2"

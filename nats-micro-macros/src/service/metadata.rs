@@ -21,14 +21,14 @@ pub(crate) fn generate(model: &ServiceModel) -> TokenStream {
         .iter()
         .filter_map(MethodModel::operation)
         .filter(|operation| operation.kind != OperationKind::Consumer)
-        .map(operation_spec)
+        .map(|operation| operation_spec(operation, name, version))
         .collect();
     let consumers: Vec<_> = model
         .methods
         .iter()
         .filter_map(MethodModel::operation)
         .filter(|operation| operation.kind == OperationKind::Consumer)
-        .map(consumer_spec)
+        .map(|operation| consumer_spec(operation, name, version))
         .collect();
     let markers: Vec<_> = model
         .methods
@@ -85,7 +85,11 @@ pub(crate) fn operation_type(model: &ServiceModel, operation: &OperationModel) -
     )
 }
 
-pub(crate) fn operation_spec(operation: &OperationModel) -> TokenStream {
+pub(crate) fn operation_spec(
+    operation: &OperationModel,
+    service_name: &str,
+    service_version: &str,
+) -> TokenStream {
     let nats_micro = nats_micro_path();
     let rust_name = operation.method.sig.ident.to_string();
     let kind = match operation.kind {
@@ -111,6 +115,10 @@ pub(crate) fn operation_spec(operation: &OperationModel) -> TokenStream {
         })
         .unwrap_or_else(|| codec_tokens(WireCodec::Empty));
     let response_codec = codec_tokens(operation.response.codec);
+    let request_encrypted = operation.arguments.iter().any(
+        |argument| matches!(&argument.kind, ArgumentKind::Payload(payload) if payload.encrypted),
+    );
+    let response_encrypted = operation.response.encrypted;
     let request_type = operation
         .arguments
         .iter()
@@ -152,6 +160,8 @@ pub(crate) fn operation_spec(operation: &OperationModel) -> TokenStream {
 
     quote! {
         #nats_micro::OperationSpec {
+            service_name: #service_name,
+            service_version: #service_version,
             rust_name: #rust_name,
             kind: #kind,
             subject: #subject,
@@ -159,6 +169,8 @@ pub(crate) fn operation_spec(operation: &OperationModel) -> TokenStream {
             queue_group: #queue,
             request_codec: #request_codec,
             response_codec: #response_codec,
+            request_encrypted: #request_encrypted,
+            response_encrypted: #response_encrypted,
             request_type: #request_type,
             response_type: #response_type,
             error_type: #error_type,
@@ -169,7 +181,11 @@ pub(crate) fn operation_spec(operation: &OperationModel) -> TokenStream {
     }
 }
 
-pub(crate) fn consumer_spec(operation: &OperationModel) -> TokenStream {
+pub(crate) fn consumer_spec(
+    operation: &OperationModel,
+    service_name: &str,
+    service_version: &str,
+) -> TokenStream {
     let nats_micro = nats_micro_path();
     let rust_name = operation.method.sig.ident.to_string();
     let stream = operation.options.stream.as_deref().unwrap_or_default();
@@ -181,6 +197,8 @@ pub(crate) fn consumer_spec(operation: &OperationModel) -> TokenStream {
     let backoff = &operation.options.backoff_ms;
     quote! {
         #nats_micro::ConsumerSpec {
+            service_name: #service_name,
+            service_version: #service_version,
             rust_name: #rust_name,
             stream: #stream,
             durable: #durable,

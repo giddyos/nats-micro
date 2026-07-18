@@ -41,6 +41,8 @@ pub fn client_call_options_from_headers<I>(
 where
     I: IntoIterator<Item = NapiClientHeaderValue>,
 {
+    #[cfg(not(feature = "encryption"))]
+    let _ = has_recipient;
     let mut options = crate::ClientCallOptions::new();
 
     for header in headers {

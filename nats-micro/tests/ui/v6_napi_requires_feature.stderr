@@ -1,0 +1,5 @@
+error: `napi` service generation requires the `napi` feature
+ --> tests/ui/v6_napi_requires_feature.rs:4:6
+  |
+4 | impl Demo {
+  |      ^^^^

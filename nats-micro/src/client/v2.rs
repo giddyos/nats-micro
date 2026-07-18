@@ -86,11 +86,10 @@ fn error_response<E>(response: &ClientResponse) -> Result<Option<ClientError<E>>
 where
     E: FromNatsErrorResponse + std::fmt::Debug + std::fmt::Display + 'static,
 {
-    let Some(headers) = response.headers.as_ref() else {
+    if response.headers.is_none() {
         return Ok(None);
-    };
-    let reported_error = headers.get("Nats-Service-Error-Code").is_some()
-        || headers.get("Nats-Micro-Error-Kind").is_some();
+    }
+    let reported_error = reports_service_error(response);
     if !reported_error {
         return Ok(None);
     }
@@ -102,6 +101,13 @@ where
             ))
         })?;
     Ok(Some(ClientError::from_service_response(error)))
+}
+
+fn reports_service_error(response: &ClientResponse) -> bool {
+    response.headers.as_ref().is_some_and(|headers| {
+        headers.get("Nats-Service-Error-Code").is_some()
+            || headers.get("Nats-Micro-Error-Kind").is_some()
+    })
 }
 
 fn ensure_success<E>(response: &ClientResponse) -> Result<(), ClientError<E>>
@@ -359,6 +365,145 @@ where
     }
 }
 
+#[cfg(feature = "encryption")]
+pub struct EncryptedRequestCall<'a, T, R, E, D> {
+    transport: &'a T,
+    recipient: Option<&'a crate::ServiceRecipient>,
+    subject: Subject<'a>,
+    payload: Result<Bytes, crate::ErrorReply>,
+    default_headers: Option<&'a HeaderMap>,
+    headers: Option<HeaderMap>,
+    encrypted_headers: Vec<(String, String)>,
+    timeout: Option<Duration>,
+    encrypt_payload: bool,
+    decrypt_response: bool,
+    marker: PhantomData<RequestCallMarker<R, E, D>>,
+}
+
+#[cfg(feature = "encryption")]
+impl<'a, T, R, E, D> EncryptedRequestCall<'a, T, R, E, D> {
+    #[doc(hidden)]
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        transport: &'a T,
+        recipient: Option<&'a crate::ServiceRecipient>,
+        subject: Subject<'a>,
+        payload: Result<Bytes, crate::ErrorReply>,
+        default_headers: Option<&'a HeaderMap>,
+        timeout: Option<Duration>,
+        encrypt_payload: bool,
+        decrypt_response: bool,
+    ) -> Self {
+        Self {
+            transport,
+            recipient,
+            subject,
+            payload,
+            default_headers,
+            headers: None,
+            encrypted_headers: Vec::new(),
+            timeout,
+            encrypt_payload,
+            decrypt_response,
+            marker: PhantomData,
+        }
+    }
+
+    pub fn header(
+        mut self,
+        name: impl AsRef<str>,
+        value: impl AsRef<str>,
+    ) -> Result<Self, ClientBuildError> {
+        insert_header(&mut self.headers, name.as_ref(), value.as_ref())?;
+        Ok(self)
+    }
+
+    pub fn encrypted_header(
+        mut self,
+        name: impl AsRef<str>,
+        value: impl AsRef<str>,
+    ) -> Result<Self, ClientBuildError> {
+        let name = name.as_ref();
+        let value = value.as_ref();
+        validate_header(name, value)?;
+        if crate::encryption::is_reserved_encryption_header_name(name) {
+            return Err(ClientBuildError::header(
+                name,
+                "header is reserved for encryption transport metadata",
+            ));
+        }
+        self.encrypted_headers
+            .push((name.to_owned(), value.to_owned()));
+        Ok(self)
+    }
+
+    pub fn bearer_token(self, token: impl AsRef<str>) -> Result<Self, ClientBuildError> {
+        self.encrypted_header("authorization", format!("Bearer {}", token.as_ref()))
+    }
+
+    #[must_use]
+    pub const fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+}
+
+#[cfg(feature = "encryption")]
+impl<T, R, E, D> EncryptedRequestCall<'_, T, R, E, D>
+where
+    T: ClientTransport,
+    E: FromNatsErrorResponse + std::fmt::Debug + std::fmt::Display + 'static,
+    D: ResponseDecoder<R, E>,
+{
+    pub async fn send(self) -> Result<R, ClientError<E>> {
+        let recipient = self.recipient.ok_or_else(|| {
+            ClientError::serialize(NatsErrorResponse::framework(
+                FrameworkError::MissingRecipientPubkey,
+                "encrypted operation requires a service recipient public key",
+            ))
+        })?;
+        let payload = self.payload.map_err(serialization_reply)?;
+        let mut builder = recipient.request_builder();
+        if self.encrypt_payload {
+            builder = builder.encrypted_payload(payload);
+        } else {
+            builder = builder.payload(payload);
+        }
+        let headers = merge_headers(self.default_headers, self.headers);
+        if let Some(headers) = headers.as_ref() {
+            builder = add_plain_headers(builder, headers).map_err(encryption_serialize_error)?;
+        }
+        for (name, value) in self.encrypted_headers {
+            builder = builder
+                .try_encrypted_header(name, value)
+                .map_err(encryption_serialize_error)?;
+        }
+        let built = builder
+            .build_for_subject(self.subject.as_str())
+            .map_err(encryption_serialize_error)?;
+        let mut response = self
+            .transport
+            .request(ClientRequest {
+                subject: self.subject,
+                payload: built.payload,
+                headers: Some(built.headers),
+                timeout: self.timeout,
+            })
+            .await
+            .map_err(transport_client_error)?;
+        if self.decrypt_response && !reports_service_error(&response) {
+            response.payload = Bytes::from(
+                built
+                    .context
+                    .decrypt_response(&response.payload)
+                    .map_err(encryption_decrypt_error)?,
+            );
+        }
+        D::decode(response)
+    }
+}
+
 pub struct PublishCall<'a, T, E> {
     transport: &'a T,
     subject: Subject<'a>,
@@ -429,6 +574,189 @@ where
             .await
             .map_err(transport_client_error)
     }
+}
+
+#[cfg(feature = "encryption")]
+pub struct EncryptedPublishCall<'a, T, E> {
+    transport: &'a T,
+    recipient: Option<&'a crate::ServiceRecipient>,
+    subject: Subject<'a>,
+    payload: Result<Bytes, crate::ErrorReply>,
+    default_headers: Option<&'a HeaderMap>,
+    headers: Option<HeaderMap>,
+    encrypted_headers: Vec<(String, String)>,
+    encrypt_payload: bool,
+    marker: PhantomData<fn() -> E>,
+}
+
+#[cfg(feature = "encryption")]
+impl<'a, T, E> EncryptedPublishCall<'a, T, E> {
+    #[doc(hidden)]
+    #[must_use]
+    pub fn new(
+        transport: &'a T,
+        recipient: Option<&'a crate::ServiceRecipient>,
+        subject: Subject<'a>,
+        payload: Result<Bytes, crate::ErrorReply>,
+        default_headers: Option<&'a HeaderMap>,
+        encrypt_payload: bool,
+    ) -> Self {
+        Self {
+            transport,
+            recipient,
+            subject,
+            payload,
+            default_headers,
+            headers: None,
+            encrypted_headers: Vec::new(),
+            encrypt_payload,
+            marker: PhantomData,
+        }
+    }
+
+    pub fn header(
+        mut self,
+        name: impl AsRef<str>,
+        value: impl AsRef<str>,
+    ) -> Result<Self, ClientBuildError> {
+        insert_header(&mut self.headers, name.as_ref(), value.as_ref())?;
+        Ok(self)
+    }
+
+    pub fn encrypted_header(
+        mut self,
+        name: impl AsRef<str>,
+        value: impl AsRef<str>,
+    ) -> Result<Self, ClientBuildError> {
+        let name = name.as_ref();
+        let value = value.as_ref();
+        validate_header(name, value)?;
+        if crate::encryption::is_reserved_encryption_header_name(name) {
+            return Err(ClientBuildError::header(
+                name,
+                "header is reserved for encryption transport metadata",
+            ));
+        }
+        self.encrypted_headers
+            .push((name.to_owned(), value.to_owned()));
+        Ok(self)
+    }
+}
+
+#[cfg(feature = "encryption")]
+impl<T, E> EncryptedPublishCall<'_, T, E>
+where
+    T: ClientTransport,
+    E: FromNatsErrorResponse + std::fmt::Debug + std::fmt::Display + 'static,
+{
+    pub async fn send(self) -> Result<(), ClientError<E>> {
+        let recipient = self.recipient.ok_or_else(|| {
+            ClientError::serialize(NatsErrorResponse::framework(
+                FrameworkError::MissingRecipientPubkey,
+                "encrypted operation requires a service recipient public key",
+            ))
+        })?;
+        let payload = self.payload.map_err(serialization_reply)?;
+        let mut builder = recipient.request_builder();
+        if self.encrypt_payload {
+            builder = builder.encrypted_payload(payload);
+        } else {
+            builder = builder.payload(payload);
+        }
+        let headers = merge_headers(self.default_headers, self.headers);
+        if let Some(headers) = headers.as_ref() {
+            builder = add_plain_headers(builder, headers).map_err(encryption_serialize_error)?;
+        }
+        for (name, value) in self.encrypted_headers {
+            builder = builder
+                .try_encrypted_header(name, value)
+                .map_err(encryption_serialize_error)?;
+        }
+        let built = builder
+            .build_for_subject(self.subject.as_str())
+            .map_err(encryption_serialize_error)?;
+        self.transport
+            .publish(self.subject, built.payload, Some(built.headers))
+            .await
+            .map_err(transport_client_error)
+    }
+}
+
+#[cfg(feature = "encryption")]
+fn insert_header(
+    headers: &mut Option<HeaderMap>,
+    name: &str,
+    value: &str,
+) -> Result<(), ClientBuildError> {
+    let (header_name, header_value) = validate_header(name, value)?;
+    headers
+        .get_or_insert_with(HeaderMap::new)
+        .insert(header_name, header_value);
+    Ok(())
+}
+
+#[cfg(feature = "encryption")]
+fn validate_header(
+    name: &str,
+    value: &str,
+) -> Result<(async_nats::HeaderName, async_nats::HeaderValue), ClientBuildError> {
+    let header_name = async_nats::HeaderName::from_str(name)
+        .map_err(|error| ClientBuildError::header(name, error))?;
+    let header_value = value
+        .parse::<async_nats::HeaderValue>()
+        .map_err(|error| ClientBuildError::header(name, error))?;
+    Ok((header_name, header_value))
+}
+
+#[cfg(feature = "encryption")]
+fn serialization_reply<E>(error: crate::ErrorReply) -> ClientError<E>
+where
+    E: FromNatsErrorResponse + std::fmt::Debug + std::fmt::Display + 'static,
+{
+    ClientError::serialize(NatsErrorResponse::new(
+        error.code,
+        error.kind,
+        error.message,
+        error.request_id.unwrap_or_default(),
+    ))
+}
+
+#[cfg(feature = "encryption")]
+fn add_plain_headers(
+    mut builder: crate::encryption::RequestBuilder,
+    headers: &HeaderMap,
+) -> Result<crate::encryption::RequestBuilder, crate::EncryptionError> {
+    for (name, values) in headers.iter() {
+        let name: &str = name.as_ref();
+        for value in values {
+            builder = builder.try_header(name, value.as_str())?;
+        }
+    }
+    Ok(builder)
+}
+
+#[cfg(feature = "encryption")]
+#[allow(clippy::needless_pass_by_value)]
+fn encryption_serialize_error<E>(error: crate::EncryptionError) -> ClientError<E>
+where
+    E: FromNatsErrorResponse + std::fmt::Debug + std::fmt::Display + 'static,
+{
+    ClientError::serialize(NatsErrorResponse::framework(
+        FrameworkError::SerializationError,
+        error.to_string(),
+    ))
+}
+
+#[cfg(feature = "encryption")]
+#[allow(clippy::needless_pass_by_value)]
+fn encryption_decrypt_error<E>(error: crate::EncryptionError) -> ClientError<E>
+where
+    E: FromNatsErrorResponse + std::fmt::Debug + std::fmt::Display + 'static,
+{
+    ClientError::decrypt(NatsErrorResponse::framework(
+        FrameworkError::DecryptFailed,
+        error.to_string(),
+    ))
 }
 
 fn transport_client_error<E>(error: TransportError) -> ClientError<E>

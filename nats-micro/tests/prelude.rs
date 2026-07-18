@@ -59,7 +59,7 @@ fn request_context() -> RequestContext {
 #[test]
 fn prelude_reexports_service_authoring_surface() {
     let def = PreludeService::definition();
-    let contract: ServiceContract = PreludeService::contract();
+    let contract: OwnedServiceContract = PreludeService::contract();
     let descriptor = EndpointDescriptor {
         subject_prefix: def.metadata.subject_prefix.clone(),
         service_version: def.metadata.version.clone(),

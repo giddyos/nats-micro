@@ -9,10 +9,38 @@ use super::{
 };
 use crate::util::nats_micro_path;
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn generate(model: &ServiceModel) -> TokenStream {
     let nats_micro = nats_micro_path();
     let client_ident = format_ident!("{}Client", model.service_ident);
     let service_ident = &model.service_ident;
+    let encrypted = model
+        .methods
+        .iter()
+        .filter_map(MethodModel::operation)
+        .any(|operation| {
+            operation.response.encrypted
+            || operation.arguments.iter().any(|argument| {
+                matches!(&argument.kind, ArgumentKind::Payload(payload) if payload.encrypted)
+            })
+        });
+    let recipient_field =
+        encrypted.then(|| quote!(recipient: Option<#nats_micro::ServiceRecipient>,));
+    let recipient_init = encrypted.then(|| quote!(recipient: None,));
+    let recipient_methods = encrypted.then(|| {
+        quote! {
+            #[must_use]
+            pub fn with_recipient(mut self, recipient: #nats_micro::ServiceRecipient) -> Self {
+                self.recipient = Some(recipient);
+                self
+            }
+
+            #[must_use]
+            pub const fn recipient(&self) -> Option<&#nats_micro::ServiceRecipient> {
+                self.recipient.as_ref()
+            }
+        }
+    });
     let operations: Vec<_> = model
         .methods
         .iter()
@@ -59,6 +87,7 @@ pub(crate) fn generate(model: &ServiceModel) -> TokenStream {
         pub struct #client_ident<T = #nats_micro::NatsTransport> {
             transport: T,
             default_headers: Option<#nats_micro::NatsHeaderMap>,
+            #recipient_field
         }
 
         impl<T> #client_ident<T> {
@@ -67,6 +96,7 @@ pub(crate) fn generate(model: &ServiceModel) -> TokenStream {
                 Self {
                     transport,
                     default_headers: None,
+                    #recipient_init
                 }
             }
 
@@ -93,6 +123,8 @@ pub(crate) fn generate(model: &ServiceModel) -> TokenStream {
             pub const fn default_headers(&self) -> Option<&#nats_micro::NatsHeaderMap> {
                 self.default_headers.as_ref()
             }
+
+            #recipient_methods
         }
 
         impl<T> #client_ident<T>
@@ -106,6 +138,7 @@ pub(crate) fn generate(model: &ServiceModel) -> TokenStream {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 fn operation_methods(operation: &OperationModel) -> TokenStream {
     let nats_micro = nats_micro_path();
     let method = &operation.method.sig.ident;
@@ -144,6 +177,43 @@ fn operation_methods(operation: &OperationModel) -> TokenStream {
         OperationKind::Request => {
             let response = client_response_type(operation);
             let decoder = decoder_type(operation);
+            let encrypted = operation.response.encrypted
+                || operation.arguments.iter().any(|argument| {
+                    matches!(&argument.kind, ArgumentKind::Payload(payload) if payload.encrypted)
+                });
+            let call_type = if encrypted {
+                quote!(#nats_micro::EncryptedRequestCall)
+            } else {
+                quote!(#nats_micro::RequestCall)
+            };
+            let call_new = if encrypted {
+                let encrypt_payload = operation.arguments.iter().any(|argument| {
+                    matches!(&argument.kind, ArgumentKind::Payload(payload) if payload.encrypted)
+                });
+                let decrypt_response = operation.response.encrypted;
+                quote! {
+                    #nats_micro::EncryptedRequestCall::<T, #response, #error, #decoder>::new(
+                        &self.transport,
+                        self.recipient.as_ref(),
+                        __subject,
+                        __payload,
+                        self.default_headers.as_ref(),
+                        #timeout,
+                        #encrypt_payload,
+                        #decrypt_response,
+                    )
+                }
+            } else {
+                quote! {
+                    #nats_micro::RequestCall::<T, #response, #error, #decoder>::new(
+                        &self.transport,
+                        __subject,
+                        __payload,
+                        self.default_headers.as_ref(),
+                        #timeout,
+                    )
+                }
+            };
             quote! {
                 pub async fn #method(
                     &self,
@@ -156,7 +226,7 @@ fn operation_methods(operation: &OperationModel) -> TokenStream {
                 pub fn #call_method<'__client>(
                     &'__client self,
                     #(#declarations),*
-                ) -> #nats_micro::RequestCall<
+                ) -> #call_type<
                     '__client,
                     T,
                     #response,
@@ -165,39 +235,59 @@ fn operation_methods(operation: &OperationModel) -> TokenStream {
                 > {
                     let __subject = #subject;
                     let __payload = #payload;
-                    #nats_micro::RequestCall::<T, #response, #error, #decoder>::new(
+                    #call_new
+                }
+            }
+        }
+        OperationKind::Publish => {
+            let encrypt_payload = operation.arguments.iter().any(|argument| {
+                matches!(&argument.kind, ArgumentKind::Payload(payload) if payload.encrypted)
+            });
+            let call_type = if encrypt_payload {
+                quote!(#nats_micro::EncryptedPublishCall)
+            } else {
+                quote!(#nats_micro::PublishCall)
+            };
+            let call_new = if encrypt_payload {
+                quote! {
+                    #nats_micro::EncryptedPublishCall::<T, #error>::new(
+                        &self.transport,
+                        self.recipient.as_ref(),
+                        __subject,
+                        __payload,
+                        self.default_headers.as_ref(),
+                        true,
+                    )
+                }
+            } else {
+                quote! {
+                    #nats_micro::PublishCall::<T, #error>::new(
                         &self.transport,
                         __subject,
                         __payload,
                         self.default_headers.as_ref(),
-                        #timeout,
                     )
+                }
+            };
+            quote! {
+                pub async fn #method(
+                    &self,
+                    #(#declarations),*
+                ) -> ::std::result::Result<(), #nats_micro::ClientError<#error>> {
+                    self.#call_method(#(#arguments),*).send().await
+                }
+
+                #[must_use]
+                pub fn #call_method<'__client>(
+                    &'__client self,
+                    #(#declarations),*
+                ) -> #call_type<'__client, T, #error> {
+                    let __subject = #subject;
+                    let __payload = #payload;
+                    #call_new
                 }
             }
         }
-        OperationKind::Publish => quote! {
-            pub async fn #method(
-                &self,
-                #(#declarations),*
-            ) -> ::std::result::Result<(), #nats_micro::ClientError<#error>> {
-                self.#call_method(#(#arguments),*).send().await
-            }
-
-            #[must_use]
-            pub fn #call_method<'__client>(
-                &'__client self,
-                #(#declarations),*
-            ) -> #nats_micro::PublishCall<'__client, T, #error> {
-                let __subject = #subject;
-                let __payload = #payload;
-                #nats_micro::PublishCall::<T, #error>::new(
-                    &self.transport,
-                    __subject,
-                    __payload,
-                    self.default_headers.as_ref(),
-                )
-            }
-        },
         OperationKind::Subscribe | OperationKind::Consumer => quote!(),
     }
 }

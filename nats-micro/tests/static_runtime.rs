@@ -20,6 +20,8 @@ struct StaticEndpoint;
 
 impl RequestEndpoint<AtomicUsize> for StaticEndpoint {
     const SPEC: OperationSpec = OperationSpec {
+        service_name: "static-runtime",
+        service_version: "1.0.0",
         rust_name: "echo",
         kind: OperationKind::Request,
         subject: "phase1.static.echo",
@@ -27,6 +29,8 @@ impl RequestEndpoint<AtomicUsize> for StaticEndpoint {
         queue_group: None,
         request_codec: Codec::Raw,
         response_codec: Codec::Raw,
+        request_encrypted: false,
+        response_encrypted: false,
         request_type: Some("&[u8]"),
         response_type: Some("&'static [u8]"),
         error_type: Some("ErrorReply"),
@@ -58,6 +62,8 @@ struct StaticConsumer;
 
 impl ConsumerHandler<ConsumerState> for StaticConsumer {
     const SPEC: ConsumerSpec = ConsumerSpec {
+        service_name: "static-runtime",
+        service_version: "1.0.0",
         rust_name: "project_event",
         stream: "PHASE1_STATIC",
         durable: "phase1-static-consumer",

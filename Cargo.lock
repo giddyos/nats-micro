@@ -1129,6 +1129,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "nats-micro-cli"
+version = "1.0.0"
+dependencies = [
+ "nats-micro",
+ "serde_json",
+]
+
+[[package]]
 name = "nats-micro-macros"
 version = "1.0.0"
 dependencies = [

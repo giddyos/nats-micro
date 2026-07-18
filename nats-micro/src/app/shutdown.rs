@@ -1,5 +1,8 @@
+#![cfg_attr(not(feature = "telemetry"), allow(unused_variables))]
+
 use std::{any::Any, future::Future, panic::AssertUnwindSafe, pin::Pin, sync::Arc, time::Duration};
 
+use crate::trace::{error, warn};
 use anyhow::Result;
 use futures::FutureExt;
 use tokio::{
@@ -7,7 +10,6 @@ use tokio::{
     task::JoinHandle,
     time::Instant,
 };
-use tracing::{error, warn};
 
 use crate::shutdown_signal::ShutdownState;
 

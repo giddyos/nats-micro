@@ -1,10 +1,16 @@
+#![cfg_attr(not(feature = "telemetry"), allow(unused_variables))]
+
 use std::{panic::AssertUnwindSafe, sync::Arc, time::Duration};
 
 use async_nats::jetstream::{self, AckKind};
-use futures_util::{FutureExt, StreamExt, stream::FuturesUnordered};
+use futures_util::{FutureExt, StreamExt, future::Either, stream::FuturesUnordered};
 use tokio::sync::watch;
+#[cfg(feature = "telemetry")]
+use tracing::Instrument;
 
 use crate::{ConsumerAction, ConsumerHandler, Request, ShutdownState};
+#[cfg(feature = "telemetry")]
+use crate::{MetricName, telemetry::Telemetry};
 
 /// Runs one concrete `JetStream` consumer with bounded, in-worker concurrency.
 ///
@@ -32,9 +38,58 @@ where
 
 pub async fn run_consumer_with_panic_policy<S, C>(
     state: Arc<S>,
+    messages: jetstream::consumer::push::Messages,
+    concurrency: usize,
+    panic_policy: crate::HandlerPanicPolicy,
+    shutdown: watch::Receiver<ShutdownState>,
+) -> anyhow::Result<()>
+where
+    S: Send + Sync + 'static,
+    C: ConsumerHandler<S>,
+{
+    run_consumer_inner::<S, C>(
+        state,
+        messages,
+        concurrency,
+        panic_policy,
+        #[cfg(feature = "telemetry")]
+        None,
+        shutdown,
+    )
+    .await
+}
+
+#[cfg(feature = "telemetry")]
+pub(crate) async fn run_consumer_with_telemetry<S, C>(
+    state: Arc<S>,
+    messages: jetstream::consumer::push::Messages,
+    concurrency: usize,
+    panic_policy: crate::HandlerPanicPolicy,
+    telemetry: Option<Telemetry>,
+    shutdown: watch::Receiver<ShutdownState>,
+) -> anyhow::Result<()>
+where
+    S: Send + Sync + 'static,
+    C: ConsumerHandler<S>,
+{
+    run_consumer_inner::<S, C>(
+        state,
+        messages,
+        concurrency,
+        panic_policy,
+        telemetry,
+        shutdown,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_lines)]
+async fn run_consumer_inner<S, C>(
+    state: Arc<S>,
     mut messages: jetstream::consumer::push::Messages,
     concurrency: usize,
     panic_policy: crate::HandlerPanicPolicy,
+    #[cfg(feature = "telemetry")] telemetry: Option<Telemetry>,
     mut shutdown: watch::Receiver<ShutdownState>,
 ) -> anyhow::Result<()>
 where
@@ -68,13 +123,64 @@ where
                 incoming = messages.next() => {
                     match incoming {
                         Some(Ok(message)) => {
-                            in_flight.push(
-                                AssertUnwindSafe(process_consumer::<S, C>(&state, message))
-                                    .catch_unwind()
-                            );
+                            #[cfg(feature = "telemetry")]
+                            let span = if let Some(telemetry) = telemetry.as_ref() {
+                                let subject = message.subject.as_str();
+                                let request_id = message.headers.as_ref()
+                                    .and_then(|headers| headers.get("x-request-id"))
+                                    .map(async_nats::HeaderValue::as_str);
+                                telemetry.consumer(
+                                    MetricName::ConsumerDeliveries,
+                                    1,
+                                    None,
+                                    &C::SPEC,
+                                    Some(subject),
+                                    request_id,
+                                    None,
+                                );
+                                if message.info().is_ok_and(|info| info.delivered > 1) {
+                                    telemetry.consumer(
+                                        MetricName::ConsumerRedeliveries,
+                                        1,
+                                        None,
+                                        &C::SPEC,
+                                        Some(subject),
+                                        request_id,
+                                        None,
+                                    );
+                                }
+                                telemetry.consumer_span(&C::SPEC, subject, request_id)
+                            } else {
+                                tracing::Span::none()
+                            };
+                            #[cfg(feature = "telemetry")]
+                            let telemetry_for_message = telemetry.as_ref().map(Telemetry::fork);
+                            let state_ref = state.as_ref();
+                            let processing = async move {
+                                #[cfg(feature = "telemetry")]
+                                let result = process_consumer::<S, C>(
+                                    state_ref,
+                                    message,
+                                    telemetry_for_message.as_ref(),
+                                )
+                                .instrument(span)
+                                .await;
+                                #[cfg(not(feature = "telemetry"))]
+                                let result = process_consumer::<S, C>(state_ref, message).await;
+                                result
+                            };
+                            if panic_policy == crate::HandlerPanicPolicy::Propagate {
+                                in_flight.push(Either::Left(async move {
+                                    Ok(processing.await)
+                                }));
+                            } else {
+                                in_flight.push(Either::Right(
+                                    AssertUnwindSafe(processing).catch_unwind()
+                                ));
+                            }
                         }
                         Some(Err(error)) => {
-                            tracing::error!(%error, "failed to receive consumer message");
+                            crate::trace::error!(%error, "failed to receive consumer message");
                         }
                         None => {
                             return Err(anyhow::anyhow!(
@@ -109,7 +215,7 @@ fn handle_completion(
     match completed {
         Some(Ok(result)) => result,
         Some(Err(_)) if panic_policy == crate::HandlerPanicPolicy::LogAndContinue => {
-            tracing::error!("consumer handler panicked; continuing by policy");
+            crate::trace::error!("consumer handler panicked; continuing by policy");
             Ok(())
         }
         Some(Err(_)) => Err(anyhow::anyhow!("consumer handler panicked")),
@@ -117,11 +223,26 @@ fn handle_completion(
     }
 }
 
-async fn process_consumer<S, C>(state: &S, message: jetstream::Message) -> anyhow::Result<()>
+#[allow(clippy::too_many_lines)]
+async fn process_consumer<S, C>(
+    state: &S,
+    message: jetstream::Message,
+    #[cfg(feature = "telemetry")] telemetry: Option<&Telemetry>,
+) -> anyhow::Result<()>
 where
     S: Send + Sync + 'static,
     C: ConsumerHandler<S>,
 {
+    #[cfg(feature = "telemetry")]
+    let ack_started = std::time::Instant::now();
+    #[cfg(feature = "telemetry")]
+    let subject = message.subject.as_str();
+    #[cfg(feature = "telemetry")]
+    let request_id = message
+        .headers
+        .as_ref()
+        .and_then(|headers| headers.get("x-request-id"))
+        .map(async_nats::HeaderValue::as_str);
     let action = {
         let request = Request::new(
             message.subject.as_str(),
@@ -161,7 +282,25 @@ where
         match result {
             Ok(action) => action,
             Err(error) => {
-                tracing::error!(
+                #[cfg(feature = "telemetry")]
+                if let Some(telemetry) = telemetry {
+                    let metric = if crate::FrameworkError::from_code(error.kind.as_ref()).is_some()
+                    {
+                        MetricName::FrameworkErrors
+                    } else {
+                        MetricName::ServiceErrors
+                    };
+                    telemetry.consumer(
+                        metric,
+                        1,
+                        None,
+                        &C::SPEC,
+                        Some(subject),
+                        request_id,
+                        Some(error.kind.as_ref()),
+                    );
+                }
+                crate::trace::error!(
                     code = error.code,
                     kind = %error.kind,
                     message = %error.message,
@@ -180,18 +319,42 @@ where
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         }
         ConsumerAction::Nack => {
+            #[cfg(feature = "telemetry")]
+            record_consumer_action(
+                telemetry,
+                MetricName::ConsumerNacks,
+                &C::SPEC,
+                subject,
+                request_id,
+            );
             message
                 .ack_with(AckKind::Nak(None))
                 .await
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         }
         ConsumerAction::NackAfter(delay) => {
+            #[cfg(feature = "telemetry")]
+            record_consumer_action(
+                telemetry,
+                MetricName::ConsumerNacks,
+                &C::SPEC,
+                subject,
+                request_id,
+            );
             message
                 .ack_with(AckKind::Nak(Some(delay)))
                 .await
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         }
         ConsumerAction::Term => {
+            #[cfg(feature = "telemetry")]
+            record_consumer_action(
+                telemetry,
+                MetricName::ConsumerTerms,
+                &C::SPEC,
+                subject,
+                request_id,
+            );
             message
                 .ack_with(AckKind::Term)
                 .await
@@ -199,5 +362,31 @@ where
         }
     }
 
+    #[cfg(feature = "telemetry")]
+    if let Some(telemetry) = telemetry {
+        telemetry.consumer(
+            MetricName::ConsumerAckLatency,
+            1,
+            Some(ack_started.elapsed()),
+            &C::SPEC,
+            Some(subject),
+            request_id,
+            None,
+        );
+    }
+
     Ok(())
+}
+
+#[cfg(feature = "telemetry")]
+fn record_consumer_action(
+    telemetry: Option<&Telemetry>,
+    metric: MetricName,
+    spec: &'static crate::ConsumerSpec,
+    subject: &str,
+    request_id: Option<&str>,
+) {
+    if let Some(telemetry) = telemetry {
+        telemetry.consumer(metric, 1, None, spec, Some(subject), request_id, None);
+    }
 }

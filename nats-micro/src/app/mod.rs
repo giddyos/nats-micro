@@ -1,3 +1,5 @@
+#![cfg_attr(not(feature = "telemetry"), allow(unused_variables))]
+
 mod config;
 mod limits;
 mod prepare;
@@ -12,6 +14,7 @@ mod workers;
 
 use std::{future::Future, sync::Arc};
 
+use crate::trace::{debug, error, info, warn};
 use anyhow::Result;
 use async_nats::jetstream;
 use async_nats::service::ServiceExt;
@@ -19,7 +22,6 @@ use tokio::{
     sync::{mpsc, watch},
     task::JoinHandle,
 };
-use tracing::{debug, error, info, warn};
 
 use crate::{
     consumer::ConsumerDefinition, error::NatsErrorResponse, request::NatsRequest,
@@ -41,6 +43,8 @@ use self::{
 };
 
 pub use self::config::{HandlerPanicPolicy, NatsAppConfig, WorkerFailurePolicy};
+#[cfg(feature = "encryption")]
+pub use self::services::EncryptedService;
 pub use self::services::{
     Cons, Nil, Service, ServiceSet, ServiceSetValidator, assert_services_compatible, str_eq,
     validate_service_set,
@@ -152,7 +156,7 @@ impl NatsApp {
             .await
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::single_match, clippy::too_many_lines)]
     pub async fn run_until<Fut>(mut self, shutdown_signal: Fut) -> Result<()>
     where
         Fut: Future<Output = Result<()>>,

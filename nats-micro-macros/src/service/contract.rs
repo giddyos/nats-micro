@@ -21,11 +21,23 @@ pub(crate) fn generate(model: &ServiceModel) -> TokenStream {
                 &Self::SPEC
             }
 
+            #[must_use]
+            pub const fn contract() -> #nats_micro::ServiceContract<'static> {
+                #nats_micro::ServiceContract {
+                    service: &Self::SPEC,
+                }
+            }
+
+            #[must_use]
+            pub const fn operations() -> &'static [#nats_micro::OperationSpec] {
+                Self::SPEC.operations
+            }
+
             pub fn contract_json() -> ::std::result::Result<
                 String,
                 #nats_micro::serde_json::Error,
             > {
-                #nats_micro::serde_json::to_string_pretty(&Self::SPEC)
+                #nats_micro::serde_json::to_string_pretty(&Self::contract())
             }
 
             #napi_hook

@@ -265,7 +265,7 @@ pub struct ServiceDefinition {
 }
 
 #[derive(Debug, Clone, Serialize)]
-pub struct ServiceContract {
+pub struct OwnedServiceContract {
     pub metadata: ServiceMetadata,
     pub endpoints: Vec<EndpointInfo>,
     pub consumers: Vec<ConsumerInfo>,
@@ -273,8 +273,8 @@ pub struct ServiceContract {
 
 impl ServiceDefinition {
     #[must_use]
-    pub fn contract(&self) -> ServiceContract {
-        ServiceContract {
+    pub fn contract(&self) -> OwnedServiceContract {
+        OwnedServiceContract {
             metadata: self.metadata.clone(),
             endpoints: self.endpoint_info.clone(),
             consumers: self.consumer_info.clone(),
@@ -289,7 +289,7 @@ impl ServiceDefinition {
 pub trait NatsService: Send + Sync + 'static {
     fn definition() -> ServiceDefinition;
 
-    fn contract() -> ServiceContract {
+    fn contract() -> OwnedServiceContract {
         Self::definition().contract()
     }
 

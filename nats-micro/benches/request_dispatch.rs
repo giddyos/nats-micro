@@ -19,6 +19,8 @@ struct StaticEndpoint;
 
 impl RequestEndpoint<()> for StaticEndpoint {
     const SPEC: OperationSpec = OperationSpec {
+        service_name: "bench",
+        service_version: "1.0.0",
         rust_name: "raw_borrowed_static_response",
         kind: OperationKind::Request,
         subject: "users.v2.users.lookup",
@@ -26,6 +28,8 @@ impl RequestEndpoint<()> for StaticEndpoint {
         queue_group: None,
         request_codec: Codec::Raw,
         response_codec: Codec::Raw,
+        request_encrypted: false,
+        response_encrypted: false,
         request_type: Some("&[u8]"),
         response_type: Some("&'static [u8]"),
         error_type: None,

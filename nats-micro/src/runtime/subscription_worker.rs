@@ -1,6 +1,8 @@
+#![cfg_attr(not(feature = "telemetry"), allow(unused_variables))]
+
 use std::{panic::AssertUnwindSafe, sync::Arc};
 
-use futures_util::{FutureExt, StreamExt, stream::FuturesUnordered};
+use futures_util::{FutureExt, StreamExt, future::Either, stream::FuturesUnordered};
 use tokio::sync::watch;
 
 use crate::{Request, ShutdownState, SubscriptionHandler};
@@ -67,9 +69,16 @@ where
                     let message = incoming.ok_or_else(|| {
                         anyhow::anyhow!("subscription stream ended unexpectedly")
                     })?;
-                    in_flight.push(
-                        AssertUnwindSafe(process_message::<S, H>(&state, message)).catch_unwind()
-                    );
+                    let processing = process_message::<S, H>(&state, message);
+                    if panic_policy == crate::HandlerPanicPolicy::Propagate {
+                        in_flight.push(Either::Left(async move {
+                            Ok(processing.await)
+                        }));
+                    } else {
+                        in_flight.push(Either::Right(
+                            AssertUnwindSafe(processing).catch_unwind()
+                        ));
+                    }
                 }
             }
         } else {
@@ -98,7 +107,7 @@ fn handle_completion(
     match completed {
         Some(Ok(result)) => result,
         Some(Err(_)) if panic_policy == crate::HandlerPanicPolicy::LogAndContinue => {
-            tracing::error!("subscription handler panicked; continuing by policy");
+            crate::trace::error!("subscription handler panicked; continuing by policy");
             Ok(())
         }
         Some(Err(_)) => Err(anyhow::anyhow!("subscription handler panicked")),

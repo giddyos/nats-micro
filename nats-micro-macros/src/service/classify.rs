@@ -43,6 +43,7 @@ pub(crate) struct PayloadModel {
     pub codec: WireCodec,
     pub wrapper: Wrapper,
     pub optional: bool,
+    pub encrypted: bool,
     pub decoded_type: Option<Type>,
 }
 
@@ -73,6 +74,7 @@ pub(crate) struct ResponseModel {
     pub codec: WireCodec,
     pub wrapper: Wrapper,
     pub optional: bool,
+    pub encrypted: bool,
 }
 
 pub(crate) fn classify_arguments(
@@ -197,6 +199,8 @@ pub(crate) fn classify_response(
     } else {
         (false, ok_type.clone())
     };
+    let (encrypted, value_type) = encryption_inner(&value_type)
+        .map_or((false, value_type.clone()), |inner| (true, inner.clone()));
     let wire_type = options
         .response
         .clone()
@@ -210,6 +214,7 @@ pub(crate) fn classify_response(
             codec: WireCodec::Empty,
             wrapper: Wrapper::Direct,
             optional: false,
+            encrypted,
         };
     }
 
@@ -221,11 +226,13 @@ pub(crate) fn classify_response(
         codec,
         wrapper,
         optional,
+        encrypted,
     }
 }
 
 fn classify_payload(ty: &Type, default_codec: WireCodec) -> syn::Result<PayloadModel> {
     let (optional, value) = option_inner(ty).map_or((false, ty), |inner| (true, inner));
+    let (encrypted, value) = encryption_inner(value).map_or((false, value), |inner| (true, inner));
     let ident = last_ident(value);
     let (codec, wrapper, decoded_type) = match ident.as_deref() {
         Some("Json") => (
@@ -246,6 +253,7 @@ fn classify_payload(ty: &Type, default_codec: WireCodec) -> syn::Result<PayloadM
         codec,
         wrapper,
         optional,
+        encrypted,
         decoded_type,
     })
 }
@@ -347,6 +355,12 @@ fn required_type_argument(ty: &Type, wrapper: &str) -> syn::Result<Type> {
 
 pub(crate) fn option_inner(ty: &Type) -> Option<&Type> {
     (last_ident(ty).as_deref() == Some("Option"))
+        .then(|| last_type_argument(ty))
+        .flatten()
+}
+
+pub(crate) fn encryption_inner(ty: &Type) -> Option<&Type> {
+    (last_ident(ty).as_deref() == Some("Encrypted"))
         .then(|| last_type_argument(ty))
         .flatten()
 }

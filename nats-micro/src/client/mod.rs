@@ -10,6 +10,8 @@ pub use v2::{
     OptionalVecDecoder, ProtoDecoder, PublishCall, RequestCall, ResponseDecoder, TextDecoder,
     VecDecoder, merge_headers,
 };
+#[cfg(feature = "encryption")]
+pub use v2::{EncryptedPublishCall, EncryptedRequestCall};
 
 use bytes::Bytes;
 use nats_micro_shared::{FrameworkError, TransportError as SharedTransportError};
@@ -266,6 +268,29 @@ pub async fn connect(
     server: impl Into<String>,
     input: Option<ConnectOptions>,
 ) -> Result<ConnectedClient, NatsErrorResponse> {
+    connect_inner(
+        server,
+        input,
+        #[cfg(feature = "telemetry")]
+        None,
+    )
+    .await
+}
+
+#[cfg(feature = "telemetry")]
+pub(crate) async fn connect_with_telemetry(
+    server: impl Into<String>,
+    input: Option<ConnectOptions>,
+    telemetry: Option<crate::telemetry::Telemetry>,
+) -> Result<ConnectedClient, NatsErrorResponse> {
+    connect_inner(server, input, telemetry).await
+}
+
+async fn connect_inner(
+    server: impl Into<String>,
+    input: Option<ConnectOptions>,
+    #[cfg(feature = "telemetry")] telemetry: Option<crate::telemetry::Telemetry>,
+) -> Result<ConnectedClient, NatsErrorResponse> {
     let server = server.into();
     let ConnectOptions {
         name,
@@ -328,6 +353,22 @@ pub async fn connect(
         retain_servers_order,
         read_buffer_capacity,
     );
+
+    #[cfg(feature = "telemetry")]
+    if let Some(telemetry) = telemetry {
+        let connected_once = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        options = options.event_callback(move |event| {
+            let telemetry = telemetry.clone();
+            let connected_once = std::sync::Arc::clone(&connected_once);
+            async move {
+                if event == async_nats::Event::Connected
+                    && connected_once.swap(true, std::sync::atomic::Ordering::Relaxed)
+                {
+                    telemetry.application(crate::MetricName::Reconnects, None);
+                }
+            }
+        });
+    }
 
     let client = options.connect(server.clone()).await.map_err(|error| {
         framework_error(

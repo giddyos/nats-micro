@@ -1,3 +1,5 @@
+#![cfg_attr(not(feature = "telemetry"), allow(unused_variables))]
+
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use async_nats::service::ServiceExt;
@@ -5,13 +7,20 @@ use futures_util::{StreamExt, stream::FuturesUnordered};
 use tokio::{sync::watch, task::JoinHandle, time::Instant};
 
 use super::{AppConfig, WorkerFailurePolicy};
+#[cfg(feature = "telemetry")]
+use crate::runtime::run_consumer_with_telemetry;
+#[cfg(all(feature = "encryption", not(feature = "telemetry")))]
+use crate::runtime::run_encrypted_request_endpoint_with_panic_policy;
+#[cfg(all(feature = "encryption", feature = "telemetry"))]
+use crate::runtime::run_encrypted_request_endpoint_with_telemetry;
+#[cfg(not(feature = "telemetry"))]
+use crate::runtime::{run_consumer_with_panic_policy, run_request_endpoint_with_panic_policy};
 use crate::{
     ConsumerHandler, RequestEndpoint, ShutdownState, SubscriptionHandler,
-    runtime::{
-        run_consumer_with_panic_policy, run_request_endpoint_with_panic_policy,
-        run_subscription_with_panic_policy,
-    },
+    runtime::run_subscription_with_panic_policy,
 };
+#[cfg(feature = "telemetry")]
+use crate::{MetricName, runtime::run_request_endpoint_with_telemetry, telemetry::Telemetry};
 
 pub type StartError = anyhow::Error;
 pub(crate) type ShutdownHook =
@@ -26,6 +35,10 @@ pub struct Runtime<S> {
     services: Vec<Arc<async_nats::service::Service>>,
     workers: Vec<JoinHandle<anyhow::Result<()>>>,
     shutdown_hook: Option<ShutdownHook>,
+    #[cfg(feature = "encryption")]
+    encryption: Option<Arc<crate::ServiceKeyPair>>,
+    #[cfg(feature = "telemetry")]
+    telemetry: Option<Telemetry>,
 }
 
 impl<S> Runtime<S>
@@ -45,11 +58,25 @@ where
             services: Vec::new(),
             workers: Vec::new(),
             shutdown_hook: None,
+            #[cfg(feature = "encryption")]
+            encryption: None,
+            #[cfg(feature = "telemetry")]
+            telemetry: None,
         }
     }
 
     pub(crate) fn set_shutdown_hook(&mut self, hook: Option<ShutdownHook>) {
         self.shutdown_hook = hook;
+    }
+
+    #[cfg(feature = "encryption")]
+    pub(crate) fn set_encryption_key(&mut self, keypair: Option<Arc<crate::ServiceKeyPair>>) {
+        self.encryption = keypair;
+    }
+
+    #[cfg(feature = "telemetry")]
+    pub(crate) fn set_telemetry_layer(&mut self, layer: Option<Arc<dyn crate::TelemetryLayer>>) {
+        self.telemetry = layer.map(|layer| Telemetry::new(layer, self.config.telemetry));
     }
 
     pub async fn start_service(&mut self, spec: crate::ServiceSpec) -> Result<(), StartError> {
@@ -74,11 +101,13 @@ where
                 .last()
                 .ok_or_else(|| anyhow::anyhow!("request endpoint started before its service"))?,
         );
-        let endpoint = register_request::<S, E>(&service).await?;
+        let endpoint = register_request(&service, &E::SPEC).await?;
         let state = Arc::clone(&self.state);
         let shutdown = self.shutdown_rx.clone();
         let panic_policy = self.config.handler_panic;
         let failure_policy = self.config.worker_failure;
+        #[cfg(feature = "telemetry")]
+        let telemetry = self.telemetry.clone();
         self.workers.push(tokio::spawn(async move {
             supervise_request::<S, E>(
                 state,
@@ -87,6 +116,48 @@ where
                 concurrency,
                 panic_policy,
                 failure_policy,
+                #[cfg(feature = "telemetry")]
+                telemetry,
+                shutdown,
+            )
+            .await
+        }));
+        Ok(())
+    }
+
+    #[cfg(feature = "encryption")]
+    pub async fn spawn_encrypted_request<E>(&mut self) -> Result<(), StartError>
+    where
+        E: crate::EncryptedRequestEndpoint<S>,
+    {
+        let concurrency = effective_concurrency(&self.config, E::SPEC.concurrency);
+        let service = Arc::clone(self.services.last().ok_or_else(|| {
+            anyhow::anyhow!("encrypted request endpoint started before its service")
+        })?);
+        let endpoint = register_request(&service, &E::SPEC).await?;
+        let keypair = self.encryption.clone().ok_or_else(|| {
+            anyhow::anyhow!(
+                "service `{}` declares encrypted operations but App has no encryption key",
+                E::SPEC.rust_name
+            )
+        })?;
+        let state = Arc::clone(&self.state);
+        let shutdown = self.shutdown_rx.clone();
+        let panic_policy = self.config.handler_panic;
+        let failure_policy = self.config.worker_failure;
+        #[cfg(feature = "telemetry")]
+        let telemetry = self.telemetry.clone();
+        self.workers.push(tokio::spawn(async move {
+            supervise_encrypted_request::<S, E>(
+                state,
+                keypair,
+                service,
+                endpoint,
+                concurrency,
+                panic_policy,
+                failure_policy,
+                #[cfg(feature = "telemetry")]
+                telemetry,
                 shutdown,
             )
             .await
@@ -111,6 +182,8 @@ where
         let panic_policy = self.config.handler_panic;
         let failure_policy = self.config.worker_failure;
         let client = self.client.clone();
+        #[cfg(feature = "telemetry")]
+        let telemetry = self.telemetry.clone();
         self.workers.push(tokio::spawn(async move {
             supervise_subscription::<S, H>(
                 state,
@@ -119,6 +192,8 @@ where
                 concurrency,
                 panic_policy,
                 failure_policy,
+                #[cfg(feature = "telemetry")]
+                telemetry,
                 shutdown,
             )
             .await
@@ -137,6 +212,8 @@ where
         let panic_policy = self.config.handler_panic;
         let failure_policy = self.config.worker_failure;
         let client = self.client.clone();
+        #[cfg(feature = "telemetry")]
+        let telemetry = self.telemetry.clone();
         self.workers.push(tokio::spawn(async move {
             supervise_consumer::<S, C>(
                 state,
@@ -145,6 +222,8 @@ where
                 concurrency,
                 panic_policy,
                 failure_policy,
+                #[cfg(feature = "telemetry")]
+                telemetry,
                 shutdown,
             )
             .await
@@ -199,7 +278,7 @@ where
                     };
                     match self.config.worker_failure {
                         WorkerFailurePolicy::Ignore => {
-                            tracing::warn!(%failure, "static worker failed; ignoring by policy");
+                            crate::trace::warn!(%failure, "static worker failed; ignoring by policy");
                         }
                         WorkerFailurePolicy::ShutdownApp | WorkerFailurePolicy::Restart { .. } => {
                             first_failure = Some(failure);
@@ -220,18 +299,27 @@ where
             first_failure = Some(error);
         }
 
+        #[cfg(feature = "telemetry")]
+        let drain_started = Instant::now();
         let deadline = Instant::now() + self.config.shutdown_drain_timeout;
         let _ = self.shutdown_tx.send(ShutdownState::draining(
             Some(self.config.shutdown_drain_timeout),
             deadline,
         ));
         drain_workers(&mut workers, deadline, &mut first_failure).await;
+        #[cfg(feature = "telemetry")]
+        if let Some(telemetry) = self.telemetry.as_ref() {
+            telemetry.application(
+                MetricName::ShutdownDrainDuration,
+                Some(drain_started.elapsed()),
+            );
+        }
 
         for service in self.services {
             match Arc::try_unwrap(service) {
                 Ok(service) => {
                     if let Err(error) = service.stop().await {
-                        tracing::debug!(%error, "service registration was already stopped");
+                        crate::trace::debug!(%error, "service registration was already stopped");
                     }
                 }
                 Err(_) => {
@@ -278,23 +366,21 @@ async fn drain_workers(
     }
 }
 
-async fn register_request<S, E>(
+async fn register_request(
     service: &async_nats::service::Service,
-) -> Result<async_nats::service::endpoint::Endpoint, StartError>
-where
-    S: Send + Sync + 'static,
-    E: RequestEndpoint<S>,
-{
-    let mut builder = service.endpoint_builder().name(E::SPEC.rust_name);
-    if let Some(queue) = E::SPEC.queue_group {
+    spec: &crate::OperationSpec,
+) -> Result<async_nats::service::endpoint::Endpoint, StartError> {
+    let mut builder = service.endpoint_builder().name(spec.rust_name);
+    if let Some(queue) = spec.queue_group {
         builder = builder.queue_group(queue);
     }
     builder
-        .add(E::SPEC.subject)
+        .add(spec.subject)
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn supervise_request<S, E>(
     state: Arc<S>,
     service: Arc<async_nats::service::Service>,
@@ -302,6 +388,7 @@ async fn supervise_request<S, E>(
     concurrency: usize,
     panic_policy: crate::HandlerPanicPolicy,
     failure_policy: WorkerFailurePolicy,
+    #[cfg(feature = "telemetry")] telemetry: Option<Telemetry>,
     mut shutdown: watch::Receiver<ShutdownState>,
 ) -> anyhow::Result<()>
 where
@@ -310,6 +397,17 @@ where
 {
     let mut restarts = RestartTracker::new(failure_policy);
     loop {
+        #[cfg(feature = "telemetry")]
+        let result = run_request_endpoint_with_telemetry::<S, E>(
+            Arc::clone(&state),
+            endpoint,
+            concurrency,
+            panic_policy,
+            telemetry.clone(),
+            shutdown.clone(),
+        )
+        .await;
+        #[cfg(not(feature = "telemetry"))]
         let result = run_request_endpoint_with_panic_policy::<S, E>(
             Arc::clone(&state),
             endpoint,
@@ -327,14 +425,101 @@ where
         let Some(delay) = restarts.next_delay() else {
             return Err(error);
         };
-        tracing::warn!(%error, ?delay, endpoint = E::SPEC.subject, "restarting request worker");
+        #[cfg(feature = "telemetry")]
+        if let Some(telemetry) = telemetry.as_ref() {
+            telemetry.operation(
+                MetricName::WorkerRestarts,
+                1,
+                None,
+                &E::SPEC,
+                None,
+                None,
+                None,
+            );
+        }
+        crate::trace::warn!(%error, ?delay, endpoint = E::SPEC.subject, "restarting request worker");
         if wait_backoff(delay, &mut shutdown).await {
             return Ok(());
         }
-        endpoint = register_request::<S, E>(&service).await?;
+        endpoint = register_request(&service, &E::SPEC).await?;
     }
 }
 
+#[cfg(feature = "encryption")]
+#[allow(clippy::too_many_arguments)]
+async fn supervise_encrypted_request<S, E>(
+    state: Arc<S>,
+    keypair: Arc<crate::ServiceKeyPair>,
+    service: Arc<async_nats::service::Service>,
+    mut endpoint: async_nats::service::endpoint::Endpoint,
+    concurrency: usize,
+    panic_policy: crate::HandlerPanicPolicy,
+    failure_policy: WorkerFailurePolicy,
+    #[cfg(feature = "telemetry")] telemetry: Option<Telemetry>,
+    mut shutdown: watch::Receiver<ShutdownState>,
+) -> anyhow::Result<()>
+where
+    S: Send + Sync + 'static,
+    E: crate::EncryptedRequestEndpoint<S>,
+{
+    let mut restarts = RestartTracker::new(failure_policy);
+    loop {
+        #[cfg(feature = "telemetry")]
+        let result = run_encrypted_request_endpoint_with_telemetry::<S, E>(
+            Arc::clone(&state),
+            Arc::clone(&keypair),
+            endpoint,
+            concurrency,
+            panic_policy,
+            telemetry.clone(),
+            shutdown.clone(),
+        )
+        .await;
+        #[cfg(not(feature = "telemetry"))]
+        let result = run_encrypted_request_endpoint_with_panic_policy::<S, E>(
+            Arc::clone(&state),
+            Arc::clone(&keypair),
+            endpoint,
+            concurrency,
+            panic_policy,
+            shutdown.clone(),
+        )
+        .await;
+        if shutdown.borrow().is_requested() {
+            return Ok(());
+        }
+        let error = result
+            .err()
+            .unwrap_or_else(|| anyhow::anyhow!("encrypted request worker exited unexpectedly"));
+        let Some(delay) = restarts.next_delay() else {
+            return Err(error);
+        };
+        #[cfg(feature = "telemetry")]
+        if let Some(telemetry) = telemetry.as_ref() {
+            telemetry.operation(
+                MetricName::WorkerRestarts,
+                1,
+                None,
+                &E::SPEC,
+                None,
+                None,
+                None,
+            );
+        }
+        crate::trace::warn!(
+            %error,
+            ?delay,
+            endpoint = E::SPEC.subject,
+            "restarting encrypted request worker"
+        );
+        if wait_backoff(delay, &mut shutdown).await {
+            return Ok(());
+        }
+        endpoint = register_request(&service, &E::SPEC).await?;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn supervise_subscription<S, H>(
     state: Arc<S>,
     client: crate::NatsClient,
@@ -342,6 +527,7 @@ async fn supervise_subscription<S, H>(
     concurrency: usize,
     panic_policy: crate::HandlerPanicPolicy,
     failure_policy: WorkerFailurePolicy,
+    #[cfg(feature = "telemetry")] telemetry: Option<Telemetry>,
     mut shutdown: watch::Receiver<ShutdownState>,
 ) -> anyhow::Result<()>
 where
@@ -367,7 +553,19 @@ where
         let Some(delay) = restarts.next_delay() else {
             return Err(error);
         };
-        tracing::warn!(%error, ?delay, subject = H::SPEC.subject, "restarting subscription worker");
+        #[cfg(feature = "telemetry")]
+        if let Some(telemetry) = telemetry.as_ref() {
+            telemetry.operation(
+                MetricName::WorkerRestarts,
+                1,
+                None,
+                &H::SPEC,
+                None,
+                None,
+                None,
+            );
+        }
+        crate::trace::warn!(%error, ?delay, subject = H::SPEC.subject, "restarting subscription worker");
         if wait_backoff(delay, &mut shutdown).await {
             return Ok(());
         }
@@ -413,6 +611,7 @@ where
     Ok(consumer.messages().await?)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn supervise_consumer<S, C>(
     state: Arc<S>,
     client: crate::NatsClient,
@@ -420,6 +619,7 @@ async fn supervise_consumer<S, C>(
     concurrency: usize,
     panic_policy: crate::HandlerPanicPolicy,
     failure_policy: WorkerFailurePolicy,
+    #[cfg(feature = "telemetry")] telemetry: Option<Telemetry>,
     mut shutdown: watch::Receiver<ShutdownState>,
 ) -> anyhow::Result<()>
 where
@@ -428,6 +628,17 @@ where
 {
     let mut restarts = RestartTracker::new(failure_policy);
     loop {
+        #[cfg(feature = "telemetry")]
+        let result = run_consumer_with_telemetry::<S, C>(
+            Arc::clone(&state),
+            messages,
+            concurrency,
+            panic_policy,
+            telemetry.clone(),
+            shutdown.clone(),
+        )
+        .await;
+        #[cfg(not(feature = "telemetry"))]
         let result = run_consumer_with_panic_policy::<S, C>(
             Arc::clone(&state),
             messages,
@@ -445,7 +656,19 @@ where
         let Some(delay) = restarts.next_delay() else {
             return Err(error);
         };
-        tracing::warn!(%error, ?delay, durable = C::SPEC.durable, "restarting consumer worker");
+        #[cfg(feature = "telemetry")]
+        if let Some(telemetry) = telemetry.as_ref() {
+            telemetry.consumer(
+                MetricName::WorkerRestarts,
+                1,
+                None,
+                &C::SPEC,
+                None,
+                None,
+                None,
+            );
+        }
+        crate::trace::warn!(%error, ?delay, durable = C::SPEC.durable, "restarting consumer worker");
         if wait_backoff(delay, &mut shutdown).await {
             return Ok(());
         }
@@ -540,7 +763,7 @@ mod tests {
             initial_backoff: Duration::from_millis(100),
             max_backoff: Duration::from_millis(250),
             max_restarts: 4,
-            window: Duration::from_secs(60),
+            window: Duration::from_mins(1),
         });
 
         assert_eq!(tracker.next_delay(), Some(Duration::from_millis(100)));

@@ -105,3 +105,44 @@ fn ordinary_payloads_and_varied_returns_are_classified() {
     assert!(expanded.contains("IntoServiceError"));
     assert!(expanded.contains("ClientSubject :: Static"));
 }
+
+#[cfg(feature = "macros_napi_feature")]
+#[test]
+fn napi_client_reuses_the_typed_transport_client() {
+    let expanded = expand(
+        quote!(name = "demo", version = "1.0.0", napi),
+        quote! {
+            impl Demo {
+                #[request("users.{user_id}")]
+                async fn get(user_id: &str, input: Json<Input>) -> Result<Output, DemoError> {
+                    todo!()
+                }
+
+                #[publish("events")]
+                async fn publish(body: Body<'_>) {
+                    let _ = body;
+                }
+
+                #[request("secret")]
+                async fn secret(
+                    input: Encrypted<Json<Input>>,
+                ) -> Encrypted<Json<Output>> {
+                    todo!()
+                }
+            }
+        },
+    )
+    .to_string();
+
+    assert!(expanded.contains("struct JsDemoClient"));
+    assert!(expanded.contains("inner : DemoClient <"));
+    assert!(expanded.contains("NatsTransport"));
+    assert!(expanded.contains("pub async fn connect"));
+    assert!(expanded.contains("pub async fn get"));
+    assert!(expanded.contains("pub async fn publish"));
+    assert!(expanded.contains("assert_napi_object :: < Input >"));
+    assert!(expanded.contains("assert_napi_object :: < Output >"));
+    assert!(expanded.contains("as_nats_error_response"));
+    assert!(expanded.contains("recipient_public_key"));
+    assert!(expanded.contains("with_recipient"));
+}

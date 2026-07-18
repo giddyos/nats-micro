@@ -53,9 +53,19 @@ pub(crate) fn validate_service(model: &ServiceModel) -> syn::Result<()> {
             return Err(error);
         }
     }
+    if model.args.napi {
+        if !cfg!(feature = "macros_napi_feature") {
+            return Err(syn::Error::new(
+                model.service_ident.span(),
+                "`napi` service generation requires the `napi` feature",
+            ));
+        }
+        validate_napi_model(model)?;
+    }
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)]
 fn validate_operation(model: &ServiceModel, operation: &OperationModel) -> syn::Result<()> {
     let span = operation.method.sig.ident.span();
     let concurrency = operation
@@ -122,30 +132,88 @@ fn validate_operation(model: &ServiceModel, operation: &OperationModel) -> syn::
             | ArgumentKind::RequestMeta
             | ArgumentKind::Payload(_) => {}
         }
-        if !cfg!(feature = "macros_encryption_feature")
-            && classify::last_ident(&argument.ty).as_deref() == Some("Encrypted")
-        {
-            return Err(syn::Error::new_spanned(
-                &argument.ty,
-                "encrypted operations require the `encryption` feature",
-            ));
+        if let ArgumentKind::Payload(payload) = &argument.kind {
+            if type_contains_encrypted(&argument.ty) && !payload.encrypted {
+                return Err(syn::Error::new_spanned(
+                    &argument.ty,
+                    "`Encrypted<T>` must be the outer payload wrapper (or inside `Option`)",
+                ));
+            }
+            if payload.encrypted && !cfg!(feature = "macros_encryption_feature") {
+                return Err(syn::Error::new_spanned(
+                    &argument.ty,
+                    "encrypted operations require the `encryption` feature",
+                ));
+            }
         }
     }
 
     validate_auth(model, operation)?;
     validate_response(operation)?;
-    if model.args.napi {
-        for argument in &operation.arguments {
-            validate_napi_type(&argument.ty)?;
-        }
-        validate_napi_type(&operation.response.wire_type)?;
+    if type_contains_encrypted(&operation.response.ok_type) && !operation.response.encrypted {
+        return Err(syn::Error::new_spanned(
+            &operation.response.ok_type,
+            "`Encrypted<T>` must be the outer response wrapper (or inside `Option`)",
+        ));
     }
-
+    if operation.response.encrypted && !cfg!(feature = "macros_encryption_feature") {
+        return Err(syn::Error::new_spanned(
+            &operation.response.ok_type,
+            "encrypted operations require the `encryption` feature",
+        ));
+    }
+    let encrypted = operation.response.encrypted
+        || operation.arguments.iter().any(|argument| {
+            matches!(&argument.kind, ArgumentKind::Payload(payload) if payload.encrypted)
+        });
+    if encrypted
+        && !matches!(
+            operation.kind,
+            OperationKind::Request | OperationKind::Publish
+        )
+    {
+        return Err(syn::Error::new(
+            span,
+            "encrypted payloads are supported only for request and publish operations",
+        ));
+    }
     if operation.kind == OperationKind::Consumer {
         validate_consumer(operation)?;
     }
 
     Ok(())
+}
+
+fn validate_napi_model(model: &ServiceModel) -> syn::Result<()> {
+    for operation in model
+        .methods
+        .iter()
+        .filter_map(super::MethodModel::operation)
+    {
+        if !matches!(
+            operation.kind,
+            OperationKind::Request | OperationKind::Publish
+        ) {
+            continue;
+        }
+        for argument in &operation.arguments {
+            if matches!(
+                argument.kind,
+                ArgumentKind::Subject { .. } | ArgumentKind::Payload(_)
+            ) {
+                validate_napi_type(&argument.ty)?;
+            }
+        }
+        validate_napi_type(&operation.response.wire_type)?;
+    }
+    Ok(())
+}
+
+fn type_contains_encrypted(ty: &Type) -> bool {
+    ty.to_token_stream()
+        .to_string()
+        .split_whitespace()
+        .any(|token| token == "Encrypted")
 }
 
 fn validate_consumer(operation: &OperationModel) -> syn::Result<()> {

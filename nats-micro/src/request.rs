@@ -23,18 +23,41 @@ pub mod borrowed {
     #[derive(Debug, Clone, Copy)]
     pub struct Headers<'a> {
         inner: Option<&'a HeaderMap>,
+        #[cfg(feature = "encryption")]
+        overlay: Option<&'a crate::encryption::EncryptedHeaderOverlay>,
     }
 
     impl<'a> Headers<'a> {
         #[inline]
         #[must_use]
         pub const fn new(inner: Option<&'a HeaderMap>) -> Self {
-            Self { inner }
+            Self {
+                inner,
+                #[cfg(feature = "encryption")]
+                overlay: None,
+            }
+        }
+
+        #[cfg(feature = "encryption")]
+        #[inline]
+        #[must_use]
+        pub(crate) const fn with_overlay(
+            inner: Option<&'a HeaderMap>,
+            overlay: &'a crate::encryption::EncryptedHeaderOverlay,
+        ) -> Self {
+            Self {
+                inner,
+                overlay: Some(overlay),
+            }
         }
 
         #[inline]
         #[must_use]
         pub fn get(self, name: &str) -> Option<&'a str> {
+            #[cfg(feature = "encryption")]
+            if let Some(value) = self.overlay.and_then(|overlay| overlay.get(name)) {
+                return Some(value);
+            }
             self.inner
                 .and_then(|headers| headers.get(name))
                 .map(async_nats::HeaderValue::as_str)
@@ -107,6 +130,24 @@ pub mod borrowed {
             Self {
                 subject,
                 reply,
+                payload,
+                headers,
+                request_id: RequestId::new(headers),
+            }
+        }
+
+        #[cfg(feature = "encryption")]
+        #[inline]
+        #[must_use]
+        pub(crate) fn with_body_and_overlay<'view>(
+            &'view self,
+            payload: &'view [u8],
+            overlay: &'view crate::encryption::EncryptedHeaderOverlay,
+        ) -> Request<'view> {
+            let headers = Headers::with_overlay(self.headers.raw(), overlay);
+            Request {
+                subject: self.subject,
+                reply: self.reply,
                 payload,
                 headers,
                 request_id: RequestId::new(headers),

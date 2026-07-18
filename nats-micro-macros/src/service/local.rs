@@ -1,7 +1,7 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use super::{MethodModel, OperationKind, ServiceModel, metadata};
+use super::{ArgumentKind, MethodModel, OperationKind, ServiceModel, metadata};
 use crate::util::nats_micro_path;
 
 pub(crate) fn generate(model: &ServiceModel) -> TokenStream {
@@ -16,9 +16,19 @@ pub(crate) fn generate(model: &ServiceModel) -> TokenStream {
         .map(|operation| {
             let index = operation.operation_index.expect("operation index");
             let endpoint = metadata::operation_type(model, operation);
-            quote! {
-                #index => <#endpoint as #nats_micro::RequestEndpoint<#state>>
-                    ::call(state, request).await,
+            if operation_is_encrypted(operation) {
+                quote! {
+                    #index => Err(#nats_micro::ErrorReply::framework(
+                        #nats_micro::FrameworkError::NoEncryptionKey,
+                        "encrypted local dispatch requires TestApp with an encryption key",
+                        request.request_id().existing(),
+                    )),
+                }
+            } else {
+                quote! {
+                    #index => <#endpoint as #nats_micro::RequestEndpoint<#state>>
+                        ::call(state, request).await,
+                }
             }
         })
         .collect();
@@ -42,6 +52,13 @@ pub(crate) fn generate(model: &ServiceModel) -> TokenStream {
     }
 }
 
+fn operation_is_encrypted(operation: &super::OperationModel) -> bool {
+    operation.response.encrypted
+        || operation.arguments.iter().any(|argument| {
+            matches!(&argument.kind, ArgumentKind::Payload(payload) if payload.encrypted)
+        })
+}
+
 pub(crate) fn generate_service_method(model: &ServiceModel) -> TokenStream {
     if !cfg!(feature = "macros_test_util_feature") {
         return TokenStream::new();
@@ -57,25 +74,41 @@ pub(crate) fn generate_service_method(model: &ServiceModel) -> TokenStream {
         .map(|operation| {
             let subject = &operation.subject.pattern;
             let endpoint = metadata::operation_type(model, operation);
-            quote! {
-                if #nats_micro::subject_matches(#subject, request.subject()) {
-                    return #nats_micro::testing::dispatch::<#state, #endpoint>(
-                        state,
-                        request,
-                    )
-                    .await;
+            if operation_is_encrypted(operation) {
+                quote! {
+                    if #nats_micro::subject_matches(#subject, request.subject()) {
+                        return #nats_micro::testing::dispatch_encrypted::<#state, #endpoint>(
+                            state,
+                            keypair,
+                            request,
+                        )
+                        .await;
+                    }
+                }
+            } else {
+                quote! {
+                    if #nats_micro::subject_matches(#subject, request.subject()) {
+                        return #nats_micro::testing::dispatch::<#state, #endpoint>(
+                            state,
+                            request,
+                        )
+                        .await;
+                    }
                 }
             }
         });
+    let encryption_parameter = cfg!(feature = "macros_encryption_feature")
+        .then(|| quote!(keypair: Option<&'__request #nats_micro::ServiceKeyPair>,));
 
     quote! {
-        fn dispatch_local(
+        fn dispatch_local<'__request>(
             self,
-            state: &#state,
+            state: &'__request #state,
+            #encryption_parameter
             request: #nats_micro::testing::LocalRequest,
         ) -> impl ::std::future::Future<
             Output = #nats_micro::testing::LocalDispatch
-        > + Send + '_ {
+        > + Send + '__request {
             async move {
                 #(#routes)*
                 #nats_micro::testing::LocalDispatch::NotMatched(request)

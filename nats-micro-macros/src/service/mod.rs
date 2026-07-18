@@ -10,6 +10,7 @@ mod contract;
 mod dispatch;
 mod local;
 mod metadata;
+mod napi;
 mod parse;
 mod startup;
 mod validate;
@@ -122,6 +123,7 @@ fn expand_result(args: TokenStream, input: TokenStream) -> syn::Result<TokenStre
     let client = client::generate(&model);
     let local = local::generate(&model);
     let contract = contract::generate(&model);
+    let napi = napi::generate(&model);
     let startup = startup::generate(&model);
 
     Ok(quote! {
@@ -135,6 +137,7 @@ fn expand_result(args: TokenStream, input: TokenStream) -> syn::Result<TokenStre
         #client
         #local
         #contract
+        #napi
         #startup
     })
 }

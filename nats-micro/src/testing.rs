@@ -100,9 +100,13 @@ pub enum LocalConsumerDispatch {
 }
 
 pub trait LocalServiceSet<S>: Send + Sync + 'static {
+    #[cfg(feature = "encryption")]
+    fn requires_encryption(&self) -> bool;
+
     fn dispatch<'a>(
         &'a self,
         state: &'a S,
+        #[cfg(feature = "encryption")] keypair: Option<&'a crate::ServiceKeyPair>,
         request: LocalRequest,
     ) -> impl Future<Output = LocalDispatch> + Send + 'a;
 }
@@ -111,7 +115,17 @@ impl<S> LocalServiceSet<S> for Nil
 where
     S: Send + Sync + 'static,
 {
-    async fn dispatch<'a>(&'a self, _state: &'a S, request: LocalRequest) -> LocalDispatch {
+    #[cfg(feature = "encryption")]
+    fn requires_encryption(&self) -> bool {
+        false
+    }
+
+    async fn dispatch<'a>(
+        &'a self,
+        _state: &'a S,
+        #[cfg(feature = "encryption")] _keypair: Option<&'a crate::ServiceKeyPair>,
+        request: LocalRequest,
+    ) -> LocalDispatch {
         LocalDispatch::NotMatched(request)
     }
 }
@@ -122,10 +136,42 @@ where
     Head: Service<S>,
     Tail: LocalServiceSet<S>,
 {
-    async fn dispatch<'a>(&'a self, state: &'a S, request: LocalRequest) -> LocalDispatch {
-        match self.head.dispatch_local(state, request).await {
+    #[cfg(feature = "encryption")]
+    fn requires_encryption(&self) -> bool {
+        Head::SPEC
+            .operations
+            .iter()
+            .any(|operation| operation.request_encrypted || operation.response_encrypted)
+            || self.tail.requires_encryption()
+    }
+
+    async fn dispatch<'a>(
+        &'a self,
+        state: &'a S,
+        #[cfg(feature = "encryption")] keypair: Option<&'a crate::ServiceKeyPair>,
+        request: LocalRequest,
+    ) -> LocalDispatch {
+        match self
+            .head
+            .dispatch_local(
+                state,
+                #[cfg(feature = "encryption")]
+                keypair,
+                request,
+            )
+            .await
+        {
             LocalDispatch::Matched(response) => LocalDispatch::Matched(response),
-            LocalDispatch::NotMatched(request) => self.tail.dispatch(state, request).await,
+            LocalDispatch::NotMatched(request) => {
+                self.tail
+                    .dispatch(
+                        state,
+                        #[cfg(feature = "encryption")]
+                        keypair,
+                        request,
+                    )
+                    .await
+            }
         }
     }
 }
@@ -215,6 +261,8 @@ struct Inner<S, Services> {
     faults: FaultPlan,
     #[cfg(feature = "test-jetstream")]
     jetstream: JetStreamSimulator,
+    #[cfg(feature = "encryption")]
+    encryption: Option<Arc<crate::ServiceKeyPair>>,
 }
 
 pub struct LocalTransport<S, Services> {
@@ -247,7 +295,12 @@ where
             payload: request.payload,
             headers: request.headers,
         };
-        let dispatch = self.inner.services.dispatch(&self.inner.state, request);
+        let dispatch = self.inner.services.dispatch(
+            &self.inner.state,
+            #[cfg(feature = "encryption")]
+            self.inner.encryption.as_deref(),
+            request,
+        );
         let dispatch = if let Some(timeout) = timeout {
             tokio::time::timeout(timeout, dispatch)
                 .await
@@ -281,6 +334,8 @@ pub struct TestApp<S, Services = Nil> {
     faults: FaultPlan,
     #[cfg(feature = "test-jetstream")]
     jetstream: JetStreamConfig,
+    #[cfg(feature = "encryption")]
+    encryption: Option<Arc<crate::ServiceKeyPair>>,
 }
 
 impl<S> TestApp<S, Nil>
@@ -296,6 +351,8 @@ where
             faults: FaultPlan::default(),
             #[cfg(feature = "test-jetstream")]
             jetstream: JetStreamConfig::default(),
+            #[cfg(feature = "encryption")]
+            encryption: None,
         }
     }
 }
@@ -326,7 +383,16 @@ where
             faults: self.faults,
             #[cfg(feature = "test-jetstream")]
             jetstream: self.jetstream,
+            #[cfg(feature = "encryption")]
+            encryption: self.encryption,
         }
+    }
+
+    #[cfg(feature = "encryption")]
+    #[must_use]
+    pub fn encryption(mut self, keypair: crate::ServiceKeyPair) -> Self {
+        self.encryption = Some(Arc::new(keypair));
+        self
     }
 
     #[cfg(feature = "test-jetstream")]
@@ -344,11 +410,18 @@ where
     {
         crate::validate_service_set::<S, Services>(&self.services)
             .expect("test application service validation failed");
+        #[cfg(feature = "encryption")]
+        assert!(
+            !self.services.requires_encryption() || self.encryption.is_some(),
+            "test application declares encrypted operations but has no encryption key"
+        );
         let inner = Arc::new(Inner {
             state: self.state,
             services: self.services,
             events: self.events,
             faults: self.faults,
+            #[cfg(feature = "encryption")]
+            encryption: self.encryption,
         });
         TestHarness {
             transport: LocalTransport { inner },
@@ -363,6 +436,11 @@ where
     {
         crate::validate_service_set::<S, Services>(&self.services)
             .expect("test application service validation failed");
+        #[cfg(feature = "encryption")]
+        assert!(
+            !self.services.requires_encryption() || self.encryption.is_some(),
+            "test application declares encrypted operations but has no encryption key"
+        );
         let jetstream = JetStreamSimulator::new(self.jetstream, self.events.clone());
         self.services
             .register_consumers(&jetstream)
@@ -373,6 +451,8 @@ where
             events: self.events,
             faults: self.faults,
             jetstream,
+            #[cfg(feature = "encryption")]
+            encryption: self.encryption,
         });
         TestHarness {
             transport: LocalTransport { inner },
@@ -395,6 +475,24 @@ where
         ServiceType: Service<S>,
     {
         ServiceType::client(self.transport.clone())
+    }
+
+    #[cfg(feature = "encryption")]
+    #[must_use]
+    pub fn encrypted_client<ServiceType>(&self) -> ServiceType::Client<LocalTransport<S, Services>>
+    where
+        ServiceType: crate::EncryptedService<S>,
+    {
+        let keypair = self
+            .transport
+            .inner
+            .encryption
+            .as_deref()
+            .expect("encrypted test client requires a TestApp encryption key");
+        ServiceType::encrypted_client(
+            self.transport.clone(),
+            crate::ServiceRecipient::from_bytes(keypair.public_key_bytes()),
+        )
     }
 
     #[must_use]
@@ -534,7 +632,11 @@ where
     S: Send + Sync + 'static,
     E: RequestEndpoint<S>,
 {
-    let response = match E::call(state, request.view()).await {
+    response_to_local_dispatch(E::call(state, request.view()).await)
+}
+
+fn response_to_local_dispatch(response: crate::DispatchResult) -> LocalDispatch {
+    let response = match response {
         Ok(Response::Empty) => ClientResponse {
             payload: Bytes::new(),
             headers: None,
@@ -553,6 +655,28 @@ where
         },
     };
     LocalDispatch::Matched(Ok(response))
+}
+
+#[cfg(feature = "encryption")]
+pub async fn dispatch_encrypted<S, E>(
+    state: &S,
+    keypair: Option<&crate::ServiceKeyPair>,
+    request: LocalRequest,
+) -> LocalDispatch
+where
+    S: Send + Sync + 'static,
+    E: crate::EncryptedRequestEndpoint<S>,
+{
+    let response = if let Some(keypair) = keypair {
+        E::call(state, keypair, request.view()).await
+    } else {
+        Err(crate::ErrorReply::framework(
+            crate::FrameworkError::NoEncryptionKey,
+            "test application has no encryption key",
+            request.view().request_id().existing(),
+        ))
+    };
+    response_to_local_dispatch(response)
 }
 
 #[cfg(feature = "test-jetstream")]

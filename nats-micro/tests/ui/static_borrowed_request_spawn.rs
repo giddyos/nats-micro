@@ -9,6 +9,8 @@ struct InvalidEndpoint;
 
 impl RequestEndpoint<()> for InvalidEndpoint {
     const SPEC: OperationSpec = OperationSpec {
+        service_name: "static-runtime",
+        service_version: "1.0.0",
         rust_name: "invalid",
         kind: OperationKind::Request,
         subject: "invalid.borrow",
@@ -16,6 +18,8 @@ impl RequestEndpoint<()> for InvalidEndpoint {
         queue_group: None,
         request_codec: Codec::Raw,
         response_codec: Codec::Empty,
+        request_encrypted: false,
+        response_encrypted: false,
         request_type: Some("&[u8]"),
         response_type: None,
         error_type: None,

@@ -1,0 +1,13 @@
+error: `Encrypted<T>` must be the outer payload wrapper (or inside `Option`)
+ --> tests/ui/v6_nested_encryption_wrapper.rs:6:28
+  |
+6 |     async fn secret(input: Json<Encrypted<String>>) -> String {
+  |                            ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `Json`
+ --> tests/ui/v6_nested_encryption_wrapper.rs:1:18
+  |
+1 | use nats_micro::{Json, service};
+  |                  ^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default

@@ -11,10 +11,15 @@ pub enum Profile {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct TelemetryConfig {
     pub json_logs: bool,
     pub opentelemetry: bool,
     pub verbose_startup: bool,
+    pub counters: bool,
+    pub gauges: bool,
+    pub histograms: bool,
+    pub tracing: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +84,10 @@ impl AppConfig {
                     json_logs: true,
                     opentelemetry: true,
                     verbose_startup: false,
+                    counters: true,
+                    gauges: true,
+                    histograms: true,
+                    tracing: true,
                 },
             },
             Profile::MaximumThroughput => Self {
@@ -87,7 +96,7 @@ impl AppConfig {
                 shutdown_drain_timeout: Duration::from_secs(15),
                 startup_timeout: Duration::from_secs(30),
                 worker_failure: WorkerFailurePolicy::ShutdownApp,
-                handler_panic: HandlerPanicPolicy::FailWorker,
+                handler_panic: HandlerPanicPolicy::Propagate,
                 generate_missing_request_ids: false,
                 telemetry: TelemetryConfig::default(),
             },

@@ -83,6 +83,8 @@ mod auth;
 mod client;
 pub mod codec;
 mod consumer;
+mod contract;
+mod deployment;
 #[cfg(feature = "encryption")]
 pub mod encryption;
 mod error;
@@ -102,8 +104,11 @@ mod spec;
 mod state;
 mod state_ref;
 pub mod subject;
+#[cfg(feature = "telemetry")]
+mod telemetry;
 #[cfg(feature = "test-util")]
 pub mod testing;
+mod trace;
 mod utils;
 
 pub use anyhow;
@@ -113,6 +118,8 @@ pub use thiserror::Error;
 pub use thiserror::Error as ThisError;
 pub use tokio;
 
+#[cfg(feature = "encryption")]
+pub use app::EncryptedService;
 pub use app::{
     App, AppConfig, ConnectionConfig, Cons, HandlerPanicPolicy, NatsApp, NatsAppConfig, Nil,
     Profile, RunStartupHook, RunningApp, Runtime, Service, ServiceSet, ServiceSetValidator,
@@ -130,6 +137,14 @@ pub type NatsConsumerConfig = async_nats::jetstream::consumer::push::Config;
 pub use auth::{Auth, AuthError, FromAuthRequest, FromRequestMeta};
 pub use codec::{decode_json, decode_proto, decode_text, encode_json, encode_proto};
 pub use consumer::{ConsumerAction, ConsumerDefinition, ConsumerHandler, ConsumerHandlerFn};
+pub use contract::{
+    ContractConsumer, ContractDocument, ContractOperation, ContractParam, ContractService,
+    ContractValidationError,
+};
+pub use deployment::{
+    ConsumerDeployment, DeploymentFormat, DeploymentMetadata, DeploymentOptions,
+    EndpointDeployment, EnvironmentVariable, ReadinessConfiguration, SecretPlaceholder,
+};
 pub use error::{
     ClientError, ClientTransportError, FromNatsErrorResponse, IntoNatsError, NatsError,
     NatsErrorResponse, ServiceErrorMatch,
@@ -138,6 +153,8 @@ pub use extractors::{
     FromPayload, FromRequest, FromSubjectParam, IntoPayloadInner, Json, Payload, Proto,
     RequestId as OwnedRequestId, State, Subject, SubjectParam,
 };
+#[cfg(feature = "encryption")]
+pub use handler::EncryptedRequestEndpoint;
 pub use handler::{
     DispatchResult, HandlerFn, RequestContext, RequestEndpoint, SubscriptionHandler,
 };
@@ -159,16 +176,20 @@ pub use serde;
 pub use serde_json;
 pub use service::{
     ConsumerInfo, EndpointDefinition, EndpointDescriptor, EndpointInfo, LocalService, NatsService,
-    OperationMarker, ParamInfo, PayloadEncoding, PayloadMeta, PublishOperation, ResponseEncoding,
-    ResponseMeta, ServiceContract, ServiceDefinition, ServiceMetadata, StaticService,
+    OperationMarker, OwnedServiceContract, ParamInfo, PayloadEncoding, PayloadMeta,
+    PublishOperation, ResponseEncoding, ResponseMeta, ServiceDefinition, ServiceMetadata,
+    StaticService,
 };
 pub use shutdown_signal::{ShutdownSignal, ShutdownState};
 pub use spec::{
-    AuthPolicy, Codec, ConsumerSpec, OperationKind, OperationSpec, ParamSpec, ServiceSpec,
+    AuthPolicy, Codec, ConsumerSpec, OperationKind, OperationSpec, ParamSpec, ServiceContract,
+    ServiceSpec,
 };
 pub use state::StateMap;
 pub use state_ref::{FromAppState, StateRef};
 pub use subject::{FromSubject, push_subject_param, segment, subject_matches, subject_param_len};
+#[cfg(feature = "telemetry")]
+pub use telemetry::{MetricEvent, MetricName, TelemetryLayer};
 
 pub use client::{
     AuthOptions, BytesDecoder, ClientBuildError, ClientCallOptions, ClientRequest, ClientResponse,
@@ -178,13 +199,15 @@ pub use client::{
     ResponseDecoder, Subject as ClientSubject, TextDecoder, VecDecoder, X_CLIENT_VERSION_HEADER,
     connect, merge_headers,
 };
+#[cfg(feature = "encryption")]
+pub use client::{EncryptedPublishCall, EncryptedRequestCall};
 
 pub type Result<T> = anyhow::Result<T>;
 
 #[cfg(feature = "encryption")]
 pub use encryption::{
-    BuiltRequest, Encrypted, EncryptionError, EphemeralContext, RequestBuilder, ServiceKeyPair,
-    ServiceRecipient, decrypt_headers as encrypted_headers_decrypt,
+    BuiltRequest, Encrypted, EncryptedRequest, EncryptionError, EphemeralContext, RequestBuilder,
+    ServiceKeyPair, ServiceRecipient, decrypt_headers as encrypted_headers_decrypt,
 };
 
 pub use bytes::Bytes;

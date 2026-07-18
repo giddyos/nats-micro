@@ -12,8 +12,8 @@ pub use crate::handler::{HandlerFn, RequestContext};
 pub use crate::request::{Header, Headers as OwnedHeaders, NatsRequest};
 pub use crate::response::{IntoNatsResponse, IntoServiceError, NatsResponse, Response};
 pub use crate::service::{
-    ConsumerInfo, EndpointDefinition, EndpointDescriptor, EndpointInfo, NatsService, ParamInfo,
-    PayloadEncoding, PayloadMeta, ResponseEncoding, ResponseMeta, ServiceContract,
+    ConsumerInfo, EndpointDefinition, EndpointDescriptor, EndpointInfo, NatsService,
+    OwnedServiceContract, ParamInfo, PayloadEncoding, PayloadMeta, ResponseEncoding, ResponseMeta,
     ServiceDefinition, ServiceMetadata,
 };
 pub use crate::spec::AuthPolicy;
@@ -24,7 +24,7 @@ pub use crate::testing::{LiveTestApp, LiveTestHarness};
 pub use crate::testing::{TestApp, TestHarness};
 pub use crate::{
     App, AppConfig, ClientBuildError, ClientTransport, ConnectionConfig, HandlerPanicPolicy,
-    NatsApp, NatsAppConfig, NatsTransport, Profile, Result, RunningApp, Service,
+    NatsApp, NatsAppConfig, NatsTransport, Profile, Result, RunningApp, Service, ServiceContract,
     WorkerFailurePolicy,
 };
 pub use crate::{Body, Headers, Request, RequestId, RequestMeta, StateRef, Text};
@@ -42,6 +42,9 @@ pub use crate::{
 
 #[cfg(feature = "napi")]
 pub use crate::{napi, napi_derive};
+
+#[cfg(feature = "telemetry")]
+pub use crate::{MetricEvent, MetricName, TelemetryLayer};
 
 #[cfg(feature = "napi")]
 pub use nats_micro_macros::object;

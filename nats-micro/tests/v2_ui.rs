@@ -24,9 +24,16 @@ fn v2_service_macro_validation() {
 
     #[cfg(feature = "napi")]
     tests.compile_fail("tests/ui/v2_unsupported_napi_type.rs");
+    #[cfg(feature = "napi")]
+    tests.pass("tests/ui/v6_napi_generated_client.rs");
+    #[cfg(not(feature = "napi"))]
+    tests.compile_fail("tests/ui/v6_napi_requires_feature.rs");
 
     #[cfg(not(feature = "encryption"))]
     tests.compile_fail("tests/ui/v2_encryption_without_feature.rs");
+    #[cfg(not(feature = "encryption"))]
+    tests.compile_fail("tests/ui/v6_encrypted_response_without_feature.rs");
+    tests.compile_fail("tests/ui/v6_nested_encryption_wrapper.rs");
     #[cfg(not(feature = "test-util"))]
     tests.compile_fail("tests/ui/v4_test_requires_feature.rs");
     #[cfg(not(feature = "live-test"))]

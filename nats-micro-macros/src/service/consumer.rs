@@ -15,7 +15,7 @@ pub(crate) fn generate(model: &ServiceModel) -> TokenStream {
         .filter(|operation| operation.kind == OperationKind::Consumer)
         .map(|operation| {
             let operation_type = metadata::operation_type(model, operation);
-            let spec = metadata::consumer_spec(operation);
+            let spec = metadata::consumer_spec(operation, &model.args.name, &model.args.version);
             let bindings = dispatch::argument_bindings(model, operation);
             let call = dispatch::handler_call(model, operation);
             let ok_type = &operation.response.ok_type;

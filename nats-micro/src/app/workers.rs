@@ -1,5 +1,8 @@
+#![cfg_attr(not(feature = "telemetry"), allow(unused_variables))]
+
 use std::sync::Arc;
 
+use crate::trace::{debug, error, info};
 use async_nats::{
     jetstream::{self, AckKind},
     service::{self, endpoint},
@@ -11,7 +14,6 @@ use tokio::{
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info};
 
 use crate::{
     consumer::ConsumerDefinition,
@@ -31,7 +33,7 @@ fn handler_panic_result(
     err: &tokio::task::JoinError,
 ) -> Option<anyhow::Error> {
     match policy {
-        HandlerPanicPolicy::FailWorker => Some(anyhow::anyhow!(
+        HandlerPanicPolicy::FailWorker | HandlerPanicPolicy::Propagate => Some(anyhow::anyhow!(
             "{worker_kind} handler task panicked: {err}"
         )),
         HandlerPanicPolicy::LogAndContinue => None,

@@ -23,7 +23,7 @@ fn generate_operation(model: &ServiceModel, operation: &OperationModel) -> Token
     let nats_micro = nats_micro_path();
     let operation_type = metadata::operation_type(model, operation);
     let state_type = &model.state_type;
-    let spec = metadata::operation_spec(operation);
+    let spec = metadata::operation_spec(operation, &model.args.name, &model.args.version);
     let attrs = conditional_attrs(&operation.method);
 
     match operation.kind {
@@ -38,19 +38,55 @@ fn generate_operation(model: &ServiceModel, operation: &OperationModel) -> Token
         },
         OperationKind::Request => {
             let body = request_body(model, operation);
-            quote! {
-                #(#attrs)*
-                #[doc(hidden)]
-                pub struct #operation_type;
+            let encrypted = operation.response.encrypted
+                || operation.arguments.iter().any(|argument| {
+                    matches!(&argument.kind, ArgumentKind::Payload(payload) if payload.encrypted)
+                });
+            if encrypted {
+                let encrypt_response = if operation.response.encrypted {
+                    quote!(__encrypted_request.encrypt_response(__response))
+                } else {
+                    quote!(Ok(__response))
+                };
+                quote! {
+                    #(#attrs)*
+                    #[doc(hidden)]
+                    pub struct #operation_type;
 
-                impl #nats_micro::RequestEndpoint<#state_type> for #operation_type {
-                    const SPEC: #nats_micro::OperationSpec = #spec;
+                    impl #nats_micro::EncryptedRequestEndpoint<#state_type> for #operation_type {
+                        const SPEC: #nats_micro::OperationSpec = #spec;
 
-                    async fn call<'__request>(
-                        state: &'__request #state_type,
-                        request: #nats_micro::Request<'__request>,
-                    ) -> #nats_micro::DispatchResult {
-                        #body
+                        async fn call<'__request>(
+                            state: &'__request #state_type,
+                            keypair: &'__request #nats_micro::ServiceKeyPair,
+                            request: #nats_micro::Request<'__request>,
+                        ) -> #nats_micro::DispatchResult {
+                            let __encrypted_request = #nats_micro::EncryptedRequest::prepare(
+                                keypair,
+                                request,
+                                Self::SPEC.request_encrypted,
+                            )?;
+                            let request = __encrypted_request.request();
+                            let __response = (async { #body }).await?;
+                            #encrypt_response
+                        }
+                    }
+                }
+            } else {
+                quote! {
+                    #(#attrs)*
+                    #[doc(hidden)]
+                    pub struct #operation_type;
+
+                    impl #nats_micro::RequestEndpoint<#state_type> for #operation_type {
+                        const SPEC: #nats_micro::OperationSpec = #spec;
+
+                        async fn call<'__request>(
+                            state: &'__request #state_type,
+                            request: #nats_micro::Request<'__request>,
+                        ) -> #nats_micro::DispatchResult {
+                            #body
+                        }
                     }
                 }
             }
@@ -216,16 +252,23 @@ fn request_body(model: &ServiceModel, operation: &OperationModel) -> TokenStream
 fn encode_response(operation: &OperationModel) -> TokenStream {
     let nats_micro = nats_micro_path();
     let response = &operation.response;
-    let encode = encode_value(&response.ok_type, response.codec, response.wrapper);
+    let encode = encode_value(&response.wire_type, response.codec, response.wrapper);
+    let unwrap_encrypted = response
+        .encrypted
+        .then(|| quote!(let __response = __response.0;));
     if response.optional {
         quote! {
             let Some(__response) = __response else {
                 return Ok(#nats_micro::Response::optional_none());
             };
+            #unwrap_encrypted
             #encode
         }
     } else {
-        encode
+        quote! {
+            #unwrap_encrypted
+            #encode
+        }
     }
 }
 
@@ -267,7 +310,7 @@ fn encode_value(ok_type: &Type, codec: WireCodec, wrapper: Wrapper) -> TokenStre
 fn payload_decode(ty: &Type, payload: &PayloadModel) -> TokenStream {
     let nats_micro = nats_micro_path();
     let value_type = payload.decoded_type.as_ref();
-    match payload.wrapper {
+    let decoded = match payload.wrapper {
         Wrapper::Body => quote!(#nats_micro::Body(request.body())),
         Wrapper::Text => quote!(#nats_micro::Text(#nats_micro::decode_text(&request)?)),
         Wrapper::Json => {
@@ -296,6 +339,11 @@ fn payload_decode(ty: &Type, payload: &PayloadModel) -> TokenStream {
             }
         }
         Wrapper::Response => quote!(request),
+    };
+    if payload.encrypted {
+        quote!(#nats_micro::Encrypted(#decoded))
+    } else {
+        decoded
     }
 }
 

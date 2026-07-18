@@ -15,9 +15,24 @@ pub(crate) fn generate(model: &ServiceModel) -> TokenStream {
         .filter_map(|operation| {
             let operation_type = metadata::operation_type(model, operation);
             match operation.kind {
-                OperationKind::Request => Some(quote! {
-                    runtime.spawn_request::<#operation_type>().await?;
-                }),
+                OperationKind::Request => {
+                    let encrypted = operation.response.encrypted
+                        || operation.arguments.iter().any(|argument| {
+                            matches!(
+                                &argument.kind,
+                                super::ArgumentKind::Payload(payload) if payload.encrypted
+                            )
+                        });
+                    if encrypted {
+                        Some(quote! {
+                            runtime.spawn_encrypted_request::<#operation_type>().await?;
+                        })
+                    } else {
+                        Some(quote! {
+                            runtime.spawn_request::<#operation_type>().await?;
+                        })
+                    }
+                }
                 OperationKind::Subscribe => Some(quote! {
                     runtime.spawn_subscription::<#operation_type>().await?;
                 }),
@@ -29,6 +44,34 @@ pub(crate) fn generate(model: &ServiceModel) -> TokenStream {
         })
         .collect::<Vec<_>>();
     let client = quote::format_ident!("{}Client", service_ident);
+    let encrypted = model
+        .methods
+        .iter()
+        .filter_map(MethodModel::operation)
+        .any(|operation| {
+            operation.response.encrypted
+                || operation.arguments.iter().any(|argument| {
+                    matches!(
+                        &argument.kind,
+                        super::ArgumentKind::Payload(payload) if payload.encrypted
+                    )
+                })
+        });
+    let encrypted_service = encrypted.then(|| {
+        quote! {
+            impl #nats_micro::EncryptedService<#state_type> for #service_ident {
+                fn encrypted_client<T>(
+                    transport: T,
+                    recipient: #nats_micro::ServiceRecipient,
+                ) -> Self::Client<T>
+                where
+                    T: #nats_micro::ClientTransport,
+                {
+                    #client::new(transport).with_recipient(recipient)
+                }
+            }
+        }
+    });
     let local_dispatch = super::local::generate_service_method(model);
     let local_consumer_dispatch = super::local::generate_consumer_service_method(model);
 
@@ -65,5 +108,7 @@ pub(crate) fn generate(model: &ServiceModel) -> TokenStream {
             #local_dispatch
             #local_consumer_dispatch
         }
+
+        #encrypted_service
     }
 }

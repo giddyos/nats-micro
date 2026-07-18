@@ -1,3 +1,5 @@
+#![cfg_attr(not(feature = "telemetry"), allow(unused_variables))]
+
 use std::{future::Future, sync::Arc};
 
 use anyhow::Context;
@@ -17,6 +19,10 @@ pub struct App<S, Services = Nil, Hook = NoStartupHook> {
     connection: ConnectionConfig,
     connected_client: Option<crate::NatsClient>,
     shutdown_hook: Option<ShutdownHook>,
+    #[cfg(feature = "encryption")]
+    encryption: Option<Arc<crate::ServiceKeyPair>>,
+    #[cfg(feature = "telemetry")]
+    telemetry_layer: Option<Arc<dyn crate::TelemetryLayer>>,
 }
 
 #[doc(hidden)]
@@ -67,6 +73,10 @@ where
             connection: ConnectionConfig::from_env(),
             connected_client: None,
             shutdown_hook: None,
+            #[cfg(feature = "encryption")]
+            encryption: None,
+            #[cfg(feature = "telemetry")]
+            telemetry_layer: None,
         }
     }
 }
@@ -85,6 +95,10 @@ where
             connection: ConnectionConfig::from_env(),
             connected_client: None,
             shutdown_hook: None,
+            #[cfg(feature = "encryption")]
+            encryption: None,
+            #[cfg(feature = "telemetry")]
+            telemetry_layer: None,
         }
     }
 }
@@ -109,6 +123,10 @@ where
             connection: self.connection,
             connected_client: self.connected_client,
             shutdown_hook: self.shutdown_hook,
+            #[cfg(feature = "encryption")]
+            encryption: self.encryption,
+            #[cfg(feature = "telemetry")]
+            telemetry_layer: self.telemetry_layer,
         }
     }
 
@@ -137,6 +155,30 @@ where
         self
     }
 
+    #[cfg(feature = "encryption")]
+    #[must_use]
+    pub fn encryption(mut self, keypair: crate::ServiceKeyPair) -> Self {
+        self.encryption = Some(Arc::new(keypair));
+        self
+    }
+
+    /// Installs the optional metrics/tracing layer used by static workers.
+    #[cfg(feature = "telemetry")]
+    #[must_use]
+    pub fn telemetry_layer<L>(mut self, layer: L) -> Self
+    where
+        L: crate::TelemetryLayer,
+    {
+        self.telemetry_layer = Some(Arc::new(layer));
+        self
+    }
+
+    #[cfg(all(feature = "telemetry", feature = "live-test"))]
+    pub(crate) fn telemetry_layer_arc(mut self, layer: Arc<dyn crate::TelemetryLayer>) -> Self {
+        self.telemetry_layer = Some(layer);
+        self
+    }
+
     #[must_use]
     pub fn startup_hook<NewHook>(self, hook: NewHook) -> App<S, Services, NewHook>
     where
@@ -150,6 +192,10 @@ where
             connection: self.connection,
             connected_client: self.connected_client,
             shutdown_hook: self.shutdown_hook,
+            #[cfg(feature = "encryption")]
+            encryption: self.encryption,
+            #[cfg(feature = "telemetry")]
+            telemetry_layer: self.telemetry_layer,
         }
     }
 
@@ -177,11 +223,24 @@ where
         let client = if let Some(client) = self.connected_client {
             client
         } else {
-            crate::connect(self.connection.server, self.connection.options)
-                .await?
-                .client
+            #[cfg(feature = "telemetry")]
+            let connected = crate::client::connect_with_telemetry(
+                self.connection.server,
+                self.connection.options,
+                self.telemetry_layer.as_ref().map(|layer| {
+                    crate::telemetry::Telemetry::new(Arc::clone(layer), self.config.telemetry)
+                }),
+            )
+            .await?;
+            #[cfg(not(feature = "telemetry"))]
+            let connected = crate::connect(self.connection.server, self.connection.options).await?;
+            connected.client
         };
         let mut runtime = Runtime::new(client, Arc::clone(&self.state), self.config.clone());
+        #[cfg(feature = "encryption")]
+        runtime.set_encryption_key(self.encryption);
+        #[cfg(feature = "telemetry")]
+        runtime.set_telemetry_layer(self.telemetry_layer);
         runtime.set_shutdown_hook(self.shutdown_hook);
         let startup_hook = tokio::time::timeout(
             self.config.startup_timeout,
@@ -192,7 +251,7 @@ where
         .and_then(std::convert::identity);
         if let Err(error) = startup_hook {
             if let Err(cleanup_error) = runtime.shutdown_after_failed_start().await {
-                tracing::error!(%cleanup_error, "failed to clean up after startup hook failure");
+                crate::trace::error!(%cleanup_error, "failed to clean up after startup hook failure");
             }
             return Err(error);
         }
@@ -206,7 +265,7 @@ where
         .and_then(std::convert::identity);
         if let Err(error) = service_start {
             if let Err(cleanup_error) = runtime.shutdown_after_failed_start().await {
-                tracing::error!(%cleanup_error, "failed to clean up after service startup failure");
+                crate::trace::error!(%cleanup_error, "failed to clean up after service startup failure");
             }
             return Err(error);
         }

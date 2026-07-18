@@ -1,7 +1,7 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// The transport behavior implemented by an operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OperationKind {
     Request,
@@ -11,7 +11,7 @@ pub enum OperationKind {
 }
 
 /// The wire codec used by an operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Codec {
     Json,
@@ -22,7 +22,7 @@ pub enum Codec {
 }
 
 /// The authentication requirement attached to an operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthPolicy {
     None,
@@ -48,6 +48,10 @@ pub struct ParamSpec {
 /// Compile-time metadata for one service operation.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct OperationSpec {
+    #[serde(skip)]
+    pub service_name: &'static str,
+    #[serde(skip)]
+    pub service_version: &'static str,
     pub rust_name: &'static str,
     pub kind: OperationKind,
     pub subject: &'static str,
@@ -55,6 +59,8 @@ pub struct OperationSpec {
     pub queue_group: Option<&'static str>,
     pub request_codec: Codec,
     pub response_codec: Codec,
+    pub request_encrypted: bool,
+    pub response_encrypted: bool,
     pub request_type: Option<&'static str>,
     pub response_type: Option<&'static str>,
     pub error_type: Option<&'static str>,
@@ -66,6 +72,10 @@ pub struct OperationSpec {
 /// Compile-time metadata for one `JetStream` consumer.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct ConsumerSpec {
+    #[serde(skip)]
+    pub service_name: &'static str,
+    #[serde(skip)]
+    pub service_version: &'static str,
     pub rust_name: &'static str,
     pub stream: &'static str,
     pub durable: &'static str,
@@ -87,6 +97,26 @@ pub struct ServiceSpec {
     pub consumers: &'static [ConsumerSpec],
 }
 
+/// An allocation-free view of a generated service contract.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct ServiceContract<'a> {
+    pub service: &'a ServiceSpec,
+}
+
+impl<'a> ServiceContract<'a> {
+    /// Returns the service's statically allocated operation metadata.
+    #[must_use]
+    pub const fn operations(self) -> &'a [OperationSpec] {
+        self.service.operations
+    }
+
+    /// Returns the service's statically allocated consumer metadata.
+    #[must_use]
+    pub const fn consumers(self) -> &'a [ConsumerSpec] {
+        self.service.consumers
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -99,6 +129,8 @@ mod tests {
         rust_type: "&str",
     }];
     const OPERATIONS: &[OperationSpec] = &[OperationSpec {
+        service_name: "users",
+        service_version: "2.0.0",
         rust_name: "find_user",
         kind: OperationKind::Request,
         subject: "users.v1.users.*",
@@ -106,6 +138,8 @@ mod tests {
         queue_group: Some("users"),
         request_codec: Codec::Raw,
         response_codec: Codec::Utf8,
+        request_encrypted: false,
+        response_encrypted: false,
         request_type: Some("&[u8]"),
         response_type: Some("&str"),
         error_type: None,
@@ -114,6 +148,8 @@ mod tests {
         params: PARAMS,
     }];
     const CONSUMERS: &[ConsumerSpec] = &[ConsumerSpec {
+        service_name: "users",
+        service_version: "2.0.0",
         rust_name: "project_user",
         stream: "USERS",
         durable: "users-projector",

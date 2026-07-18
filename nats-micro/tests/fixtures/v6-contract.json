@@ -1,0 +1,45 @@
+{
+  "service": {
+    "name": "users",
+    "version": "2.3.4",
+    "description": "User service",
+    "prefix": "api",
+    "operations": [
+      {
+        "rust_name": "get",
+        "kind": "request",
+        "subject": "api.v2.users.*",
+        "subject_template": "api.v2.users.{id}",
+        "queue_group": "users-v2",
+        "request_codec": "empty",
+        "response_codec": "json",
+        "request_encrypted": false,
+        "response_encrypted": false,
+        "request_type": null,
+        "response_type": "User",
+        "error_type": "UserError",
+        "auth": "required",
+        "concurrency": 64,
+        "params": [
+          {
+            "name": "id",
+            "segment": 3,
+            "rust_type": "& str"
+          }
+        ]
+      }
+    ],
+    "consumers": [
+      {
+        "rust_name": "project",
+        "stream": "USERS",
+        "durable": "users-projector",
+        "filter_subject": "users.events.>",
+        "concurrency": 8,
+        "ack_wait_ms": 30000,
+        "max_deliver": 5,
+        "backoff_ms": [100, 1000]
+      }
+    ]
+  }
+}

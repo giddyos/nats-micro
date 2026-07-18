@@ -29,11 +29,12 @@ pub trait Service<S>: Copy + Send + Sync + 'static {
     ) -> impl Future<Output = Result<(), crate::StartError>> + Send;
 
     #[cfg(feature = "test-util")]
-    fn dispatch_local(
+    fn dispatch_local<'a>(
         self,
-        state: &S,
+        state: &'a S,
+        #[cfg(feature = "encryption")] keypair: Option<&'a crate::ServiceKeyPair>,
         request: crate::testing::LocalRequest,
-    ) -> impl Future<Output = crate::testing::LocalDispatch> + Send + '_;
+    ) -> impl Future<Output = crate::testing::LocalDispatch> + Send + 'a;
 
     #[cfg(feature = "test-jetstream")]
     fn dispatch_consumer_local<'a>(
@@ -42,6 +43,13 @@ pub trait Service<S>: Copy + Send + Sync + 'static {
         durable: &'a str,
         request: crate::testing::LocalRequest,
     ) -> impl Future<Output = crate::testing::LocalConsumerDispatch> + Send + 'a;
+}
+
+#[cfg(feature = "encryption")]
+pub trait EncryptedService<S>: Service<S> {
+    fn encrypted_client<T>(transport: T, recipient: crate::ServiceRecipient) -> Self::Client<T>
+    where
+        T: crate::ClientTransport;
 }
 
 /// Recursive startup and validation for a type-level service list.

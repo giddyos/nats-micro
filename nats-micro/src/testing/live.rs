@@ -37,15 +37,25 @@ pub struct LiveTestApp<S = (), Services = Nil> {
     state: S,
     services: Services,
     jetstream: bool,
+    config: crate::AppConfig,
+    #[cfg(feature = "encryption")]
+    encryption: Option<crate::ServiceKeyPair>,
+    #[cfg(feature = "telemetry")]
+    telemetry_layer: Option<std::sync::Arc<dyn crate::TelemetryLayer>>,
 }
 
 impl LiveTestApp<(), Nil> {
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             state: (),
             services: Nil,
             jetstream: false,
+            config: crate::AppConfig::for_profile(crate::Profile::Test),
+            #[cfg(feature = "encryption")]
+            encryption: None,
+            #[cfg(feature = "telemetry")]
+            telemetry_layer: None,
         }
     }
 }
@@ -69,6 +79,11 @@ where
             state,
             services: Nil,
             jetstream: self.jetstream,
+            config: self.config,
+            #[cfg(feature = "encryption")]
+            encryption: self.encryption,
+            #[cfg(feature = "telemetry")]
+            telemetry_layer: self.telemetry_layer,
         }
     }
 }
@@ -84,6 +99,29 @@ where
     }
 
     #[must_use]
+    pub fn config(mut self, config: crate::AppConfig) -> Self {
+        self.config = config;
+        self
+    }
+
+    #[cfg(feature = "telemetry")]
+    #[must_use]
+    pub fn telemetry_layer<L>(mut self, layer: L) -> Self
+    where
+        L: crate::TelemetryLayer,
+    {
+        self.telemetry_layer = Some(std::sync::Arc::new(layer));
+        self
+    }
+
+    #[cfg(feature = "encryption")]
+    #[must_use]
+    pub fn encryption(mut self, keypair: crate::ServiceKeyPair) -> Self {
+        self.encryption = Some(keypair);
+        self
+    }
+
+    #[must_use]
     pub fn serve<New>(self, service: New) -> LiveTestApp<S, Cons<New, Services>>
     where
         New: Service<S>,
@@ -95,6 +133,11 @@ where
                 tail: self.services,
             },
             jetstream: self.jetstream,
+            config: self.config,
+            #[cfg(feature = "encryption")]
+            encryption: self.encryption,
+            #[cfg(feature = "telemetry")]
+            telemetry_layer: self.telemetry_layer,
         }
     }
 
@@ -123,10 +166,23 @@ where
             }
         }
 
-        let running = App::from_service_set(self.state, self.services)
-            .with_client(client.clone())
-            .start()
-            .await?;
+        let app = App::from_service_set(self.state, self.services)
+            .config(self.config)
+            .connection(crate::ConnectionConfig::new(server_url.clone()));
+        #[cfg(feature = "telemetry")]
+        let app = if let Some(layer) = self.telemetry_layer {
+            app.telemetry_layer_arc(layer)
+        } else {
+            app
+        };
+        #[cfg(feature = "encryption")]
+        let (app, recipient) = if let Some(keypair) = self.encryption {
+            let recipient = crate::ServiceRecipient::from_bytes(keypair.public_key_bytes());
+            (app.encryption(keypair), Some(recipient))
+        } else {
+            (app, None)
+        };
+        let running = app.start().await?;
         running.ready().await?;
 
         Ok(LiveTestHarness {
@@ -137,6 +193,8 @@ where
             server_url,
             state: std::marker::PhantomData,
             services: std::marker::PhantomData,
+            #[cfg(feature = "encryption")]
+            recipient,
         })
     }
 }
@@ -149,6 +207,8 @@ pub struct LiveTestHarness<S, Services> {
     server_url: String,
     state: std::marker::PhantomData<fn() -> S>,
     services: std::marker::PhantomData<fn() -> Services>,
+    #[cfg(feature = "encryption")]
+    recipient: Option<crate::ServiceRecipient>,
 }
 
 impl<S, Services> LiveTestHarness<S, Services>
@@ -161,6 +221,20 @@ where
         ServiceType: Service<S>,
     {
         ServiceType::client(self.transport.clone())
+    }
+
+    #[cfg(feature = "encryption")]
+    #[must_use]
+    pub fn encrypted_client<ServiceType>(&self) -> ServiceType::Client<NatsTransport>
+    where
+        ServiceType: crate::EncryptedService<S>,
+    {
+        ServiceType::encrypted_client(
+            self.transport.clone(),
+            self.recipient
+                .clone()
+                .expect("encrypted live client requires a LiveTestApp encryption key"),
+        )
     }
 
     #[must_use]
@@ -314,7 +388,7 @@ mod tests {
     fn live_timeout_accepts_documented_units() {
         assert_eq!(parse_duration("250ms"), Some(Duration::from_millis(250)));
         assert_eq!(parse_duration("30s"), Some(Duration::from_secs(30)));
-        assert_eq!(parse_duration("2m"), Some(Duration::from_secs(120)));
+        assert_eq!(parse_duration("2m"), Some(Duration::from_mins(2)));
         assert_eq!(parse_duration("7"), Some(Duration::from_secs(7)));
         assert_eq!(parse_duration("invalid"), None);
     }

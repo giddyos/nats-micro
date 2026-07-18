@@ -22,6 +22,8 @@ pub enum HandlerPanicPolicy {
     #[default]
     FailWorker,
     LogAndContinue,
+    /// Lets panics unwind the worker task without a recovery policy.
+    Propagate,
 }
 
 #[derive(Debug, Clone)]
