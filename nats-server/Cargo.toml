@@ -22,6 +22,6 @@ tokio-retry = { workspace = true }
 workspace_root = { workspace = true }
 
 [dev-dependencies]
-async-nats = { workspace = true }
+async-nats = { workspace = true, features = ["jetstream"] }
 tokio = { workspace = true, features = ["full"] }
 futures-util = { workspace = true }

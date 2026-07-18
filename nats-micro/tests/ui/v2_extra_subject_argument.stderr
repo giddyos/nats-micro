@@ -1,0 +1,5 @@
+error: service operations may have at most one payload argument
+  --> tests/ui/v2_extra_subject_argument.rs:11:57
+   |
+11 |     async fn get(user_id: &str, input: Input, order_id: u64) {
+   |                                                         ^^^

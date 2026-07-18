@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.0.0
+
+- Replaced dynamic handler registration, boxed endpoint futures, owned request
+  contexts, and type-indexed state with static generated dispatch over borrowed
+  request views.
+- Added type-level applications, transport-generic generated clients,
+  no-server full-wire testing, deterministic JetStream simulation, and managed
+  live NATS testing.
+- Added static contracts and deployment metadata, optional encryption, N-API,
+  and telemetry integrations, plus allocation and performance verification.
+- Removed the v1 public API and compatibility paths. This release is a breaking
+  rewrite.
+
 ## 1.0.0
 
 - Added dependency facade coverage for downstream crates using `async-nats`,

@@ -225,4 +225,18 @@ fn static_worker_sources_exclude_dynamic_hot_path_primitives() {
             "state projection contains prohibited `{prohibited}`"
         );
     }
+
+    let primary_api = [
+        include_str!("../src/lib.rs"),
+        include_str!("../src/prelude.rs"),
+        include_str!("../src/extractors.rs"),
+        include_str!("../src/service.rs"),
+    ]
+    .concat();
+    for prohibited in ["Payload<T>", "IntoPayloadInner", "build_subject"] {
+        assert!(
+            !primary_api.contains(prohibited),
+            "primary v2 API still exposes removed `{prohibited}`"
+        );
+    }
 }

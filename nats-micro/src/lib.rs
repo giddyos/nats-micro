@@ -91,7 +91,7 @@ pub use error::{
     ClientError, ClientTransportError, FromNatsErrorResponse, IntoNatsError, NatsError,
     NatsErrorResponse, ServiceErrorMatch,
 };
-pub use extractors::{IntoPayloadInner, Json, Payload, Proto};
+pub use extractors::{Json, Proto};
 #[cfg(feature = "encryption")]
 pub use handler::EncryptedRequestEndpoint;
 pub use handler::{DispatchResult, RequestEndpoint, SubscriptionHandler};
@@ -102,7 +102,7 @@ pub use napi;
 pub use napi_derive;
 pub use request::{Body, Headers, Request, RequestId, RequestMeta, Text};
 pub use response::{ErrorReply, IntoServiceError, PRESENT_HEADER, Response};
-pub use service::{LocalService, OperationMarker, PublishOperation, StaticService, build_subject};
+pub use service::{LocalService, OperationMarker, PublishOperation, StaticService};
 pub use shutdown_signal::ShutdownState;
 pub use spec::{
     AuthPolicy, Codec, ConsumerSpec, OperationKind, OperationSpec, ParamSpec, ServiceContract,

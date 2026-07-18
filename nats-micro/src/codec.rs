@@ -1,5 +1,5 @@
 #[cfg(any(feature = "json", feature = "protobuf"))]
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 #[cfg(feature = "json")]
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +16,23 @@ impl std::io::Write for JsonSize {
         Ok(bytes.len())
     }
 
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(feature = "json")]
+struct JsonBytes<'a>(&'a mut BytesMut);
+
+#[cfg(feature = "json")]
+impl std::io::Write for JsonBytes<'_> {
+    #[inline]
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    #[inline]
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
     }
@@ -61,15 +78,15 @@ where
             None,
         )
     })?;
-    let mut output = Vec::with_capacity(size.0);
-    serde_json::to_writer(&mut output, value).map_err(|error| {
+    let mut output = BytesMut::with_capacity(size.0);
+    serde_json::to_writer(JsonBytes(&mut output), value).map_err(|error| {
         ErrorReply::framework(
             FrameworkError::SerializationError,
             format!("failed to encode JSON response: {error}"),
             None,
         )
     })?;
-    Ok(Bytes::from(output))
+    Ok(output.freeze())
 }
 
 #[cfg(feature = "protobuf")]
@@ -93,7 +110,7 @@ pub fn encode_proto<T>(value: &T) -> Result<Bytes, ErrorReply>
 where
     T: prost::Message,
 {
-    let mut output = Vec::with_capacity(value.encoded_len());
+    let mut output = BytesMut::with_capacity(value.encoded_len());
     value.encode(&mut output).map_err(|error| {
         ErrorReply::framework(
             FrameworkError::SerializationError,
@@ -101,7 +118,7 @@ where
             None,
         )
     })?;
-    Ok(Bytes::from(output))
+    Ok(output.freeze())
 }
 
 #[cfg(all(test, feature = "json"))]

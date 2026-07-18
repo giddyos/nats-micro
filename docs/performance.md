@@ -45,14 +45,18 @@ Reproducible inspections:
 
 ```bash
 cargo llvm-lines -p nats-micro --lib --all-features
-cargo asm -p nats-micro --lib 'nats_micro::subject::subject_matches'
-cargo bloat -p nats-micro --release --no-default-features --features macros,client,json
-cargo bloat -p nats-micro --release --all-features
+cargo rustc -p nats-micro --release --lib -- --emit=asm
+rg 'subject_matches' target/release/deps/nats_micro-*.s
+cargo bloat -p nats-micro --release --example minimal \
+  --no-default-features --features macros,client,json
+cargo bloat -p nats-micro --release --example minimal --all-features
 ```
 
 Record both `cargo bloat` totals when accepting a release. The
 non-encryption core is the production-size baseline; encryption and N-API are
-explicit feature costs.
+explicit feature costs. `cargo asm` is also useful when its parser supports the
+active Rust toolchain and object format; direct `--emit=asm` remains the
+toolchain-native fallback.
 
 ## Miri
 
@@ -63,7 +67,7 @@ their lifetime-sensitive tests:
 rustup +nightly component add miri
 cargo +nightly miri setup
 cargo +nightly miri test -p nats-micro --lib --no-default-features
-cargo +nightly miri test -p nats-micro --test static_runtime
+cargo +nightly miri test -p nats-micro --test miri_local_router --features test-util
 ```
 
 The trybuild test `static_borrowed_request_spawn` separately proves that a
@@ -76,8 +80,8 @@ decoding:
 
 ```bash
 cargo install cargo-fuzz
-cargo fuzz --fuzz-dir fuzz run subject_matching
-cargo fuzz --fuzz-dir fuzz run error_decoding
+cargo +nightly fuzz run --fuzz-dir fuzz subject_matching
+cargo +nightly fuzz run --fuzz-dir fuzz error_decoding
 ```
 
 Before release, run each target with a time limit appropriate to CI or the
@@ -89,14 +93,27 @@ On 2026-07-18, the allocation target passed all five assertions, the full
 all-feature suite passed, and `cargo check --manifest-path fuzz/Cargo.toml`
 compiled both fuzz targets. Criterion `--quick` measured the historical v1 raw
 dispatch at 240.20–242.90 ns and the finalized v2 raw borrowed dispatch at
-46.493–46.555 ns on the same host, a conservative 5.1x speedup. The v2
-in-memory generated-client round trip measured 576.87–582.29 ns. These are
-comparison evidence, not absolute cross-machine thresholds.
+46.378–46.455 ns on the same host, a conservative 5.1x speedup. A full
+Criterion sample measured the direct-`BytesMut` in-memory generated-client
+round trip at 591.06–594.82 ns, versus 584.00–586.94 ns from the clean Phase 7
+baseline worktree. That is below the 5% regression budget. These are comparison
+evidence, not absolute cross-machine thresholds.
 The managed single-server live generated-client round trip measured
-93.888–98.002 µs.
+88.518–90.012 µs.
 
-The validation host did not have
-`cargo-llvm-lines`, `cargo-asm`, or `cargo-bloat` installed, and Miri was not
-available for its stable Apple Silicon toolchain. The commands above are the
-required follow-up probes on a release host with those tools installed; no
-size, assembly, or Miri result is inferred from tool absence.
+`cargo llvm-lines` reported 60,886 LLVM IR lines across 1,956 function copies.
+For the minimal production example, `cargo bloat` reported a 6.4 MiB binary
+with 2.8 MiB of `.text` for `macros,client,json`, and a 6.5 MiB binary with
+2.9 MiB of `.text` for all features. Direct assembly inspection of
+`subject_matches` showed a split/compare loop with `memcmp` for literal
+segments and no allocator calls. `cargo-asm` 0.1.16 could not parse a
+current-Rust Mach-O symbol alias, so the equivalent `rustc --emit=asm`
+artifact was used.
+
+Miri on nightly passed the no-default library suite and the generated-client
+local-router target. Tokio integration tests that construct an I/O-enabled
+runtime cannot execute under Miri on macOS because Miri does not implement the
+`kqueue` foreign call; no result for those tests is inferred from that tooling
+boundary. Both fuzz targets completed 10-second nightly/libFuzzer smoke runs
+without a crash (461,217 subject-matching executions and 404,401
+error-decoding executions).

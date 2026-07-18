@@ -2,8 +2,8 @@ pub use crate::{
     App, AppConfig, Auth, AuthError, AuthOptions, Body, Bytes, ClientBuildError, ClientError,
     ClientTransport, ConnectOptions, ConnectionConfig, Error, FromAppState, FromRequestMeta,
     FromSubject, HandlerPanicPolicy, Headers, IntoNatsError, IntoServiceError, Json, NatsError,
-    NatsErrorResponse, NatsTransport, Payload, Profile, Proto, Request, RequestId, RequestMeta,
-    Response, Service, ServiceContract, StateRef, Text, ThisError, WorkerFailurePolicy,
+    NatsErrorResponse, NatsTransport, Profile, Proto, Request, RequestId, RequestMeta, Response,
+    Service, ServiceContract, StateRef, Text, ThisError, WorkerFailurePolicy,
 };
 
 #[cfg(feature = "macros")]

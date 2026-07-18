@@ -6,6 +6,7 @@ fn v2_service_macro_validation() {
     tests.compile_fail("tests/ui/v2_invalid_subject.rs");
     tests.compile_fail("tests/ui/v2_duplicate_subjects.rs");
     tests.compile_fail("tests/ui/v2_missing_subject_argument.rs");
+    tests.compile_fail("tests/ui/v2_extra_subject_argument.rs");
     tests.compile_fail("tests/ui/v2_duplicate_placeholders.rs");
     tests.compile_fail("tests/ui/v2_multiple_payloads.rs");
     tests.compile_fail("tests/ui/v2_unsupported_payload.rs");
