@@ -32,8 +32,12 @@ fn generated_request_dispatch_is_static_and_borrowed() {
     assert!(expanded.contains("ServiceSpec"));
     assert!(expanded.contains("OperationSpec"));
     assert!(expanded.contains("UserServiceClient"));
-    assert!(expanded.contains("RunnableService < AppState >"));
-    assert!(expanded.contains("run_request_endpoint"));
+    assert!(expanded.contains("Service < AppState >"));
+    assert!(expanded.contains("spawn_request"));
+    assert!(expanded.contains("ClientTransport"));
+    assert!(expanded.contains("RequestCall"));
+    assert!(expanded.contains("ClientSubject :: Owned"));
+    assert!(expanded.contains("subject_param_len"));
     for prohibited in [
         "HandlerFn",
         "HandlerFuture",
@@ -93,4 +97,5 @@ fn ordinary_payloads_and_varied_returns_are_classified() {
     assert!(expanded.contains("decode_json"));
     assert!(expanded.contains("optional_none"));
     assert!(expanded.contains("IntoServiceError"));
+    assert!(expanded.contains("ClientSubject :: Static"));
 }

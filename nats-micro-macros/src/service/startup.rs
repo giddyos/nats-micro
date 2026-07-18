@@ -1,5 +1,5 @@
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 
 use super::{MethodModel, OperationKind, ServiceModel, metadata};
 use crate::util::nats_micro_path;
@@ -8,79 +8,54 @@ pub(crate) fn generate(model: &ServiceModel) -> TokenStream {
     let nats_micro = nats_micro_path();
     let service_ident = &model.service_ident;
     let state_type = &model.state_type;
-    let requests: Vec<_> = model
+    let starters = model
         .methods
         .iter()
         .filter_map(MethodModel::operation)
-        .filter(|operation| operation.kind == OperationKind::Request)
-        .collect();
-
-    let registrations = requests.iter().enumerate().map(|(index, operation)| {
-        let endpoint = format_ident!("__endpoint_{index}");
-        let operation_type = metadata::operation_type(model, operation);
-        quote! {
-            let mut __builder = __service
-                .endpoint_builder()
-                .name(<#operation_type as #nats_micro::RequestEndpoint<#state_type>>::SPEC.rust_name);
-            if let Some(queue) =
-                <#operation_type as #nats_micro::RequestEndpoint<#state_type>>::SPEC.queue_group
-            {
-                __builder = __builder.queue_group(queue);
-            }
-            let #endpoint = __builder
-                .add(<#operation_type as #nats_micro::RequestEndpoint<#state_type>>::SPEC.subject)
-                .await
-                .map_err(|error| #nats_micro::anyhow::anyhow!(error.to_string()))?;
-        }
-    });
-    let workers: Vec<_> = requests
-        .iter()
-        .enumerate()
-        .map(|(index, operation)| {
-            let endpoint = format_ident!("__endpoint_{index}");
+        .filter_map(|operation| {
             let operation_type = metadata::operation_type(model, operation);
-            quote! {
-                #nats_micro::runtime::run_request_endpoint::<#state_type, #operation_type>(
-                    ::std::sync::Arc::clone(&state),
-                    #endpoint,
-                    <#operation_type as #nats_micro::RequestEndpoint<#state_type>>::SPEC.concurrency,
-                    shutdown.clone(),
-                )
+            match operation.kind {
+                OperationKind::Request => Some(quote! {
+                    runtime.spawn_request::<#operation_type>().await?;
+                }),
+                OperationKind::Subscribe => Some(quote! {
+                    runtime.spawn_subscription::<#operation_type>().await?;
+                }),
+                OperationKind::Consumer => Some(quote! {
+                    runtime.spawn_consumer::<#operation_type>().await?;
+                }),
+                OperationKind::Publish => None,
             }
         })
-        .collect();
-
-    let drive = if workers.is_empty() {
-        quote! {
-            let mut shutdown = shutdown;
-            while !shutdown.borrow().is_requested() && shutdown.changed().await.is_ok() {}
-        }
-    } else {
-        quote! {
-            #nats_micro::tokio::try_join!(#(#workers),*)?;
-        }
-    };
+        .collect::<Vec<_>>();
+    let client = quote::format_ident!("{}Client", service_ident);
 
     quote! {
-        impl #nats_micro::RunnableService<#state_type> for #service_ident {
-            fn run_requests(
-                self,
-                state: ::std::sync::Arc<#state_type>,
-                client: #nats_micro::NatsClient,
-                shutdown: #nats_micro::tokio::sync::watch::Receiver<#nats_micro::ShutdownState>,
-            ) -> impl ::std::future::Future<Output = #nats_micro::anyhow::Result<()>> + Send {
-                async move {
-                    use #nats_micro::async_nats::service::ServiceExt as _;
+        impl #nats_micro::Service<#state_type> for #service_ident {
+            const SPEC: #nats_micro::ServiceSpec =
+                <Self as #nats_micro::StaticService<#state_type>>::SPEC;
 
-                    let __service = client
-                        .service_builder()
-                        .description(Self::SPEC.description)
-                        .start(Self::SPEC.name, Self::SPEC.version)
-                        .await
-                        .map_err(|error| #nats_micro::anyhow::anyhow!(error.to_string()))?;
-                    #(#registrations)*
-                    #drive
-                    drop(__service);
+            type Client<T>
+                = #client<T>
+            where
+                T: #nats_micro::ClientTransport;
+
+            fn client<T>(transport: T) -> Self::Client<T>
+            where
+                T: #nats_micro::ClientTransport,
+            {
+                #client::new(transport)
+            }
+
+            fn start(
+                self,
+                runtime: &mut #nats_micro::Runtime<#state_type>,
+            ) -> impl ::std::future::Future<
+                Output = ::std::result::Result<(), #nats_micro::StartError>
+            > + Send {
+                async move {
+                    runtime.start_service(Self::SPEC).await?;
+                    #(#starters)*
                     Ok(())
                 }
             }

@@ -21,7 +21,10 @@ pub(crate) fn generate(model: &ServiceModel) -> TokenStream {
                 &Self::SPEC
             }
 
-            pub fn contract_json() -> Result<String, #nats_micro::serde_json::Error> {
+            pub fn contract_json() -> ::std::result::Result<
+                String,
+                #nats_micro::serde_json::Error,
+            > {
                 #nats_micro::serde_json::to_string_pretty(&Self::SPEC)
             }
 

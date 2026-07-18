@@ -1,5 +1,16 @@
 use std::{fmt::Display, path::PathBuf, str::FromStr, time::Duration};
 
+mod transport;
+mod v2;
+
+pub use transport::{ClientRequest, ClientResponse, ClientTransport, NatsTransport, Subject};
+pub use v2::{
+    BytesDecoder, ClientBuildError, ClientResponseDecoder, EmptyDecoder, JsonDecoder,
+    OptionalBytesDecoder, OptionalJsonDecoder, OptionalProtoDecoder, OptionalTextDecoder,
+    OptionalVecDecoder, ProtoDecoder, PublishCall, RequestCall, ResponseDecoder, TextDecoder,
+    VecDecoder, merge_headers,
+};
+
 use bytes::Bytes;
 use nats_micro_shared::{FrameworkError, TransportError as SharedTransportError};
 

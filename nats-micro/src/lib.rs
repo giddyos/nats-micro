@@ -80,7 +80,6 @@
 
 mod app;
 mod auth;
-#[cfg(feature = "client")]
 mod client;
 pub mod codec;
 mod consumer;
@@ -102,7 +101,6 @@ mod shutdown_signal;
 mod spec;
 mod state;
 mod state_ref;
-mod static_app;
 pub mod subject;
 mod utils;
 
@@ -113,7 +111,12 @@ pub use thiserror::Error;
 pub use thiserror::Error as ThisError;
 pub use tokio;
 
-pub use app::{HandlerPanicPolicy, NatsApp, NatsAppConfig, WorkerFailurePolicy};
+pub use app::{
+    App, AppConfig, ConnectionConfig, Cons, HandlerPanicPolicy, NatsApp, NatsAppConfig, Nil,
+    Profile, RunStartupHook, RunningApp, Runtime, Service, ServiceSet, ServiceSetValidator,
+    StartError, TelemetryConfig, WorkerFailurePolicy, assert_services_compatible, str_eq,
+    validate_service_set,
+};
 pub use async_nats;
 pub use async_nats::jetstream::consumer::push::Config as ConsumerConfig;
 pub type NatsClient = async_nats::Client;
@@ -155,8 +158,7 @@ pub use serde_json;
 pub use service::{
     ConsumerInfo, EndpointDefinition, EndpointDescriptor, EndpointInfo, LocalService, NatsService,
     OperationMarker, ParamInfo, PayloadEncoding, PayloadMeta, PublishOperation, ResponseEncoding,
-    ResponseMeta, RunnableService, ServiceContract, ServiceDefinition, ServiceMetadata,
-    StaticService,
+    ResponseMeta, ServiceContract, ServiceDefinition, ServiceMetadata, StaticService,
 };
 pub use shutdown_signal::{ShutdownSignal, ShutdownState};
 pub use spec::{
@@ -164,14 +166,18 @@ pub use spec::{
 };
 pub use state::StateMap;
 pub use state_ref::{FromAppState, StateRef};
-pub use static_app::App;
-pub use subject::{FromSubject, segment};
+pub use subject::{FromSubject, push_subject_param, segment, subject_param_len};
 
-#[cfg(feature = "client")]
 pub use client::{
-    AuthOptions, ClientCallOptions, ConnectOptions, ConnectedClient, X_CLIENT_VERSION_HEADER,
-    connect,
+    AuthOptions, BytesDecoder, ClientBuildError, ClientCallOptions, ClientRequest, ClientResponse,
+    ClientResponseDecoder, ClientTransport, ConnectOptions, ConnectedClient, EmptyDecoder,
+    JsonDecoder, NatsTransport, OptionalBytesDecoder, OptionalJsonDecoder, OptionalProtoDecoder,
+    OptionalTextDecoder, OptionalVecDecoder, ProtoDecoder, PublishCall, RequestCall,
+    ResponseDecoder, Subject as ClientSubject, TextDecoder, VecDecoder, X_CLIENT_VERSION_HEADER,
+    connect, merge_headers,
 };
+
+pub type Result<T> = anyhow::Result<T>;
 
 #[cfg(feature = "encryption")]
 pub use encryption::{

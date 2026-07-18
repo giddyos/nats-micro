@@ -1,3 +1,5 @@
+use std::fmt::{self, Write};
+
 /// Returns one dot-delimited subject segment without allocating.
 #[inline]
 #[must_use]
@@ -64,6 +66,29 @@ macro_rules! impl_from_subject {
 impl_from_subject!(
     u8, u16, u32, u64, u128, usize, i8, i16, i32, i64, i128, isize, f32, f64,
 );
+
+struct LengthWriter(usize);
+
+impl fmt::Write for LengthWriter {
+    fn write_str(&mut self, value: &str) -> fmt::Result {
+        self.0 += value.len();
+        Ok(())
+    }
+}
+
+/// Computes the formatted length of a dynamic subject segment without
+/// allocating.
+#[must_use]
+pub fn subject_param_len(value: &impl fmt::Display) -> usize {
+    let mut writer = LengthWriter(0);
+    let _ = write!(&mut writer, "{value}");
+    writer.0
+}
+
+/// Writes a dynamic subject segment into an exactly preallocated subject.
+pub fn push_subject_param(subject: &mut String, value: &impl fmt::Display) {
+    write!(subject, "{value}").expect("writing into String cannot fail");
+}
 
 #[cfg(test)]
 mod tests {

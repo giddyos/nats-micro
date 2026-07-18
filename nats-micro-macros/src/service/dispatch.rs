@@ -69,7 +69,7 @@ fn generate_operation(model: &ServiceModel, operation: &OperationModel) -> Token
                     async fn call<'__request>(
                         state: &'__request #state_type,
                         request: #nats_micro::Request<'__request>,
-                    ) -> Result<(), #nats_micro::ErrorReply> {
+                    ) -> ::std::result::Result<(), #nats_micro::ErrorReply> {
                         #bindings
                         let _ = #call;
                         Ok(())

@@ -1,9 +1,13 @@
 mod config;
 mod limits;
 mod prepare;
+mod services;
 mod shutdown;
 #[cfg(test)]
 mod tests;
+mod typed;
+mod typed_config;
+mod typed_runtime;
 mod workers;
 
 use std::{future::Future, sync::Arc};
@@ -37,6 +41,15 @@ use self::{
 };
 
 pub use self::config::{HandlerPanicPolicy, NatsAppConfig, WorkerFailurePolicy};
+pub use self::services::{
+    Cons, Nil, Service, ServiceSet, ServiceSetValidator, assert_services_compatible, str_eq,
+    validate_service_set,
+};
+#[doc(hidden)]
+pub use self::typed::RunStartupHook;
+pub use self::typed::{App, RunningApp};
+pub use self::typed_config::{AppConfig, ConnectionConfig, Profile, TelemetryConfig};
+pub use self::typed_runtime::{Runtime, StartError};
 pub use self::workers::success_headers;
 
 #[derive(Clone)]
@@ -216,6 +229,17 @@ impl NatsApp {
                             let result = match error {
                                 Some(error) => Err(anyhow::anyhow!("worker `{label}` failed: {error}")),
                                 None => Err(anyhow::anyhow!("worker `{label}` exited unexpectedly")),
+                            };
+                            break (result, true);
+                        }
+                        WorkerFailurePolicy::Restart { .. } => {
+                            let result = match error {
+                                Some(error) => Err(anyhow::anyhow!(
+                                    "legacy worker `{label}` failed: {error}"
+                                )),
+                                None => Err(anyhow::anyhow!(
+                                    "legacy worker `{label}` exited unexpectedly"
+                                )),
                             };
                             break (result, true);
                         }

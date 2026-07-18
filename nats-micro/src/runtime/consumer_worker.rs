@@ -12,8 +12,29 @@ use crate::{ConsumerAction, ConsumerHandler, Request, ShutdownState};
 /// message and application state are not cloned for dispatch.
 pub async fn run_consumer<S, C>(
     state: Arc<S>,
+    messages: jetstream::consumer::push::Messages,
+    concurrency: usize,
+    shutdown: watch::Receiver<ShutdownState>,
+) -> anyhow::Result<()>
+where
+    S: Send + Sync + 'static,
+    C: ConsumerHandler<S>,
+{
+    run_consumer_with_panic_policy::<S, C>(
+        state,
+        messages,
+        concurrency,
+        crate::HandlerPanicPolicy::FailWorker,
+        shutdown,
+    )
+    .await
+}
+
+pub async fn run_consumer_with_panic_policy<S, C>(
+    state: Arc<S>,
     mut messages: jetstream::consumer::push::Messages,
     concurrency: usize,
+    panic_policy: crate::HandlerPanicPolicy,
     mut shutdown: watch::Receiver<ShutdownState>,
 ) -> anyhow::Result<()>
 where
@@ -41,7 +62,7 @@ where
                 }
 
                 completed = in_flight.next(), if !in_flight.is_empty() => {
-                    handle_completion(completed)?;
+                    handle_completion(completed, panic_policy)?;
                 }
 
                 incoming = messages.next() => {
@@ -74,7 +95,7 @@ where
                 }
 
                 completed = in_flight.next(), if !in_flight.is_empty() => {
-                    handle_completion(completed)?;
+                    handle_completion(completed, panic_policy)?;
                 }
             }
         }
@@ -83,9 +104,14 @@ where
 
 fn handle_completion(
     completed: Option<Result<anyhow::Result<()>, Box<dyn std::any::Any + Send>>>,
+    panic_policy: crate::HandlerPanicPolicy,
 ) -> anyhow::Result<()> {
     match completed {
         Some(Ok(result)) => result,
+        Some(Err(_)) if panic_policy == crate::HandlerPanicPolicy::LogAndContinue => {
+            tracing::error!("consumer handler panicked; continuing by policy");
+            Ok(())
+        }
         Some(Err(_)) => Err(anyhow::anyhow!("consumer handler panicked")),
         None => Ok(()),
     }

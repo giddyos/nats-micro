@@ -56,6 +56,9 @@ pub(crate) fn build_model(args: ServiceArgs, input: TokenStream) -> syn::Result<
 
         let mut options = parse_operation_options(operation_attr)?;
         options.concurrency.get_or_insert(args.defaults.concurrency);
+        if options.timeout_ms.is_none() {
+            options.timeout_ms = args.defaults.timeout_ms;
+        }
         if options.queue.is_none() {
             options.queue.clone_from(&args.defaults.queue);
         }
@@ -254,6 +257,13 @@ impl Parse for OperationOptions {
                     "concurrency" | "concurrency_limit" => {
                         options.concurrency =
                             Some(input.parse::<LitInt>()?.base10_parse::<usize>()?);
+                    }
+                    "timeout" => {
+                        let value = input.parse::<LitStr>()?;
+                        options.timeout_ms = Some(super::args::parse_duration_ms(
+                            &value.value(),
+                            value.span(),
+                        )?);
                     }
                     "auth" => {
                         let value: Ident = input.parse()?;

@@ -44,6 +44,7 @@ async fn main() -> nats_micro::anyhow::Result<()> {
     App::new(ApplicationState {
         greeting: "Hello".to_owned(),
     })
+    .profile(Profile::Production)
     .serve(GreeterService)
     .run()
     .await

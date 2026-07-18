@@ -39,6 +39,7 @@ pub(crate) struct OperationOptions {
     pub subject: Option<String>,
     pub queue: Option<String>,
     pub concurrency: Option<usize>,
+    pub timeout_ms: Option<u64>,
     pub auth: Option<AuthIntent>,
     pub response: Option<Type>,
     pub stream: Option<String>,

@@ -1,0 +1,26 @@
+error[E0080]: evaluation panicked: duplicate request/publish/subscribe subject in application
+  --> tests/ui/v2_application_const_boundary.rs:15:1
+   |
+15 | / application! {
+16 | |     state: (),
+17 | |     profile: Test,
+18 | |     services: [One, Two],
+19 | | }
+   | |_^ evaluation of `_` failed inside this call
+   |
+note: inside `assert_services_compatible`
+  --> $RUST/core/src/panic.rs
+   |
+   |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+   |
+  ::: src/app/services.rs
+   |
+   | /             assert!(
+   | |                 !str_eq(
+   | |                     left.operations[left_index].subject,
+   | |                     right.operations[right_index].subject,
+   | |                 ),
+   | |                 "duplicate request/publish/subscribe subject in application"
+   | |             );
+   | |_____________- in this macro invocation

@@ -19,7 +19,8 @@ fn v2_service_macro_validation() {
     tests.compile_fail("tests/ui/v2_optional_auth_mismatch.rs");
     tests.compile_fail("tests/ui/v2_invalid_consumer_backoff.rs");
     tests.compile_fail("tests/ui/v2_zero_concurrency.rs");
-    tests.pass("tests/ui/v2_application_const_boundary.rs");
+    tests.compile_fail("tests/ui/v2_application_const_boundary.rs");
+    tests.pass("tests/ui/v3_fluent_startup_boundary.rs");
 
     #[cfg(feature = "napi")]
     tests.compile_fail("tests/ui/v2_unsupported_napi_type.rs");

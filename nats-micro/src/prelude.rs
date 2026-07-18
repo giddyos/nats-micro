@@ -18,11 +18,14 @@ pub use crate::service::{
 };
 pub use crate::spec::AuthPolicy;
 pub use crate::state::StateMap;
-pub use crate::{App, HandlerPanicPolicy, NatsApp, NatsAppConfig, WorkerFailurePolicy};
+pub use crate::{
+    App, AppConfig, ClientBuildError, ClientTransport, ConnectionConfig, HandlerPanicPolicy,
+    NatsApp, NatsAppConfig, NatsTransport, Profile, Result, RunningApp, Service,
+    WorkerFailurePolicy,
+};
 pub use crate::{Body, Headers, Request, RequestId, RequestMeta, StateRef, Text};
 pub use crate::{Error, ThisError};
 
-#[cfg(feature = "client")]
 pub use crate::{
     AuthOptions, ClientCallOptions, ConnectOptions, ConnectedClient, X_CLIENT_VERSION_HEADER,
 };
