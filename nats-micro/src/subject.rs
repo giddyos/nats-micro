@@ -90,9 +90,26 @@ pub fn push_subject_param(subject: &mut String, value: &impl fmt::Display) {
     write!(subject, "{value}").expect("writing into String cannot fail");
 }
 
+/// Matches a concrete subject against a static NATS wildcard pattern.
+#[must_use]
+pub fn subject_matches(pattern: &str, subject: &str) -> bool {
+    let mut pattern = pattern.split('.');
+    let mut subject = subject.split('.');
+
+    loop {
+        match (pattern.next(), subject.next()) {
+            (Some(">"), Some(_)) => return pattern.next().is_none(),
+            (Some("*"), Some(_)) => {}
+            (Some(expected), Some(actual)) if expected == actual => {}
+            (None, None) => return true,
+            _ => return false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{FromSubject, segment};
+    use super::{FromSubject, segment, subject_matches};
 
     #[test]
     fn extracts_segments_without_normalizing_the_subject() {
@@ -108,5 +125,15 @@ mod tests {
         assert_eq!(<&str>::from_subject("user-7").unwrap(), "user-7");
         assert_eq!(u64::from_subject("42").unwrap(), 42);
         assert!(u64::from_subject("nope").is_err());
+    }
+
+    #[test]
+    fn matches_static_and_wildcard_subjects() {
+        assert!(subject_matches("users.v1.get", "users.v1.get"));
+        assert!(subject_matches("users.v1.get.*", "users.v1.get.42"));
+        assert!(subject_matches("users.>", "users.v1.get.42"));
+        assert!(!subject_matches("users.>", "users"));
+        assert!(!subject_matches("users.v1.get.*", "users.v1.get"));
+        assert!(!subject_matches("users.v1.get", "users.v1.get.42"));
     }
 }

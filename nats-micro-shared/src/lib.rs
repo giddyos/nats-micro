@@ -90,6 +90,9 @@ define_error_code_enum! {
 define_error_code_enum! {
     pub enum TransportError {
         NatsRequestFailed => { code: "NATS_REQUEST_FAILED", status: 503 },
+        Timeout => { code: "TIMEOUT", status: 504 },
+        NoResponders => { code: "NO_RESPONDERS", status: 503 },
+        Disconnected => { code: "DISCONNECTED", status: 503 },
         StartupError => { code: "STARTUP_ERROR", status: 503 },
         TransportError => { code: "TRANSPORT_ERROR", status: 503 }
     }

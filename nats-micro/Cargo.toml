@@ -28,6 +28,13 @@ encryption = [
     "dep:zeroize",
     "dep:rand",
 ]
+test-util = [
+    "dep:nats-micro-testing",
+    "nats-micro-macros/macros_test_util_feature",
+    "tokio/test-util",
+]
+live-test = ["test-util", "dep:nats-server"]
+test-jetstream = ["test-util"]
 
 [dependencies]
 async-nats = { workspace = true, features = ["service", "jetstream", "kv"] }
@@ -71,6 +78,8 @@ napi = { workspace = true, optional = true, features = [
 napi-derive = { workspace = true, optional = true }
 heck = { workspace = true }
 nats-micro-shared = { workspace = true }
+nats-micro-testing = { workspace = true, optional = true }
+nats-server = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
@@ -81,6 +90,10 @@ nats-server = { workspace = true }
 [[bench]]
 name = "request_dispatch"
 harness = false
+
+[[example]]
+name = "in_memory"
+required-features = ["test-util"]
 
 [lints.clippy]
 complexity = { priority = -1, level = "deny" }

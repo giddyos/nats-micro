@@ -18,6 +18,8 @@ pub use crate::service::{
 };
 pub use crate::spec::AuthPolicy;
 pub use crate::state::StateMap;
+#[cfg(feature = "test-util")]
+pub use crate::testing::{TestApp, TestHarness};
 pub use crate::{
     App, AppConfig, ClientBuildError, ClientTransport, ConnectionConfig, HandlerPanicPolicy,
     NatsApp, NatsAppConfig, NatsTransport, Profile, Result, RunningApp, Service,

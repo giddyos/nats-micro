@@ -102,6 +102,8 @@ mod spec;
 mod state;
 mod state_ref;
 pub mod subject;
+#[cfg(feature = "test-util")]
+pub mod testing;
 mod utils;
 
 pub use anyhow;
@@ -166,7 +168,7 @@ pub use spec::{
 };
 pub use state::StateMap;
 pub use state_ref::{FromAppState, StateRef};
-pub use subject::{FromSubject, push_subject_param, segment, subject_param_len};
+pub use subject::{FromSubject, push_subject_param, segment, subject_matches, subject_param_len};
 
 pub use client::{
     AuthOptions, BytesDecoder, ClientBuildError, ClientCallOptions, ClientRequest, ClientResponse,

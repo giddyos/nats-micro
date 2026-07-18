@@ -16,6 +16,7 @@ proc-macro = true
 macros_client_feature = []
 macros_encryption_feature = []
 macros_napi_feature = ["macros_client_feature"]
+macros_test_util_feature = []
 
 [dependencies]
 darling = { workspace = true }

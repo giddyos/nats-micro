@@ -41,12 +41,12 @@ pub fn main(args: TokenStream, input: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn test(args: TokenStream, input: TokenStream) -> TokenStream {
-    test::expand(args.into(), &input.into()).into()
+    test::expand_test(args.into(), input.into()).into()
 }
 
 #[proc_macro_attribute]
 pub fn live_test(args: TokenStream, input: TokenStream) -> TokenStream {
-    test::expand(args.into(), &input.into()).into()
+    test::expand_live_test(args.into(), &input.into()).into()
 }
 
 #[proc_macro]

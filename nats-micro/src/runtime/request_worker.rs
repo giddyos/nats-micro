@@ -148,13 +148,6 @@ async fn respond_error(
     raw: &service::Request,
     error: ErrorReply,
 ) -> Result<(), async_nats::PublishError> {
-    let mut headers = async_nats::HeaderMap::new();
-    headers.insert("Nats-Service-Error", error.message.as_str());
-    headers.insert("Nats-Service-Error-Code", error.code.to_string());
-    headers.insert("Nats-Micro-Error-Kind", error.kind.as_ref());
-    headers.insert("Nats-Micro-Error-Format", "json-v1");
-    if let Some(request_id) = error.request_id.as_deref() {
-        headers.insert("x-request-id", request_id);
-    }
+    let headers = crate::response::service_error_headers(&error);
     raw.respond_with_headers(Ok(error.payload), headers).await
 }

@@ -1,0 +1,5 @@
+error: #[nats_micro::test] requires the `test-util` feature
+ --> tests/ui/v4_test_requires_feature.rs:2:1
+  |
+2 | async fn needs_test_util() {}
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

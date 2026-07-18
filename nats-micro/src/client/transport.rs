@@ -99,7 +99,13 @@ impl ClientTransport for NatsTransport {
             .client
             .send_request(subject, nats_request)
             .await
-            .map_err(|_| crate::TransportError::NatsRequestFailed)?;
+            .map_err(|error| match error.kind() {
+                async_nats::RequestErrorKind::TimedOut => crate::TransportError::Timeout,
+                async_nats::RequestErrorKind::NoResponders => crate::TransportError::NoResponders,
+                async_nats::RequestErrorKind::InvalidSubject
+                | async_nats::RequestErrorKind::MaxPayloadExceeded
+                | async_nats::RequestErrorKind::Other => crate::TransportError::NatsRequestFailed,
+            })?;
         Ok(ClientResponse {
             payload: response.payload,
             headers: response.headers,
@@ -117,12 +123,24 @@ impl ClientTransport for NatsTransport {
             self.client
                 .publish_with_headers(subject, headers, payload)
                 .await
-                .map_err(|_| crate::TransportError::TransportError)?;
+                .map_err(|error| match error.kind() {
+                    async_nats::PublishErrorKind::Send => crate::TransportError::Disconnected,
+                    async_nats::PublishErrorKind::InvalidSubject
+                    | async_nats::PublishErrorKind::MaxPayloadExceeded => {
+                        crate::TransportError::TransportError
+                    }
+                })?;
         } else {
             self.client
                 .publish(subject, payload)
                 .await
-                .map_err(|_| crate::TransportError::TransportError)?;
+                .map_err(|error| match error.kind() {
+                    async_nats::PublishErrorKind::Send => crate::TransportError::Disconnected,
+                    async_nats::PublishErrorKind::InvalidSubject
+                    | async_nats::PublishErrorKind::MaxPayloadExceeded => {
+                        crate::TransportError::TransportError
+                    }
+                })?;
         }
         Ok(())
     }

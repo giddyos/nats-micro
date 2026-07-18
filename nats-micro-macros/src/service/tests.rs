@@ -38,6 +38,12 @@ fn generated_request_dispatch_is_static_and_borrowed() {
     assert!(expanded.contains("RequestCall"));
     assert!(expanded.contains("ClientSubject :: Owned"));
     assert!(expanded.contains("subject_param_len"));
+    #[cfg(feature = "macros_test_util_feature")]
+    {
+        assert!(expanded.contains("testing :: dispatch"));
+        assert!(expanded.contains("subject_matches"));
+        assert!(expanded.contains("testing :: LocalDispatch :: NotMatched"));
+    }
     for prohibited in [
         "HandlerFn",
         "HandlerFuture",

@@ -160,6 +160,18 @@ impl ErrorReply {
     }
 }
 
+pub(crate) fn service_error_headers(error: &ErrorReply) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert("Nats-Service-Error", error.message.as_str());
+    headers.insert("Nats-Service-Error-Code", error.code.to_string());
+    headers.insert("Nats-Micro-Error-Kind", error.kind.as_ref());
+    headers.insert("Nats-Micro-Error-Format", "json-v1");
+    if let Some(request_id) = error.request_id.as_deref() {
+        headers.insert("x-request-id", request_id);
+    }
+    headers
+}
+
 /// Converts a typed service failure into the v2 response protocol.
 pub trait IntoServiceError {
     fn into_service_error(self, request_id: &crate::RequestId<'_>) -> ErrorReply;

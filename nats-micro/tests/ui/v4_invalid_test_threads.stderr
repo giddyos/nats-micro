@@ -1,0 +1,5 @@
+error: worker_threads requires `flavor = "multi_thread"`
+ --> tests/ui/v4_invalid_test_threads.rs:1:37
+  |
+1 | #[nats_micro::test(worker_threads = 2)]
+  |                                     ^
