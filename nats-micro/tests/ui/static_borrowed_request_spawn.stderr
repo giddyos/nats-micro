@@ -1,10 +1,10 @@
 error: lifetime may not live long enough
-  --> tests/ui/static_borrowed_request_spawn.rs:32:13
+  --> tests/ui/static_borrowed_request_spawn.rs:36:13
    |
-27 |       fn call<'a>(
+31 |       fn call<'a>(
    |               -- lifetime `'a` defined here
 ...
-32 | /             tokio::spawn(async move {
-33 | |                 use_after_request(request.body()).await;
-34 | |             });
+36 | /             tokio::spawn(async move {
+37 | |                 use_after_request(request.body()).await;
+38 | |             });
    | |______________^ argument requires that `'a` must outlive `'static`

@@ -6,7 +6,6 @@ fn v2_service_macro_validation() {
     tests.compile_fail("tests/ui/v2_invalid_subject.rs");
     tests.compile_fail("tests/ui/v2_duplicate_subjects.rs");
     tests.compile_fail("tests/ui/v2_missing_subject_argument.rs");
-    tests.compile_fail("tests/ui/v2_extra_subject_argument.rs");
     tests.compile_fail("tests/ui/v2_duplicate_placeholders.rs");
     tests.compile_fail("tests/ui/v2_multiple_payloads.rs");
     tests.compile_fail("tests/ui/v2_unsupported_payload.rs");
@@ -14,6 +13,7 @@ fn v2_service_macro_validation() {
     tests.compile_fail("tests/ui/v2_mutable_state.rs");
     tests.compile_fail("tests/ui/v2_non_send_future.rs");
     tests.compile_fail("tests/ui/v2_borrowed_response.rs");
+    #[cfg(feature = "protobuf")]
     tests.compile_fail("tests/ui/v2_wrong_protobuf_traits.rs");
     tests.compile_fail("tests/ui/v2_missing_required_auth.rs");
     tests.compile_fail("tests/ui/v2_optional_auth_mismatch.rs");

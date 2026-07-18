@@ -1,0 +1,30 @@
+[package]
+name = "nats-micro-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+nats-micro = { path = "../nats-micro", default-features = false }
+serde_json = "1"
+
+[[bin]]
+name = "subject_matching"
+path = "fuzz_targets/subject_matching.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "error_decoding"
+path = "fuzz_targets/error_decoding.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

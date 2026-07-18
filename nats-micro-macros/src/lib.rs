@@ -1,13 +1,11 @@
-#![allow(special_module_name)]
-
 use proc_macro::TokenStream;
 use syn::{DeriveInput, parse_macro_input};
 
 mod app_state;
 mod application;
-mod main;
 mod message;
 mod object;
+mod runtime_main;
 mod service;
 mod service_error;
 mod test;
@@ -36,7 +34,7 @@ pub fn app_state(input: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn main(args: TokenStream, input: TokenStream) -> TokenStream {
-    main::expand(args.into(), &input.into()).into()
+    runtime_main::expand(args.into(), &input.into()).into()
 }
 
 #[proc_macro_attribute]
@@ -58,15 +56,4 @@ pub fn application(input: TokenStream) -> TokenStream {
 pub fn object(_args: TokenStream, input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as syn::ItemStruct);
     object::expand_object(&input).into()
-}
-
-#[proc_macro_attribute]
-pub fn service_handlers(_args: TokenStream, input: TokenStream) -> TokenStream {
-    let input: proc_macro2::TokenStream = input.into();
-    let error = syn::Error::new_spanned(
-        &input,
-        "#[service_handlers] was removed in v2; place #[service(...)] on the impl block",
-    )
-    .to_compile_error();
-    quote::quote!(#error #input).into()
 }

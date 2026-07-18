@@ -7,10 +7,10 @@ use std::{
 };
 
 use nats_micro::{
-    __macros::into_handler_fn, AuthPolicy, Bytes, Codec, DispatchResult, NatsErrorResponse,
-    NatsRequest, OperationKind, OperationSpec, OwnedHeaders, Request, RequestContext,
-    RequestEndpoint, Response, StateMap,
+    AuthPolicy, Bytes, Codec, DispatchResult, OperationKind, OperationSpec, Request,
+    RequestEndpoint, Response,
 };
+use serde::Serialize;
 
 struct CountingAllocator;
 
@@ -64,10 +64,6 @@ fn count_allocations<T>(f: impl FnOnce() -> T) -> (T, usize) {
     (output, allocations)
 }
 
-async fn static_response() -> Result<&'static str, NatsErrorResponse> {
-    Ok("ok")
-}
-
 struct StaticEndpoint;
 
 impl RequestEndpoint<()> for StaticEndpoint {
@@ -99,38 +95,6 @@ impl RequestEndpoint<()> for StaticEndpoint {
 }
 
 #[test]
-fn v1_dynamic_raw_static_response_allocation_baseline() {
-    let state = StateMap::new();
-    let handler = into_handler_fn::<_, ()>(static_response);
-
-    let (response, allocations) = count_allocations(|| {
-        let context = RequestContext::new(
-            NatsRequest {
-                subject: "users.v1.users.lookup".to_owned(),
-                payload: Bytes::from_static(b"request"),
-                headers: OwnedHeaders::new(),
-                reply: Some("_INBOX.baseline".to_owned()),
-                request_id: "019b-baseline-request".to_owned(),
-            },
-            state.clone(),
-            Some("users.v1.users.lookup".to_owned()),
-        );
-        let mut future = handler.call(context);
-        let mut context = Context::from_waker(Waker::noop());
-        match future.as_mut().poll(&mut context) {
-            Poll::Ready(response) => response.expect("static response"),
-            Poll::Pending => panic!("baseline handler unexpectedly yielded"),
-        }
-    });
-
-    assert_eq!(response.payload, Bytes::from_static(b"ok"));
-    assert_eq!(
-        allocations, 6,
-        "update the recorded v1 baseline when the dynamic path changes"
-    );
-}
-
-#[test]
 fn raw_borrowed_static_response_has_zero_framework_allocations() {
     let state = ();
 
@@ -158,10 +122,64 @@ fn raw_borrowed_static_response_has_zero_framework_allocations() {
 }
 
 #[test]
+fn static_subject_and_state_access_have_zero_framework_allocations() {
+    struct State {
+        value: u64,
+    }
+    let state = State { value: 42 };
+
+    let ((subject, value), allocations) =
+        count_allocations(|| (StaticEndpoint::SPEC.subject, state.value));
+
+    assert_eq!(subject, "users.v2.users.lookup");
+    assert_eq!(value, 42);
+    assert_eq!(allocations, 0);
+}
+
+#[derive(Serialize)]
+struct JsonOutput<'a> {
+    name: &'a str,
+}
+
+#[test]
+fn json_response_serialization_uses_one_output_allocation() {
+    let _ = nats_micro::encode_json(&JsonOutput { name: "warmup" }).expect("warm JSON encoder");
+    let (encoded, allocations) = count_allocations(|| {
+        nats_micro::encode_json(&JsonOutput { name: "Ada" }).expect("encode JSON")
+    });
+
+    assert_eq!(encoded, br#"{"name":"Ada"}"#.as_slice());
+    assert_eq!(allocations, 1);
+}
+
+#[cfg(feature = "protobuf")]
+#[derive(Clone, PartialEq, nats_micro::prost::Message)]
+struct ProtoOutput {
+    #[prost(string, tag = "1")]
+    name: String,
+}
+
+#[cfg(feature = "protobuf")]
+#[test]
+fn protobuf_response_encoding_allocates_once_without_growth() {
+    let output = ProtoOutput {
+        name: "Ada".to_owned(),
+    };
+    let encoded_len = nats_micro::prost::Message::encoded_len(&output);
+    let _ = nats_micro::encode_proto(&output).expect("warm protobuf encoder");
+    let (encoded, allocations) =
+        count_allocations(|| nats_micro::encode_proto(&output).expect("encode protobuf"));
+
+    assert_eq!(encoded.len(), encoded_len);
+    assert_eq!(allocations, 1);
+}
+
+#[test]
 fn static_worker_sources_exclude_dynamic_hot_path_primitives() {
     let request_worker = include_str!("../src/runtime/request_worker.rs");
     let consumer_worker = include_str!("../src/runtime/consumer_worker.rs");
-    let sources = [request_worker, consumer_worker];
+    let subscription_worker = include_str!("../src/runtime/subscription_worker.rs");
+    let sources = [request_worker, consumer_worker, subscription_worker];
 
     for source in sources {
         for prohibited in [
@@ -183,5 +201,28 @@ fn static_worker_sources_exclude_dynamic_hot_path_primitives() {
         }
         assert!(source.contains("FuturesUnordered"));
         assert!(source.contains("in_flight.len() < concurrency"));
+    }
+
+    let generated_dispatch = include_str!("../../nats-micro-macros/src/service/dispatch.rs");
+    for prohibited in [
+        "Box < dyn Future",
+        "Box<dyn Future",
+        "request.body().clone",
+        "request.clone",
+        "tokio::spawn",
+        "StateMap",
+    ] {
+        assert!(
+            !generated_dispatch.contains(prohibited),
+            "generated dispatch contains prohibited `{prohibited}`"
+        );
+    }
+
+    let state_projection = include_str!("../src/state_ref.rs");
+    for prohibited in ["HashMap", "TypeId", "Any", "downcast", "Atomic", "Arc"] {
+        assert!(
+            !state_projection.contains(prohibited),
+            "state projection contains prohibited `{prohibited}`"
+        );
     }
 }

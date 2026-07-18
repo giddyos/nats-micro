@@ -145,12 +145,6 @@ pub(crate) fn classify_arguments(
                 optional,
             }
         } else {
-            if last_ident(&ty).as_deref() == Some("SubjectParam") {
-                return Err(syn::Error::new_spanned(
-                    &ty,
-                    "subject arguments are inferred by matching their name to a `{placeholder}`",
-                ));
-            }
             if matches!(
                 ty,
                 Type::BareFn(_)

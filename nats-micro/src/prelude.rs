@@ -1,38 +1,18 @@
-pub use crate::Bytes;
-pub use crate::ConsumerConfig;
-pub use crate::ShutdownSignal;
-pub use crate::auth::{Auth, AuthError, FromAuthRequest, FromRequestMeta};
-pub use crate::consumer::{ConsumerDefinition, ConsumerHandlerFn};
-pub use crate::error::{ClientError, IntoNatsError, NatsError, NatsErrorResponse};
-pub use crate::extractors::{
-    FromPayload, FromRequest, FromSubjectParam, IntoPayloadInner, Json, Payload, Proto,
-    RequestId as OwnedRequestId, State, Subject, SubjectParam,
+pub use crate::{
+    App, AppConfig, Auth, AuthError, AuthOptions, Body, Bytes, ClientBuildError, ClientError,
+    ClientTransport, ConnectOptions, ConnectionConfig, Error, FromAppState, FromRequestMeta,
+    FromSubject, HandlerPanicPolicy, Headers, IntoNatsError, IntoServiceError, Json, NatsError,
+    NatsErrorResponse, NatsTransport, Payload, Profile, Proto, Request, RequestId, RequestMeta,
+    Response, Service, ServiceContract, StateRef, Text, ThisError, WorkerFailurePolicy,
 };
-pub use crate::handler::{HandlerFn, RequestContext};
-pub use crate::request::{Header, Headers as OwnedHeaders, NatsRequest};
-pub use crate::response::{IntoNatsResponse, IntoServiceError, NatsResponse, Response};
-pub use crate::service::{
-    ConsumerInfo, EndpointDefinition, EndpointDescriptor, EndpointInfo, NatsService,
-    OwnedServiceContract, ParamInfo, PayloadEncoding, PayloadMeta, ResponseEncoding, ResponseMeta,
-    ServiceDefinition, ServiceMetadata,
-};
-pub use crate::spec::AuthPolicy;
-pub use crate::state::StateMap;
+
+#[cfg(feature = "macros")]
+pub use crate::{AppState, application, message, service, service_error};
+
 #[cfg(feature = "live-test")]
 pub use crate::testing::{LiveTestApp, LiveTestHarness};
 #[cfg(feature = "test-util")]
 pub use crate::testing::{TestApp, TestHarness};
-pub use crate::{
-    App, AppConfig, ClientBuildError, ClientTransport, ConnectionConfig, HandlerPanicPolicy,
-    NatsApp, NatsAppConfig, NatsTransport, Profile, Result, RunningApp, Service, ServiceContract,
-    WorkerFailurePolicy,
-};
-pub use crate::{Body, Headers, Request, RequestId, RequestMeta, StateRef, Text};
-pub use crate::{Error, ThisError};
-
-pub use crate::{
-    AuthOptions, ClientCallOptions, ConnectOptions, ConnectedClient, X_CLIENT_VERSION_HEADER,
-};
 
 #[cfg(feature = "encryption")]
 pub use crate::{
@@ -41,15 +21,9 @@ pub use crate::{
 };
 
 #[cfg(feature = "napi")]
-pub use crate::{napi, napi_derive};
+pub use crate::{napi, napi_derive, object};
 
 #[cfg(feature = "telemetry")]
 pub use crate::{MetricEvent, MetricName, TelemetryLayer};
 
-#[cfg(feature = "napi")]
-pub use nats_micro_macros::object;
-
 pub use crate::async_nats;
-pub use nats_micro_macros::{
-    AppState, application, live_test, message, service, service_error, service_handlers,
-};

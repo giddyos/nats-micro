@@ -1,4 +1,5 @@
 #![cfg(feature = "test-util")]
+#![cfg(feature = "protobuf")]
 
 use std::{
     alloc::{GlobalAlloc, Layout, System},

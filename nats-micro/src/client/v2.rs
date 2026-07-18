@@ -3,6 +3,7 @@ use std::{marker::PhantomData, str::FromStr, time::Duration};
 use async_nats::HeaderMap;
 use bytes::Bytes;
 use nats_micro_shared::{FrameworkError, TransportError};
+#[cfg(feature = "json")]
 use serde::de::DeserializeOwned;
 use thiserror::Error;
 
@@ -58,12 +59,16 @@ where
 }
 
 #[derive(Debug, Clone, Copy)]
+#[cfg(feature = "json")]
 pub struct JsonDecoder;
 #[derive(Debug, Clone, Copy)]
+#[cfg(feature = "json")]
 pub struct OptionalJsonDecoder;
 #[derive(Debug, Clone, Copy)]
+#[cfg(feature = "protobuf")]
 pub struct ProtoDecoder;
 #[derive(Debug, Clone, Copy)]
+#[cfg(feature = "protobuf")]
 pub struct OptionalProtoDecoder;
 #[derive(Debug, Clone, Copy)]
 pub struct TextDecoder;
@@ -139,6 +144,7 @@ where
     ))
 }
 
+#[cfg(feature = "json")]
 impl<R, E> ResponseDecoder<R, E> for JsonDecoder
 where
     R: DeserializeOwned,
@@ -150,6 +156,7 @@ where
     }
 }
 
+#[cfg(feature = "json")]
 impl<R, E> ResponseDecoder<Option<R>, E> for OptionalJsonDecoder
 where
     R: DeserializeOwned,
@@ -167,6 +174,7 @@ where
     }
 }
 
+#[cfg(feature = "protobuf")]
 impl<R, E> ResponseDecoder<R, E> for ProtoDecoder
 where
     R: prost::Message + Default,
@@ -178,6 +186,7 @@ where
     }
 }
 
+#[cfg(feature = "protobuf")]
 impl<R, E> ResponseDecoder<Option<R>, E> for OptionalProtoDecoder
 where
     R: prost::Message + Default,

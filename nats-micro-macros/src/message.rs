@@ -12,6 +12,12 @@ pub(crate) fn expand(args: TokenStream, input: TokenStream) -> TokenStream {
 }
 
 fn expand_result(args: TokenStream, input: TokenStream) -> syn::Result<TokenStream> {
+    if !cfg!(feature = "macros_json_feature") {
+        return Err(syn::Error::new_spanned(
+            &input,
+            "#[message] requires the `json` feature",
+        ));
+    }
     let mut serde_options = Vec::new();
     let mut serde_crate = nats_micro_serde_path();
     let options = Punctuated::<Meta, Token![,]>::parse_terminated.parse2(args)?;

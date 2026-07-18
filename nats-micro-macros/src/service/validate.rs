@@ -4,7 +4,8 @@ use quote::ToTokens;
 use syn::Type;
 
 use super::{
-    ArgumentKind, AuthIntent, OperationKind, OperationModel, ServiceModel, Wrapper, classify,
+    ArgumentKind, AuthIntent, OperationKind, OperationModel, ServiceModel, WireCodec, Wrapper,
+    classify,
 };
 
 pub(crate) fn validate_service(model: &ServiceModel) -> syn::Result<()> {
@@ -133,6 +134,7 @@ fn validate_operation(model: &ServiceModel, operation: &OperationModel) -> syn::
             | ArgumentKind::Payload(_) => {}
         }
         if let ArgumentKind::Payload(payload) = &argument.kind {
+            validate_codec(payload.codec, &argument.ty)?;
             if type_contains_encrypted(&argument.ty) && !payload.encrypted {
                 return Err(syn::Error::new_spanned(
                     &argument.ty,
@@ -149,6 +151,7 @@ fn validate_operation(model: &ServiceModel, operation: &OperationModel) -> syn::
     }
 
     validate_auth(model, operation)?;
+    validate_codec(operation.response.codec, &operation.response.ok_type)?;
     validate_response(operation)?;
     if type_contains_encrypted(&operation.response.ok_type) && !operation.response.encrypted {
         return Err(syn::Error::new_spanned(
@@ -182,6 +185,23 @@ fn validate_operation(model: &ServiceModel, operation: &OperationModel) -> syn::
     }
 
     Ok(())
+}
+
+fn validate_codec(codec: WireCodec, ty: &Type) -> syn::Result<()> {
+    match codec {
+        WireCodec::Json if !cfg!(feature = "macros_json_feature") => Err(syn::Error::new_spanned(
+            ty,
+            "JSON operations require the `json` feature",
+        )),
+        WireCodec::Protobuf if !cfg!(feature = "macros_protobuf_feature") => Err(
+            syn::Error::new_spanned(ty, "protobuf operations require the `protobuf` feature"),
+        ),
+        WireCodec::Json
+        | WireCodec::Protobuf
+        | WireCodec::Raw
+        | WireCodec::Utf8
+        | WireCodec::Empty => Ok(()),
+    }
 }
 
 fn validate_napi_model(model: &ServiceModel) -> syn::Result<()> {

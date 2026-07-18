@@ -6,4 +6,4 @@ if ! command -v nats-server >/dev/null 2>&1; then
   exit 1
 fi
 
-cargo test --workspace --all-features
+NATS_MICRO_REQUIRE_NATS_SERVER=1 cargo test -p nats-micro --all-features

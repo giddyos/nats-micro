@@ -3,7 +3,7 @@ use std::{future::Future, ops::Deref, sync::Arc};
 use nats_micro_shared::FrameworkError;
 use thiserror::Error;
 
-use crate::{error::NatsErrorResponse, handler::RequestContext};
+use crate::error::NatsErrorResponse;
 
 #[derive(Debug, Error, Clone)]
 pub enum AuthError {
@@ -42,12 +42,6 @@ impl crate::error::IntoNatsError for AuthError {
             .with_request_id(request_id),
         }
     }
-}
-
-pub trait FromAuthRequest: Sized + Send + Sync + 'static {
-    fn from_auth_request(
-        ctx: &RequestContext,
-    ) -> impl Future<Output = Result<Self, AuthError>> + Send;
 }
 
 /// Builds authentication claims from borrowed v2 request metadata.

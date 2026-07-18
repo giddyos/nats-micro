@@ -1,5 +1,5 @@
 #[cfg(feature = "telemetry")]
-pub(crate) use tracing::{debug, error, info, warn};
+pub(crate) use tracing::{debug, error, warn};
 
 #[cfg(not(feature = "telemetry"))]
 macro_rules! debug {
@@ -12,14 +12,9 @@ macro_rules! error {
 }
 
 #[cfg(not(feature = "telemetry"))]
-macro_rules! info {
-    ($($tokens:tt)*) => {};
-}
-
-#[cfg(not(feature = "telemetry"))]
 macro_rules! warn_noop {
     ($($tokens:tt)*) => {};
 }
 
 #[cfg(not(feature = "telemetry"))]
-pub(crate) use {debug, error, info, warn_noop as warn};
+pub(crate) use {debug, error, warn_noop as warn};

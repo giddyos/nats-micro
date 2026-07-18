@@ -609,6 +609,7 @@ impl TestJetStream {
             .publish(subject, &Bytes::from(serde_json::to_vec(value)?), None)
     }
 
+    #[cfg(feature = "protobuf")]
     pub async fn publish_proto<T>(&self, subject: &str, value: &T) -> anyhow::Result<()>
     where
         T: prost::Message,

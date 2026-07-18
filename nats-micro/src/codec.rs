@@ -1,8 +1,27 @@
-use bytes::{BufMut, Bytes, BytesMut};
+#[cfg(any(feature = "json", feature = "protobuf"))]
+use bytes::Bytes;
+#[cfg(feature = "json")]
 use serde::{Deserialize, Serialize};
 
 use crate::{ErrorReply, FrameworkError, Request};
 
+#[cfg(feature = "json")]
+#[derive(Default)]
+struct JsonSize(usize);
+
+#[cfg(feature = "json")]
+impl std::io::Write for JsonSize {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 = self.0.saturating_add(bytes.len());
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(feature = "json")]
 #[inline]
 pub fn decode_json<'de, T>(request: &'de Request<'de>) -> Result<T, ErrorReply>
 where
@@ -28,25 +47,32 @@ pub fn decode_text<'a>(request: &'a Request<'a>) -> Result<&'a str, ErrorReply> 
     })
 }
 
+#[cfg(feature = "json")]
 #[inline]
 pub fn encode_json<T>(value: &T) -> Result<Bytes, ErrorReply>
 where
     T: Serialize + ?Sized,
 {
-    let mut output = BytesMut::with_capacity(256);
-    {
-        let mut writer = (&mut output).writer();
-        serde_json::to_writer(&mut writer, value).map_err(|error| {
-            ErrorReply::framework(
-                FrameworkError::SerializationError,
-                format!("failed to encode JSON response: {error}"),
-                None,
-            )
-        })?;
-    }
-    Ok(output.freeze())
+    let mut size = JsonSize::default();
+    serde_json::to_writer(&mut size, value).map_err(|error| {
+        ErrorReply::framework(
+            FrameworkError::SerializationError,
+            format!("failed to size JSON response: {error}"),
+            None,
+        )
+    })?;
+    let mut output = Vec::with_capacity(size.0);
+    serde_json::to_writer(&mut output, value).map_err(|error| {
+        ErrorReply::framework(
+            FrameworkError::SerializationError,
+            format!("failed to encode JSON response: {error}"),
+            None,
+        )
+    })?;
+    Ok(Bytes::from(output))
 }
 
+#[cfg(feature = "protobuf")]
 #[inline]
 pub fn decode_proto<T>(request: &Request<'_>) -> Result<T, ErrorReply>
 where
@@ -61,12 +87,13 @@ where
     })
 }
 
+#[cfg(feature = "protobuf")]
 #[inline]
 pub fn encode_proto<T>(value: &T) -> Result<Bytes, ErrorReply>
 where
     T: prost::Message,
 {
-    let mut output = BytesMut::with_capacity(value.encoded_len());
+    let mut output = Vec::with_capacity(value.encoded_len());
     value.encode(&mut output).map_err(|error| {
         ErrorReply::framework(
             FrameworkError::SerializationError,
@@ -74,10 +101,10 @@ where
             None,
         )
     })?;
-    Ok(output.freeze())
+    Ok(Bytes::from(output))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "json"))]
 mod tests {
     use serde::{Deserialize, Serialize};
 

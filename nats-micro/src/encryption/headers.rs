@@ -4,7 +4,6 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use zeroize::Zeroizing;
 
 use super::{EncryptionError, ServiceKeyPair};
-use crate::request::Headers;
 
 pub(crate) const ENCRYPTED_HEADERS_NAME: &str = "x-encrypted-headers";
 pub(crate) const RESPONSE_PUB_KEY_NAME: &str = "x-ephemeral-pub-key";
@@ -34,12 +33,6 @@ pub(crate) fn is_reserved_encryption_header_name(key: &str) -> bool {
 #[doc(hidden)]
 pub trait HeaderLookup {
     fn get_str(&self, key: &str) -> Option<&str>;
-}
-
-impl HeaderLookup for Headers {
-    fn get_str(&self, key: &str) -> Option<&str> {
-        self.get(key).map(crate::request::Header::as_str)
-    }
 }
 
 impl HeaderLookup for crate::NatsHeaderMap {

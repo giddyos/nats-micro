@@ -1,3 +1,5 @@
+#![cfg(feature = "protobuf")]
+
 use std::{
     alloc::{GlobalAlloc, Layout, System},
     cell::Cell,
