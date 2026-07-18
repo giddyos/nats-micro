@@ -48,7 +48,7 @@ pub(super) fn shutdown_requested(
     changed: &Result<(), watch::error::RecvError>,
     shutdown_rx: &watch::Receiver<ShutdownState>,
 ) -> bool {
-    changed.is_err() || shutdown_rx.borrow().requested
+    changed.is_err() || shutdown_rx.borrow().is_requested()
 }
 
 pub(super) fn spawn_supervised_worker<Fut>(

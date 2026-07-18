@@ -1,6 +1,7 @@
 use std::{future::Future, pin::Pin, sync::Arc};
 
 use crate::{
+    ErrorReply, OperationSpec, Request, Response,
     error::{IntoNatsError, NatsErrorResponse},
     extractors::FromRequest,
     request::NatsRequest,
@@ -8,6 +9,28 @@ use crate::{
     shutdown_signal::ShutdownSignal,
     state::StateMap,
 };
+
+pub type DispatchResult = Result<Response, ErrorReply>;
+
+/// A concrete request endpoint used only through monomorphized dispatch.
+pub trait RequestEndpoint<S>: Send + Sync + 'static {
+    const SPEC: OperationSpec;
+
+    fn call<'a>(
+        state: &'a S,
+        request: Request<'a>,
+    ) -> impl Future<Output = DispatchResult> + Send + 'a;
+}
+
+/// A concrete core-NATS subscription handler.
+pub trait SubscriptionHandler<S>: Send + Sync + 'static {
+    const SPEC: OperationSpec;
+
+    fn call<'a>(
+        state: &'a S,
+        request: Request<'a>,
+    ) -> impl Future<Output = Result<(), ErrorReply>> + Send + 'a;
+}
 
 pub type HandlerFuture =
     Pin<Box<dyn Future<Output = Result<NatsResponse, NatsErrorResponse>> + Send + 'static>>;

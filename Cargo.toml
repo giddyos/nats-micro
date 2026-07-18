@@ -61,4 +61,5 @@ url = "2"
 workspace_root = "0.2.0"
 
 # Tests
+criterion = "0.8.2"
 trybuild = ">=1, <2"

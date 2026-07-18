@@ -1,5 +1,6 @@
 use crate::consumer::ConsumerDefinition;
 use crate::handler::HandlerFn;
+use crate::spec::AuthPolicy;
 use serde::Serialize;
 
 #[must_use]
@@ -102,21 +103,6 @@ impl ServiceMetadata {
             description: description.into(),
             subject_prefix: subject_prefix.filter(|value| !value.is_empty()),
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AuthPolicy {
-    None,
-    Optional,
-    Required,
-}
-
-impl AuthPolicy {
-    #[must_use]
-    pub fn auth_required(self) -> bool {
-        matches!(self, Self::Required)
     }
 }
 

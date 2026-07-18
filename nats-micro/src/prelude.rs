@@ -13,10 +13,11 @@ pub use crate::request::NatsRequest;
 pub use crate::request::{Header, Headers};
 pub use crate::response::{IntoNatsResponse, NatsResponse};
 pub use crate::service::{
-    AuthPolicy, ConsumerInfo, EndpointDefinition, EndpointDescriptor, EndpointInfo, NatsService,
-    ParamInfo, PayloadEncoding, PayloadMeta, ResponseEncoding, ResponseMeta, ServiceContract,
+    ConsumerInfo, EndpointDefinition, EndpointDescriptor, EndpointInfo, NatsService, ParamInfo,
+    PayloadEncoding, PayloadMeta, ResponseEncoding, ResponseMeta, ServiceContract,
     ServiceDefinition, ServiceMetadata,
 };
+pub use crate::spec::AuthPolicy;
 pub use crate::state::StateMap;
 pub use crate::{Error, ThisError};
 pub use crate::{HandlerPanicPolicy, NatsApp, NatsAppConfig, WorkerFailurePolicy};

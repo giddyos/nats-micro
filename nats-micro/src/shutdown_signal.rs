@@ -3,14 +3,15 @@ use std::time::Duration;
 use tokio::{sync::watch, time::Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ShutdownState {
-    pub(crate) requested: bool,
-    pub(crate) drain_timeout: Option<Duration>,
-    pub(crate) deadline: Option<Instant>,
+pub struct ShutdownState {
+    requested: bool,
+    drain_timeout: Option<Duration>,
+    deadline: Option<Instant>,
 }
 
 impl ShutdownState {
-    pub(crate) fn running(drain_timeout: Option<Duration>) -> Self {
+    #[must_use]
+    pub const fn running(drain_timeout: Option<Duration>) -> Self {
         Self {
             requested: false,
             drain_timeout,
@@ -18,7 +19,8 @@ impl ShutdownState {
         }
     }
 
-    pub(crate) fn requested(drain_timeout: Option<Duration>) -> Self {
+    #[must_use]
+    pub const fn requested(drain_timeout: Option<Duration>) -> Self {
         Self {
             requested: true,
             drain_timeout,
@@ -26,12 +28,28 @@ impl ShutdownState {
         }
     }
 
-    pub(crate) fn draining(drain_timeout: Option<Duration>, deadline: Instant) -> Self {
+    #[must_use]
+    pub const fn draining(drain_timeout: Option<Duration>, deadline: Instant) -> Self {
         Self {
             requested: true,
             drain_timeout,
             deadline: Some(deadline),
         }
+    }
+
+    #[must_use]
+    pub const fn is_requested(self) -> bool {
+        self.requested
+    }
+
+    #[must_use]
+    pub const fn drain_timeout(self) -> Option<Duration> {
+        self.drain_timeout
+    }
+
+    #[must_use]
+    pub const fn deadline(self) -> Option<Instant> {
+        self.deadline
     }
 }
 

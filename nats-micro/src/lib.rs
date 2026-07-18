@@ -82,6 +82,7 @@ mod app;
 mod auth;
 #[cfg(feature = "client")]
 mod client;
+mod codec;
 mod consumer;
 #[cfg(feature = "encryption")]
 pub mod encryption;
@@ -94,9 +95,12 @@ pub mod prelude;
 mod registry;
 mod request;
 mod response;
+pub mod runtime;
 mod service;
 mod shutdown_signal;
+mod spec;
 mod state;
+mod subject;
 mod utils;
 
 pub use anyhow;
@@ -115,7 +119,8 @@ pub type NatsHeaderName = async_nats::HeaderName;
 pub type NatsHeaderValue = async_nats::HeaderValue;
 pub type NatsConsumerConfig = async_nats::jetstream::consumer::push::Config;
 pub use auth::{Auth, AuthError, FromAuthRequest};
-pub use consumer::{ConsumerDefinition, ConsumerHandlerFn};
+pub use codec::{decode_json, decode_proto, decode_text, encode_json, encode_proto};
+pub use consumer::{ConsumerAction, ConsumerDefinition, ConsumerHandler, ConsumerHandlerFn};
 pub use error::{
     ClientError, ClientTransportError, FromNatsErrorResponse, IntoNatsError, NatsError,
     NatsErrorResponse, ServiceErrorMatch,
@@ -124,23 +129,34 @@ pub use extractors::{
     FromPayload, FromRequest, FromSubjectParam, IntoPayloadInner, Json, Payload, Proto, RequestId,
     State, Subject, SubjectParam,
 };
-pub use handler::{HandlerFn, RequestContext};
+pub use handler::{
+    DispatchResult, HandlerFn, RequestContext, RequestEndpoint, SubscriptionHandler,
+};
 #[cfg(feature = "napi")]
 pub use napi;
 #[cfg(feature = "napi")]
 pub use napi_derive;
 pub use prost;
-pub use request::{Header, Headers, NatsRequest};
-pub use response::{IntoNatsResponse, NatsResponse, X_SUCCESS_HEADER};
+pub use request::{
+    Body, BorrowedHeaders, Header, Headers, NatsRequest, Request, RequestId as BorrowedRequestId,
+    RequestMeta, Text,
+};
+pub use response::{
+    ErrorReply, IntoNatsResponse, NatsResponse, PRESENT_HEADER, Response, X_SUCCESS_HEADER,
+};
 pub use serde;
 pub use serde_json;
 pub use service::{
-    AuthPolicy, ConsumerInfo, EndpointDefinition, EndpointDescriptor, EndpointInfo, NatsService,
-    ParamInfo, PayloadEncoding, PayloadMeta, ResponseEncoding, ResponseMeta, ServiceContract,
+    ConsumerInfo, EndpointDefinition, EndpointDescriptor, EndpointInfo, NatsService, ParamInfo,
+    PayloadEncoding, PayloadMeta, ResponseEncoding, ResponseMeta, ServiceContract,
     ServiceDefinition, ServiceMetadata,
 };
-pub use shutdown_signal::ShutdownSignal;
+pub use shutdown_signal::{ShutdownSignal, ShutdownState};
+pub use spec::{
+    AuthPolicy, Codec, ConsumerSpec, OperationKind, OperationSpec, ParamSpec, ServiceSpec,
+};
 pub use state::StateMap;
+pub use subject::{FromSubject, segment};
 
 #[cfg(feature = "client")]
 pub use client::{
@@ -240,9 +256,10 @@ pub mod __macros {
     pub use crate::registry::ServiceRegistration;
     pub use crate::response::{IntoNatsResponse, NatsResponse};
     pub use crate::service::{
-        AuthPolicy, ConsumerInfo, EndpointInfo, NatsService, ParamInfo, PayloadEncoding,
-        PayloadMeta, ResponseEncoding, ResponseMeta, ServiceDefinition, build_subject,
+        ConsumerInfo, EndpointInfo, NatsService, ParamInfo, PayloadEncoding, PayloadMeta,
+        ResponseEncoding, ResponseMeta, ServiceDefinition, build_subject,
     };
+    pub use crate::spec::AuthPolicy;
     pub use inventory;
 
     // Error helpers

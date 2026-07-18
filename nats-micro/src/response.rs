@@ -1,12 +1,118 @@
+use async_nats::HeaderMap;
 use bytes::Bytes;
 use nats_micro_shared::FrameworkError;
+use serde::Serialize;
 
-use crate::{
-    Proto, error::NatsErrorResponse, extractors::Json, handler::RequestContext, serde::Serialize,
-};
+use crate::{Proto, error::NatsErrorResponse, extractors::Json, handler::RequestContext};
 
 pub const X_SUCCESS_HEADER: &str = "x-success";
 pub const X_OPTIONAL_RESPONSE_HEADER: &str = "x-nats-micro-optional-response";
+pub const PRESENT_HEADER: &str = "Nats-Micro-Present";
+
+/// A v2 endpoint response.
+#[derive(Debug)]
+pub enum Response {
+    Empty,
+    Payload(Bytes),
+    WithHeaders { payload: Bytes, headers: HeaderMap },
+}
+
+impl Response {
+    #[inline]
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self::Empty
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn bytes(bytes: impl Into<Bytes>) -> Self {
+        Self::Payload(bytes.into())
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn with_headers(payload: impl Into<Bytes>, headers: HeaderMap) -> Self {
+        Self::WithHeaders {
+            payload: payload.into(),
+            headers,
+        }
+    }
+
+    /// Encodes `None` without making an empty payload ambiguous with a present
+    /// value. `Some` values use their ordinary response encoding.
+    #[inline]
+    #[must_use]
+    pub fn optional_none() -> Self {
+        let mut headers = HeaderMap::new();
+        headers.insert(PRESENT_HEADER, "0");
+        Self::WithHeaders {
+            payload: Bytes::new(),
+            headers,
+        }
+    }
+}
+
+/// A protocol error ready to send through native NATS service error headers.
+#[derive(Debug)]
+pub struct ErrorReply {
+    pub code: u16,
+    pub kind: &'static str,
+    pub message: String,
+    pub payload: Bytes,
+    pub request_id: Option<String>,
+}
+
+#[derive(Serialize)]
+struct WireError<'a> {
+    code: u16,
+    kind: &'static str,
+    message: &'a str,
+    request_id: &'a str,
+}
+
+impl ErrorReply {
+    #[must_use]
+    pub fn new(
+        code: u16,
+        kind: &'static str,
+        message: impl Into<String>,
+        request_id: Option<&str>,
+    ) -> Self {
+        let message = message.into();
+        let request_id = request_id.map(str::to_owned);
+        let wire = WireError {
+            code,
+            kind,
+            message: &message,
+            request_id: request_id.as_deref().unwrap_or_default(),
+        };
+        let payload = serde_json::to_vec(&wire).map_or_else(|_| Bytes::new(), Bytes::from);
+
+        Self {
+            code,
+            kind,
+            message,
+            payload,
+            request_id,
+        }
+    }
+
+    #[must_use]
+    pub fn framework(
+        error: FrameworkError,
+        message: impl Into<String>,
+        request_id: Option<&str>,
+    ) -> Self {
+        Self::new(error.status_code(), error.as_code(), message, request_id)
+    }
+
+    #[must_use]
+    pub fn with_payload(mut self, payload: impl Into<Bytes>) -> Self {
+        self.payload = payload.into();
+        self
+    }
+}
 
 fn parse_bool_header<
     E: crate::FromNatsErrorResponse + ::std::fmt::Debug + ::std::fmt::Display + 'static,
@@ -600,4 +706,24 @@ pub fn serialize_proto_payload<T: crate::prost::Message>(
         )
     })?;
     Ok(::bytes::Bytes::from(buf))
+}
+
+#[cfg(test)]
+mod v2_tests {
+    use super::{PRESENT_HEADER, Response};
+
+    #[test]
+    fn optional_none_uses_the_explicit_presence_header() {
+        let Response::WithHeaders { payload, headers } = Response::optional_none() else {
+            panic!("optional none response must carry a presence header");
+        };
+
+        assert!(payload.is_empty());
+        assert_eq!(
+            headers
+                .get(PRESENT_HEADER)
+                .map(async_nats::HeaderValue::as_str),
+            Some("0")
+        );
+    }
 }
